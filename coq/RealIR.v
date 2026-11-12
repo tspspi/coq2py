@@ -73,7 +73,8 @@ Inductive real_expr : Type :=
   | RIfBool (scrutinee then_ else_ : real_expr)
   | RNil
   | RCons (hd tl : real_expr)
-  | RListMatch (scrutinee nilcase : real_expr) (hd tl : var) (conscase : real_expr).
+  | RListMatch (scrutinee nilcase : real_expr) (hd tl : var) (conscase : real_expr)
+  | RPair (e1 e2 : real_expr).
 
 (** The reference semantics: not a reimplementation of [Z.add]/
     [Z.ltb]/etc, but a direct call to Coq's own, so this file's trust
@@ -89,6 +90,10 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       match real_eval rho arg with
       | Some (VBool b) =>
           if string_dec fn "negb" then Some (VBool (negb b)) else None
+      | Some (VPair v1 v2) =>
+          if string_dec fn "fst" then Some v1
+          else if string_dec fn "snd" then Some v2
+          else None
       | _ => None
       end
   | RApp2 fn a1 a2 =>
@@ -125,6 +130,11 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VList (hv :: tvs)) => real_eval ((hd, hv) :: (tl, VList tvs) :: rho) conscase
       | _ => None
       end
+  | RPair e1 e2 =>
+      match real_eval rho e1, real_eval rho e2 with
+      | Some v1, Some v2 => Some (VPair v1 v2)
+      | _, _ => None
+      end
   end.
 
 (** The translator: recognize each intrinsic by the exact unqualified
@@ -137,7 +147,11 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
   | RBoolLit b => Some (EBool b)
   | RApp1 fn arg =>
       match real_to_expr arg with
-      | Some e1 => if string_dec fn "negb" then Some (ENot e1) else None
+      | Some e1 =>
+          if string_dec fn "negb" then Some (ENot e1)
+          else if string_dec fn "fst" then Some (EFst e1)
+          else if string_dec fn "snd" then Some (ESnd e1)
+          else None
       | None => None
       end
   | RApp2 fn a1 a2 =>
@@ -170,6 +184,11 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | Some es, Some en, Some ec => Some (EListMatch es en hd tl ec)
       | _, _, _ => None
       end
+  | RPair e1 e2 =>
+      match real_to_expr e1, real_to_expr e2 with
+      | Some e1', Some e2' => Some (EPair e1' e2')
+      | _, _ => None
+      end
   end.
 
 (** [real_expr] has no closures/recursion at all (that is exactly what
@@ -188,6 +207,7 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RCons hd tl => S (Nat.max (real_expr_depth hd) (real_expr_depth tl))
   | RListMatch scrutinee nilcase _ _ conscase =>
       S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth nilcase) (real_expr_depth conscase)))
+  | RPair e1 e2 => S (Nat.max (real_expr_depth e1) (real_expr_depth e2))
   end.
 
 Theorem real_to_expr_preserves_semantics :
@@ -204,12 +224,23 @@ Proof.
     destruct fuel as [|fuel']; [simpl in Hfuel; lia|]. reflexivity.
   - (* RApp1 *)
     destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
-    destruct (string_dec fn "negb") as [Heq|Hne]; [|discriminate].
-    inversion Htrans; subst.
     destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
     simpl in Hfuel.
     assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
-    simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1). reflexivity.
+    pose proof (IHre e1 eq_refl fuel' rho Hd1) as IH1.
+    destruct (string_dec fn "negb") as [Heq|Hne1];
+      [inversion Htrans; subst; simpl; rewrite IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|];
+       reflexivity|].
+    destruct (string_dec fn "fst") as [Heq|Hne2];
+      [inversion Htrans; subst; simpl; rewrite IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|];
+       reflexivity|].
+    destruct (string_dec fn "snd") as [Heq|Hne3];
+      [inversion Htrans; subst; simpl; rewrite IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|];
+       reflexivity|].
+    discriminate.
   - (* RApp2 *)
     destruct (real_to_expr re1) as [e1|] eqn:Hre1; [|destruct (real_to_expr re2); discriminate].
     destruct (real_to_expr re2) as [e2|] eqn:Hre2; [|discriminate].
@@ -307,4 +338,15 @@ Proof.
     destruct vs as [| hv tvs].
     + apply (IHre2 en eq_refl fuel' rho Hdn').
     + apply (IHre3 ec eq_refl fuel' ((hd, hv) :: (tl, VList tvs) :: rho) Hdc').
+  - (* RPair *)
+    destruct (real_to_expr re1) as [e1|] eqn:Hre1; [|discriminate].
+    destruct (real_to_expr re2) as [e2|] eqn:Hre2; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    assert (Hd1' : (real_expr_depth re1 < fuel')%nat) by lia.
+    assert (Hd2' : (real_expr_depth re2 < fuel')%nat) by lia.
+    simpl.
+    rewrite (IHre1 e1 eq_refl fuel' rho Hd1'), (IHre2 e2 eq_refl fuel' rho Hd2').
+    destruct (real_eval rho re1); destruct (real_eval rho re2); reflexivity.
 Qed.

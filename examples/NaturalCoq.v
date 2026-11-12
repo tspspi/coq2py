@@ -5,9 +5,10 @@
     *Certified Programming with Dependent Types* writes without a
     second thought -- carried all the way through to real, running
     Python, via [RealIR.v]'s [real_to_expr] and then this project's
-    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Two
-    examples: [clamp_nonneg] (Z/bool arithmetic and [if]) and
-    [head_or_zero] (a real list pattern match).
+    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Three
+    examples: [clamp_nonneg] (Z/bool arithmetic and [if]),
+    [head_or_zero] (a real list pattern match), and [swap_pair] (real
+    pair construction/projection).
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -241,5 +242,90 @@ Compute py_function "head_or_zero" ["l"] (translate head_or_zero_expr).
     3
     >>> head_or_zero(())
     0
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * A third example: real pair construction and projection *)
+
+(** A third genuine, human-written Coq definition, also run through
+    [coqc]/[Extraction Language JSON] during this session: *)
+Definition swap_pair (p : Z * Z) : Z * Z := (snd p, fst p).
+
+(** What Coq's real extraction emitted for it, captured verbatim:
+
+    [[
+    {
+      "what": "decl:term", "name": "swap_pair",
+      "type": { ... (z * z) -> (z * z) ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["p"],
+        "body": {
+          "what": "expr:constructor", "name": "Pair",
+          "args": [
+            { "what": "expr:apply",
+              "func": {"what":"expr:global","name":"snd"},
+              "args": [{"what":"expr:rel","name":"p"}] },
+            { "what": "expr:apply",
+              "func": {"what":"expr:global","name":"fst"},
+              "args": [{"what":"expr:rel","name":"p"}] }
+          ]
+        }
+      }
+    }
+    ]]
+
+    -- pair construction is an [expr:constructor "Pair"] with 2 args
+    ([RPair]'s own shape exactly), and [fst]/[snd] are plain unary
+    [expr:apply]/[expr:global] calls, the same shape [negb] already
+    had -- [RealIR.v]'s [RApp1] simply grew two more recognized names,
+    not a new constructor. *)
+Definition swap_pair_ir : real_expr :=
+  RPair (RApp1 "snd" (RRel "p")) (RApp1 "fst" (RRel "p")).
+
+Example swap_pair_ir_matches_real_definition :
+  forall a b : Z,
+    real_eval [("p", VPair (VZ a) (VZ b))] swap_pair_ir = Some (VPair (VZ b) (VZ a)).
+Proof. reflexivity. Qed.
+
+Definition swap_pair_expr : expr :=
+  match real_to_expr swap_pair_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: swap_pair_ir is in the recognized fragment *)
+  end.
+
+Example swap_pair_ir_translates :
+  real_to_expr swap_pair_ir = Some swap_pair_expr.
+Proof. reflexivity. Qed.
+
+Example swap_pair_expr_matches_real_definition :
+  forall a b : Z,
+    eval 10 [("p", VPair (VZ a) (VZ b))] swap_pair_expr = Some (VPair (VZ b) (VZ a)).
+Proof.
+  intros a b.
+  rewrite (real_to_expr_preserves_semantics swap_pair_ir swap_pair_expr
+             swap_pair_ir_translates 10 [("p", VPair (VZ a) (VZ b))] ltac:(simpl; lia)).
+  apply swap_pair_ir_matches_real_definition.
+Qed.
+
+Theorem swap_pair_idents_valid :
+  expr_idents_valid is_valid_ident swap_pair_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr swap_pair_expr.
+
+Corollary swap_pair_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate swap_pair_expr)
+      = option_map value_to_pyvalue (eval fuel rho swap_pair_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Compute py_function "swap_pair" ["p"] (translate swap_pair_expr).
+
+(** Run for real:
+
+    [[
+    >>> swap_pair((3, 7))
+    (7, 3)
     ]]
 *)
