@@ -26,9 +26,10 @@ Definition euler_step_expr : expr :=
 ```
 
 This stays inside the subset the proofs in this repository actually cover
-today (integer/boolean arithmetic, variables, pairs, a let-binding) — see
-[roadmap.md](roadmap.md) for what isn't covered yet (floats/numpy, arrays
-and loops, a broader Gallina surface).
+today (integer/boolean/float arithmetic, variables, pairs, a
+let-binding) — see [roadmap.md](roadmap.md) for what isn't covered yet
+(numpy-shaped arrays and bounded iteration/loops, a broader Gallina
+surface).
 
 ### Step 1 — it means what it should
 

@@ -21,6 +21,7 @@
     multiple source constructs onto. *)
 
 From Coq Require Import ZArith String List Bool.
+From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
 Require Import Lang.
 Open Scope Z_scope.
@@ -29,7 +30,8 @@ Open Scope string_scope.
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
   | PVBool (b : bool)
-  | PVPair (v1 v2 : pyvalue).
+  | PVPair (v1 v2 : pyvalue)
+  | PVFloat (f : float).
 
 Inductive pyexpr : Type :=
   | PConst (z : Z)
@@ -48,7 +50,12 @@ Inductive pyexpr : Type :=
   | PPair (e1 e2 : pyexpr)
   | PFst (e : pyexpr)
   | PSnd (e : pyexpr)
-  | PLet (x : var) (e1 e2 : pyexpr).
+  | PLet (x : var) (e1 e2 : pyexpr)
+  | PFConst (f : float)
+  | PFAdd (e1 e2 : pyexpr)
+  | PFSub (e1 e2 : pyexpr)
+  | PFMul (e1 e2 : pyexpr)
+  | PFDiv (e1 e2 : pyexpr).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -133,5 +140,26 @@ Fixpoint peval (rho : pyenv) (e : pyexpr) : option pyvalue :=
       match peval rho e1 with
       | Some v1 => peval ((x, v1) :: rho) e2
       | None => None
+      end
+  | PFConst f => Some (PVFloat f)
+  | PFAdd e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVFloat (f1 + f2)%float)
+      | _, _ => None
+      end
+  | PFSub e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVFloat (f1 - f2)%float)
+      | _, _ => None
+      end
+  | PFMul e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVFloat (f1 * f2)%float)
+      | _, _ => None
+      end
+  | PFDiv e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVFloat (f1 / f2)%float)
+      | _, _ => None
       end
   end.

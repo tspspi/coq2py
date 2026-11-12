@@ -4,7 +4,12 @@
 ; Extraction output isn't written with OCaml lint warnings in mind
 ; (e.g. harmless unused `rec` on single-clause definitions); suppress
 ; warnings-as-errors for it rather than hand-editing generated code.
+; `coq-core.kernel` provides the `Float64`/`Uint63` runtime the extracted
+; PrimFloat/Json.v float codec is realized against (see Extract.v's
+; comment on ExtrOCamlFloats/ExtrOCamlInt63) -- already installed
+; wherever `coqc` is (both machines per GOAL.md), not a new dependency.
 (executable
  (name main)
+ (libraries coq-core.kernel)
  (flags
   (:standard -w -a)))

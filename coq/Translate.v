@@ -39,6 +39,11 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EFst e1 => PFst (translate e1)
   | ESnd e1 => PSnd (translate e1)
   | ELet x e1 e2 => PLet x (translate e1) (translate e2)
+  | EFConst f => PFConst f
+  | EFAdd e1 e2 => PFAdd (translate e1) (translate e2)
+  | EFSub e1 e2 => PFSub (translate e1) (translate e2)
+  | EFMul e1 e2 => PFMul (translate e1) (translate e2)
+  | EFDiv e1 e2 => PFDiv (translate e1) (translate e2)
   end.
 
 Fixpoint value_to_pyvalue (v : value) : pyvalue :=
@@ -46,6 +51,7 @@ Fixpoint value_to_pyvalue (v : value) : pyvalue :=
   | VZ z => PVZ z
   | VBool b => PVBool b
   | VPair v1 v2 => PVPair (value_to_pyvalue v1) (value_to_pyvalue v2)
+  | VFloat f => PVFloat f
   end.
 
 Fixpoint env_to_pyenv (rho : env) : pyenv :=
@@ -90,43 +96,58 @@ Proof.
     | e1 IH1 e2 IH2               (* EPair *)
     | e1 IH1                      (* EFst *)
     | e1 IH1                      (* ESnd *)
-    | x e1 IH1 e2 IH2 ];          (* ELet *)
+    | x e1 IH1 e2 IH2             (* ELet *)
+    | f                           (* EFConst *)
+    | e1 IH1 e2 IH2               (* EFAdd *)
+    | e1 IH1 e2 IH2               (* EFSub *)
+    | e1 IH1 e2 IH2               (* EFMul *)
+    | e1 IH1 e2 IH2 ];            (* EFDiv *)
   intro rho; simpl.
   - (* EConst *) reflexivity.
   - (* EBool *) reflexivity.
   - (* EVar *) apply lookup_pyenv.
   - (* EAdd *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* ESub *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* EMul *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* EEq *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* ELt *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* ELe *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* EAnd *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* EOr *) rewrite IH1, IH2.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* ENot *) rewrite IH1.
-    destruct (eval rho e1) as [[z1|b1|p1a p1b]|]; reflexivity.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; reflexivity.
   - (* EIf *) rewrite IHc.
-    destruct (eval rho c) as [[z|b|v1 v2]|].
+    destruct (eval rho c) as [[z|b|v1 v2|f]|].
     + reflexivity.
     + destruct b; [apply IH1 | apply IH2].
+    + reflexivity.
     + reflexivity.
     + reflexivity.
   - (* EPair *) rewrite IH1, IH2.
     destruct (eval rho e1); destruct (eval rho e2); reflexivity.
   - (* EFst *) rewrite IH1.
-    destruct (eval rho e1) as [[z|b|v1 v2]|]; reflexivity.
+    destruct (eval rho e1) as [[z|b|v1 v2|f]|]; reflexivity.
   - (* ESnd *) rewrite IH1.
-    destruct (eval rho e1) as [[z|b|v1 v2]|]; reflexivity.
+    destruct (eval rho e1) as [[z|b|v1 v2|f]|]; reflexivity.
   - (* ELet *) rewrite IH1.
     destruct (eval rho e1) as [v1|].
     + exact (IH2 ((x, v1) :: rho)).
     + reflexivity.
+  - (* EFConst *) reflexivity.
+  - (* EFAdd *) rewrite IH1, IH2.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
+  - (* EFSub *) rewrite IH1, IH2.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
+  - (* EFMul *) rewrite IH1, IH2.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
+  - (* EFDiv *) rewrite IH1, IH2.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
 Qed.

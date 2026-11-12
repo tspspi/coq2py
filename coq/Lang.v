@@ -17,9 +17,24 @@
 
     [eval] is the formal semantics we assign to this subset: what a term
     *means*, independent of any translation target. The translator's
-    correctness theorem (see Translate.v) is stated against this. *)
+    correctness theorem (see Translate.v) is stated against this.
+
+    [VFloat]/[EFConst]/[EFAdd]/[EFSub]/[EFMul]/[EFDiv] add Coq's
+    primitive, IEEE-754-backed [PrimFloat.float] as a fourth value shape,
+    per docs/roadmap.md's "real target is physics" discussion: this is the
+    numeric type the discretized-simulator work needs, chosen over a
+    fixed-point encoding over [Z] because it extracts to OCaml's native
+    [float] (see Extract.v) with no new dependency, the same way [Z]
+    already extracts to native [int]. It is deliberately a same-shape
+    value (not mixed into [VZ]/arithmetic on [Z]) -- floats and integers
+    don't silently coerce into each other here any more than booleans and
+    integers already don't. Comparisons ([EEq]/[ELt]/[ELe]) are not yet
+    extended to floats -- only arithmetic is needed for the discretized
+    wave-equation scheme this is building toward; tracked as a gap, not an
+    oversight. *)
 
 From Coq Require Import ZArith String List Bool.
+From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
 Open Scope Z_scope.
 Open Scope string_scope.
@@ -29,7 +44,8 @@ Definition var := string.
 Inductive value : Type :=
   | VZ (z : Z)
   | VBool (b : bool)
-  | VPair (v1 v2 : value).
+  | VPair (v1 v2 : value)
+  | VFloat (f : float).
 
 Inductive expr : Type :=
   | EConst (z : Z)
@@ -48,7 +64,12 @@ Inductive expr : Type :=
   | EPair (e1 e2 : expr)
   | EFst (e : expr)
   | ESnd (e : expr)
-  | ELet (x : var) (e1 e2 : expr).
+  | ELet (x : var) (e1 e2 : expr)
+  | EFConst (f : float)
+  | EFAdd (e1 e2 : expr)
+  | EFSub (e1 e2 : expr)
+  | EFMul (e1 e2 : expr)
+  | EFDiv (e1 e2 : expr).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -139,6 +160,27 @@ Fixpoint eval (rho : env) (e : expr) : option value :=
       | Some v1 => eval ((x, v1) :: rho) e2
       | None => None
       end
+  | EFConst f => Some (VFloat f)
+  | EFAdd e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 + f2)%float)
+      | _, _ => None
+      end
+  | EFSub e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 - f2)%float)
+      | _, _ => None
+      end
+  | EFMul e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 * f2)%float)
+      | _, _ => None
+      end
+  | EFDiv e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 / f2)%float)
+      | _, _ => None
+      end
   end.
 
 (** Identifier validity: the restricted grammar in Json.v only round-trips
@@ -170,4 +212,9 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | ELet x e1 e2 =>
       andb (is_valid_ident x)
            (andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2))
+  | EFConst _ => true
+  | EFAdd e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFSub e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFMul e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFDiv e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   end.

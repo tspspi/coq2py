@@ -38,17 +38,23 @@ right kind of bug to be able to have at this layer.
 
 ## Narrow source and target subsets
 
-`expr`/`pyexpr` currently cover: integer and boolean constants,
-variables, `+`/`-`/`*`, general comparisons (`=`/`<`/`<=`) and boolean
-connectives (`and`/`or`/`not`), a general `if` (on a genuine boolean
-condition, not the earlier "equals zero" hack), pairs/tuples
-(construction and projection), and a single non-recursive `let`. Values
-are now a real three-way sum (`VZ`/`VBool`/`VPair`), not bare integers —
-operations applied to a value of the wrong shape get stuck (`None`), the
-same way an unbound variable already did; there is no separate static
-type system layered on top. Not yet covered, in roughly the order they'd
-likely be needed:
+`expr`/`pyexpr` currently cover: integer, boolean, and float constants,
+variables, integer `+`/`-`/`*` and float `+`/`-`/`*`/`/` (as separate
+operators — see below), general comparisons (`=`/`<`/`<=`, integers
+only so far) and boolean connectives (`and`/`or`/`not`), a general `if`
+(on a genuine boolean condition, not the earlier "equals zero" hack),
+pairs/tuples (construction and projection), and a single non-recursive
+`let`. Values are now a real four-way sum
+(`VZ`/`VBool`/`VPair`/`VFloat`), not bare integers — operations applied
+to a value of the wrong shape get stuck (`None`), the same way an
+unbound variable already did; there is no separate static type system
+layered on top. Not yet covered, in roughly the order they'd likely be
+needed:
 
+- Comparisons (`=`/`<`/`<=`) and conditionals over floats — `EEq`/`ELt`/`ELe`
+  are integer-only today; extending them to floats is a small, mechanical
+  addition in the same shape as the existing float arithmetic ops, not
+  done yet simply because nothing in this repository has needed it.
 - Bounded iteration (a fixed, statically-known number of repetitions of a
   state-transforming expression) as a cheaper first step toward real
   recursion — see the next section.
@@ -65,8 +71,46 @@ OCaml's fixed-width native `int` — chosen deliberately to keep the
 dependency footprint at zero (no bignum library), per GOAL.md's
 dependency policy. The honest cost: this does not yet match Python's
 arbitrary-precision integers for values outside native-int range. Revisit
-if/when a project depending on this actually needs it (likely alongside
-the real numbers vs. floats question below, when it does).
+if/when a project depending on this actually needs it.
+
+## `PrimFloat.float` is wired in, extracting to native `float`
+
+`Lang.v`/`PyLang.v` now have a fourth value shape, `VFloat`/`PVFloat`,
+backed by Coq's primitive, IEEE-754 `PrimFloat.float`, with `EFConst` and
+`+`/`-`/`*`/`/` (`EFAdd`/`EFSub`/`EFMul`/`EFDiv`); `Translate.v`'s
+preservation proof and `Json.v`'s JSON codec both cover it
+unconditionally, the same as every other constructor (see
+`examples/Kinematics.v`'s `euler_step_float_expr` for a worked instance
+and `docs/examples.md`'s Example 3 for captured output). This was the
+"`R` has no computational content" gap the Electromagnetism section used
+to describe as an open design decision between `PrimFloat` and a
+fixed-point `Z` encoding — resolved in favor of `PrimFloat`, since it
+extracts to OCaml's native `float` via the stock `ExtrOCamlFloats`
+realizer with no new *data-format* dependency (`Extract.v`'s comment
+covers the one real cost: `Json.v`'s float codec goes through
+`Prim2SF`/`SF2Prim`, which pull in enough further `PrimFloat`/`Uint63`
+primitives that `ocaml/driver/`'s build now links `coq-core.kernel` —
+already installed wherever `coqc` is, per GOAL.md's dependency table, so
+this is "reachable as an OCaml library," not "a new install").
+
+The JSON wire encoding is exact, not decimal: a float is serialized as
+its `Prim2SF`/`SF2Prim` decomposition (sign, and either zero/infinity/nan
+or an integer `(mantissa, exponent)` pair with value `(-1)^sign *
+mantissa * 2^exponent`), round-tripped via `SF2Prim_Prim2SF` (a Coq
+standard-library axiom — same trust category as the kernel itself, not
+something this project introduces). `PyPrint.v`'s generated-Python
+rendering of a literal float reuses the same decomposition, printed as
+`mantissa * (2.0 ** exponent)`, for the same reason: exact, with no
+decimal shortest-round-trip algorithm to get right (or get subtly wrong)
+in an unverified pretty-printer.
+
+What's still not covered: comparisons/conditionals over floats (tracked
+above), and the "does `PrimFloat.float` arithmetic actually match
+IEEE-754 the way the real CPython/numpy `float` does" question is the
+same category of assumed-not-proved trust boundary as "does `peval`
+describe real CPython" (see [duality.md](duality.md)) — not a new one
+this addition introduces, since `PrimFloat` is itself specified to be
+IEEE-754 binary64.
 
 ## The real target is physics, not integers
 

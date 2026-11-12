@@ -9,24 +9,30 @@
     returning the pair (x', v') -- exercising pairs/tuples -- plus a
     second example, [landed_expr], exercising general comparisons and
     booleans: "has the projectile reached or passed ground level while
-    still moving downward?".
+    still moving downward?" -- and a third, [euler_step_float_expr], the
+    same integration step again but over real [PrimFloat.float] state
+    instead of [Z].
 
-    Both are expressed as terms of our supported [expr] subset (Lang.v),
-    then run through every stage of the pipeline this repository actually
-    proves: JSON round-trip (Json.v), translation to the Python-subset AST
-    (Translate.v), and rendering as Python source (PyPrint.v). Everything
-    marked [Compute] below is meant to be evaluated with [coqc]/[coqtop]
-    and its real output captured into docs/examples.md -- nothing in that
-    doc is hand-written/fabricated.
+    All three are expressed as terms of our supported [expr] subset
+    (Lang.v), then run through every stage of the pipeline this repository
+    actually proves: JSON round-trip (Json.v), translation to the
+    Python-subset AST (Translate.v), and rendering as Python source
+    (PyPrint.v). Everything marked [Compute] below is meant to be
+    evaluated with [coqc]/[coqtop] and its real output captured into
+    docs/examples.md -- nothing in that doc is hand-written/fabricated.
 
     This is also the first concrete instance of the project's stated goal
     (GOAL.md): "express physics in Coq, extract a Python simulator proven
-    correct". It's a deliberately tiny instance -- integers standing in
-    for what would eventually be a floating-point/numpy state vector --
-    chosen to stay inside the subset that's actually proven today rather
-    than gesture at scope the proofs don't yet cover. *)
+    correct". Examples 1 and 2 are deliberately tiny instances -- integers
+    standing in for what would eventually be a floating-point/numpy state
+    vector -- chosen to stay inside the subset that's actually proven
+    today rather than gesture at scope the proofs don't yet cover. Example
+    3 closes that one gap for a single step (real float arithmetic, proven
+    the same way) -- see docs/roadmap.md for what's still missing before a
+    genuine discretized simulator (bounded iteration, arrays). *)
 
 From Coq Require Import ZArith String List Bool Lia.
+From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
 Require Import Lang.
 Require Import PyLang.
@@ -145,3 +151,48 @@ Corollary landed_translation_correct :
 Proof. intro rho. apply translate_preserves_semantics. Qed.
 
 Compute py_function "landed" ["x"; "v"] (translate landed_expr).
+
+(* ----------------------------------------------------------------- *)
+(** * Example 3: the same Euler step, in real floats *)
+
+(** Identical in shape to [euler_step_expr] above, but over
+    [PrimFloat.float] state and [EFAdd]/[EFMul] arithmetic instead of
+    [Z]/[EAdd]/[EMul] -- the same machine-checked preservation and
+    JSON-round-trip theorems apply unconditionally here too, with no
+    separate float-specific argument needed. *)
+Definition euler_step_float_expr : expr :=
+  ELet "v2" (EFAdd (EVar "v") (EFMul (EVar "a") (EVar "dt")))
+    (EPair (EFAdd (EVar "x") (EFMul (EVar "v2") (EVar "dt"))) (EVar "v2")).
+
+Theorem euler_step_float_idents_valid :
+  expr_idents_valid is_valid_ident euler_step_float_expr = true.
+Proof. reflexivity. Qed.
+
+(** Starting at rest (x=0.0, v=0.0) with acceleration a=2.0 for one step
+    of dt=1.0, the new state is (x'=2.0, v'=2.0) -- the same answer as
+    [euler_step_concrete] above, now computed in real [float]
+    arithmetic rather than standing in via [Z]. *)
+Example euler_step_float_concrete :
+  eval [("x", VFloat 0.0%float); ("v", VFloat 0.0%float);
+        ("a", VFloat 2.0%float); ("dt", VFloat 1.0%float)]
+    euler_step_float_expr
+    = Some (VPair (VFloat 2.0%float) (VFloat 2.0%float)).
+Proof. reflexivity. Qed.
+
+Compute print_expr euler_step_float_expr.
+Compute parse_expr_top (print_expr euler_step_float_expr).
+
+Corollary euler_step_float_json_roundtrip :
+  parse_expr_top (print_expr euler_step_float_expr) = Some (euler_step_float_expr, "").
+Proof. json_roundtrip_corollary euler_step_float_expr euler_step_float_idents_valid. Qed.
+
+Corollary euler_step_float_translation_correct :
+  forall rho,
+    peval (env_to_pyenv rho) (translate euler_step_float_expr)
+      = option_map value_to_pyvalue (eval rho euler_step_float_expr).
+Proof. intro rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: exact, via the [mantissa * (2.0 ** exponent)]
+    encoding described in PyPrint.v -- not the shortest decimal a human
+    would write, but bit-for-bit the same value as the source float. *)
+Compute py_function "euler_step_float" ["x"; "v"; "a"; "dt"] (translate euler_step_float_expr).

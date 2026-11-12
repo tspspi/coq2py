@@ -17,6 +17,7 @@
 
 From Coq Require Import ZArith String List Ascii Bool Lia.
 From Coq Require Import Decimal DecimalString DecimalPos DecimalZ.
+From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat Floats.FloatAxioms.
 Import ListNotations.
 Require Import Lang.
 Open Scope Z_scope.
@@ -349,6 +350,146 @@ Qed.
 Opaque parse_number parse_qstring quote_string parse_bool.
 
 (* ----------------------------------------------------------------- *)
+(** * Floats
+
+    [PrimFloat.float] has no built-in decimal codec (unlike [Z], which
+    [NilZero]/[DecimalZ] already give us an exact, proven round-trip
+    through). Rather than invent a decimal-rounding scheme -- a genuinely
+    hard problem (shortest round-tripping decimal representation of a
+    binary float) that would need its own nontrivial proof -- this encodes
+    a float exactly, with no rounding at all, through Coq's own
+    [Prim2SF]/[SF2Prim] (Flocq-style [spec_float]: a sign bit, plus either
+    "zero"/"infinity"/"nan" or a [(mantissa, exponent)] integer pair with
+    value [(-1)^sign * mantissa * 2^exponent]). [spec_float] is a plain
+    inductive built from bits we already know how to round-trip ([bool]
+    via [parse_bool], [Z]/[positive] via [parse_number]), so serializing
+    *it* needs no new numeric codec -- only [SF2Prim_Prim2SF] (a Coq
+    standard-library axiom, same trust category as the Coq kernel itself;
+    not something this project introduces) is needed to carry the
+    [spec_float] round-trip back up to an actual [float] round-trip. *)
+
+Lemma not_digit_rbrace : is_digit "}"%char = false.
+Proof. reflexivity. Qed.
+
+Lemma not_minus_rbrace : "}"%char <> minus_char.
+Proof. discriminate. Qed.
+
+Lemma not_digit_comma : is_digit ","%char = false.
+Proof. reflexivity. Qed.
+
+Lemma not_minus_comma : ","%char <> minus_char.
+Proof. discriminate. Qed.
+
+(** Every branch ends on a literal ["}"], matching the closing brace
+    [print_expr]'s [EFConst] case leaves for it to supply -- see the
+    comment on [spec_float_round_trip] for why that matters. *)
+Definition spec_float_to_string (sf : spec_float) : string :=
+  match sf with
+  | S754_zero s =>
+      """kind"":""zero"",""sign"":" ++ bool_to_string s ++ "}"
+  | S754_infinity s =>
+      """kind"":""inf"",""sign"":" ++ bool_to_string s ++ "}"
+  | S754_nan =>
+      """kind"":""nan""}"
+  | S754_finite s m e =>
+      """kind"":""finite"",""sign"":" ++ bool_to_string s
+        ++ ",""mantissa"":" ++ z_to_string (Zpos m)
+        ++ ",""exponent"":" ++ z_to_string e ++ "}"
+  end.
+
+Definition parse_spec_float (s : string) : option (spec_float * string) :=
+  match expect """kind"":""zero"",""sign"":" s with
+  | Some s1 =>
+      match parse_bool s1 with
+      | Some (b, s2) =>
+          match expect "}" s2 with
+          | Some s3 => Some (S754_zero b, s3)
+          | None => None
+          end
+      | None => None
+      end
+  | None =>
+  match expect """kind"":""inf"",""sign"":" s with
+  | Some s1 =>
+      match parse_bool s1 with
+      | Some (b, s2) =>
+          match expect "}" s2 with
+          | Some s3 => Some (S754_infinity b, s3)
+          | None => None
+          end
+      | None => None
+      end
+  | None =>
+  match expect """kind"":""nan""}" s with
+  | Some s1 => Some (S754_nan, s1)
+  | None =>
+  match expect """kind"":""finite"",""sign"":" s with
+  | Some s1 =>
+      match parse_bool s1 with
+      | Some (b, s2) =>
+          match expect ",""mantissa"":" s2 with
+          | Some s3 =>
+              match parse_number s3 with
+              | Some (zm, s4) =>
+                  match expect ",""exponent"":" s4 with
+                  | Some s5 =>
+                      match parse_number s5 with
+                      | Some (ze, s6) =>
+                          match expect "}" s6 with
+                          | Some s7 => Some (S754_finite b (Z.to_pos zm) ze, s7)
+                          | None => None
+                          end
+                      | None => None
+                      end
+                  | None => None
+                  end
+              | None => None
+              end
+          | None => None
+          end
+      | None => None
+      end
+  | None => None
+  end end end end.
+
+(** Purely structural: every [spec_float] round-trips through
+    [spec_float_to_string]/[parse_spec_float], no side conditions (in
+    particular, no [valid_binary sf] premise -- the mantissa field is
+    already a [positive], so [Z.to_pos (Zpos m) = m] needs nothing beyond
+    that). As with [parse_print_roundtrip] below, this only goes through
+    because every field (including the last one in each branch) is
+    immediately followed by a fixed literal character from the format
+    itself -- here, a closing ["}"] -- rather than abutting the
+    free/universally-quantified [rest] directly; [parse_number_print]
+    needs that literal character to know where a digit run ends. *)
+Lemma spec_float_round_trip :
+  forall sf rest, parse_spec_float (spec_float_to_string sf ++ rest) = Some (sf, rest).
+Proof.
+  intros sf rest.
+  unfold parse_spec_float, spec_float_to_string.
+  destruct sf as [s|s| |s m e].
+  - (* S754_zero *)
+    repeat rewrite string_append_assoc. simpl.
+    rewrite (parse_bool_print s (String "}"%char rest)). reflexivity.
+  - (* S754_infinity *)
+    repeat rewrite string_append_assoc. simpl.
+    rewrite (parse_bool_print s (String "}"%char rest)). reflexivity.
+  - (* S754_nan *)
+    reflexivity.
+  - (* S754_finite *)
+    repeat rewrite string_append_assoc. simpl.
+    rewrite (parse_bool_print s _). simpl.
+    rewrite (parse_number_print (Zpos m) ","%char _ not_digit_comma not_minus_comma). simpl.
+    rewrite (parse_number_print e "}"%char rest not_digit_rbrace not_minus_rbrace). simpl.
+    reflexivity.
+Qed.
+
+(** Keep [simpl]/[cbn] from peeking inside these during the main
+    round-trip theorem below, same reasoning as the [Opaque] block above
+    for [parse_number]/[parse_qstring]/[parse_bool]. *)
+Opaque parse_spec_float spec_float_to_string.
+
+(* ----------------------------------------------------------------- *)
 (** * The [expr] codec itself *)
 
 
@@ -390,17 +531,32 @@ Fixpoint print_expr (e : expr) : string :=
   | ELet x e1 e2 =>
       "{""tag"":""let"",""name"":" ++ quote_string x
         ++ ",""value"":" ++ print_expr e1 ++ ",""body"":" ++ print_expr e2 ++ "}"
+  | EFConst f =>
+      (** No extra ["}"] here -- [spec_float_to_string] already supplies
+          the closing brace (see its comment for why that's load-bearing
+          for the round-trip proof). *)
+      "{""tag"":""fconst""," ++ spec_float_to_string (Prim2SF f)
+  | EFAdd e1 e2 =>
+      "{""tag"":""fadd"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EFSub e1 e2 =>
+      "{""tag"":""fsub"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EFMul e1 e2 =>
+      "{""tag"":""fmul"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EFDiv e1 e2 =>
+      "{""tag"":""fdiv"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   end.
 
 Fixpoint expr_fuel (e : expr) : nat :=
   match e with
-  | EConst _ | EBool _ | EVar _ => 1
+  | EConst _ | EBool _ | EVar _ | EFConst _ => 1
   | EAdd e1 e2 | ESub e1 e2 | EMul e1 e2
   | EEq e1 e2 | ELt e1 e2 | ELe e1 e2
   | EAnd e1 e2 | EOr e1 e2 | EPair e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
   | ENot e1 | EFst e1 | ESnd e1 => S (expr_fuel e1)
   | EIf c e1 e2 => S (Nat.max (expr_fuel c) (Nat.max (expr_fuel e1) (expr_fuel e2)))
   | ELet _ e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
+  | EFAdd e1 e2 | EFSub e1 e2 | EFMul e1 e2 | EFDiv e1 e2 =>
+      S (Nat.max (expr_fuel e1) (expr_fuel e2))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -701,18 +857,95 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""fconst""," s with
+    | Some s1 =>
+        match parse_spec_float s1 with
+        | Some (sf, s2) => Some (EFConst (SF2Prim sf), s2)
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""fadd"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFAdd e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""fsub"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFSub e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""fmul"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFMul e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""fdiv"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFDiv e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
   parse_expr (String.length s + 1) s.
-
-Lemma not_digit_rbrace : is_digit "}"%char = false.
-Proof. reflexivity. Qed.
-
-Lemma not_minus_rbrace : "}"%char <> minus_char.
-Proof. discriminate. Qed.
 
 (** The headline theorem: for every [expr] with valid identifiers, printing
     it and parsing the result back (with enough fuel, any amount at least
@@ -743,7 +976,12 @@ Proof.
     | e1 IH1 e2 IH2              (* EPair *)
     | e1 IH1                     (* EFst *)
     | e1 IH1                     (* ESnd *)
-    | x e1 IH1 e2 IH2 ];         (* ELet *)
+    | x e1 IH1 e2 IH2            (* ELet *)
+    | f                          (* EFConst *)
+    | e1 IH1 e2 IH2              (* EFAdd *)
+    | e1 IH1 e2 IH2              (* EFSub *)
+    | e1 IH1 e2 IH2              (* EFMul *)
+    | e1 IH1 e2 IH2 ];           (* EFDiv *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -852,6 +1090,37 @@ Proof.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print x Hvx). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFConst *)
+    rewrite (spec_float_round_trip (Prim2SF f) rest).
+    rewrite SF2Prim_Prim2SF. reflexivity.
+  - (* EFAdd *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFSub *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFMul *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFDiv *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
     rewrite (IH1 Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.

@@ -87,15 +87,23 @@ tool.
 
 **Assumed (same category of trust as any Coq development, or as CompCert's
 own documented trust base):**
-- Soundness of the Coq kernel/type-checker.
+- Soundness of the Coq kernel/type-checker, including its primitive
+  `PrimFloat.float`/`PrimInt63.int` types and operations (used by the
+  float arithmetic in `Lang.v`/`PyLang.v`, and transitively by `Json.v`'s
+  float JSON codec) — trusted at the same level as the kernel's native
+  `Z`/`bool`, not a project-specific assumption.
+- `FloatAxioms.SF2Prim_Prim2SF`, a Coq standard-library axiom asserting
+  that `Prim2SF`/`SF2Prim` (float <-> sign/mantissa/exponent) round-trip,
+  relied on by `Json.v`'s float codec round-trip proof — same trust
+  category as the kernel itself, not an axiom this project introduces.
 - Correctness of Coq's own JSON extraction backend as a *serializer* (i.e.
   that it faithfully emits the erased IR — same trust level the OCaml/Haskell
   backends already rely on today; not a regression).
 - Correctness of Coq's standard OCaml extraction, used once to bootstrap the
   `coq2py` binary itself from the proven Gallina pipeline.
-- Faithfulness of the formal Python-subset semantics to the real CPython
-  interpreter's behaviour on programs in that subset. Explicitly out of
-  scope to prove.
+- Faithfulness of the formal Python-subset semantics (and `PrimFloat`'s
+  own IEEE-754 semantics) to the real CPython interpreter's behaviour on
+  programs in that subset. Explicitly out of scope to prove.
 - Pretty-printer correctness (open question — see below).
 
 ## Target environments
