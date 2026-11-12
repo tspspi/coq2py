@@ -149,14 +149,14 @@ they'd be needed next:
   declaration to force a rename), rather than matching an unstable
   textual name.
 
-## The N-field-record/mutual-recursion arity caps are liftable -- confirmed
+## The N-field-record/mutual-recursion arity caps are liftable -- landed
 
 The 2-field-record and 2-function-mutual-recursion caps elsewhere in
 this file exist because Coq's *auto-generated* induction principle for
 `expr` gives no usable hypothesis for an `expr` buried inside a `list
-expr`-shaped field -- confirmed again just now, directly, in an
-isolated throwaway file (not yet applied to this project's real
-`Json.v`): a toy `ERecordN (fields : list expr)` with genuinely-N-ary
+expr`-shaped field -- confirmed directly, first in an isolated
+throwaway file, then applied to this project's real `Json.v` (see
+below): a toy `ERecordN (fields : list expr)` with genuinely-N-ary
 fields, proved via *strong induction on a size/fuel measure* instead
 of structural induction on `expr`, closed with **no axioms or
 admits**. The key move: generalize the goal to `forall n e, expr_fuel
@@ -172,18 +172,22 @@ on *fuel*, not on `e`) to get past `EApp`'s non-structural recursion
 into a closure -- just applied to `Json.v`'s induction instead of
 `Translate.v`'s.
 
-**Not yet done**: applying this to `Json.v`'s real `parse_print_roundtrip`
-theorem. That proof currently inducts structurally on `e`
-(`induction e as [...]`) across every existing constructor, so
-switching it to strong induction on `expr_fuel e` means converting
-*all* of those existing cases' `rewrite (IHk ...)`-style calls to the
-new blanket hypothesis's calling convention, not just adding a case
-for the new constructor -- a larger, higher-risk mechanical change
-than this project's usual small-feature commits, which is exactly why
-it hasn't been attempted on the real file yet. Once it is, the same
-technique directly unblocks general N-field records *and* general
-mutually-recursive groups (the same induction obstacle, the same fix),
-not just one or the other.
+**Done**: `Json.v`'s real `parse_print_roundtrip` theorem has been
+converted. That proof used to induct structurally on `e` (`induction e
+as [...]`) across every constructor; it's now proved via the
+`Hstrong` helper, strong induction on `expr_fuel e`
+(`well_founded_induction lt_wf`), with every former `rewrite (IHk Hv
+fuel' Hf)`-style call converted to the new blanket hypothesis's
+calling convention (`rewrite ((IHn (expr_fuel ek) Hltk ek (le_n _)) Hv
+fuel' Hf)`, `Hltk` freshly asserted from the (now `n`-indexed) fuel
+bound by `lia`) -- a large, mostly mechanical change (done via a
+one-off conversion script, then hand-verified), but a pure refactor:
+no case's own reasoning changed, only how its induction hypothesis is
+obtained. `Print Assumptions` confirms no new axioms, and the full
+test suite passes unchanged. The technique directly unblocks general
+N-field records *and* general mutually-recursive groups (the same
+induction obstacle, the same fix) -- adding either as an actual
+feature on top of this is still a separate, not-yet-done step.
 
 ## Not proved: the pretty-printer
 
