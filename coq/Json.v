@@ -40,6 +40,7 @@ Definition is_alnum (a : ascii) : bool :=
 
 Definition quote_char : ascii := """"%char.
 Definition minus_char : ascii := "-"%char.
+Definition backslash_char : ascii := "\"%char.
 
 Fixpoint string_forallb (p : ascii -> bool) (s : string) : bool :=
   match s with
@@ -337,6 +338,150 @@ Proof.
 Qed.
 
 (* ----------------------------------------------------------------- *)
+(** * General, escaped text *)
+
+(** [quote_string]/[parse_qstring] above are deliberately restricted to
+    identifier-shaped text ([is_valid_ident]) -- a string that can
+    never itself contain the closing quote, so no escaping is needed,
+    just [take_while is_alnum]. [quote_text]/[parse_qtext] lift that
+    restriction: *any* string, including one containing a literal
+    double-quote or backslash character, is quoted correctly by
+    escaping exactly those two characters and parsed back by undoing
+    exactly that escaping -- the same JSON string-escaping mechanism
+    real JSON uses, minus control-character escapes (newline, tab,
+    etc.), which this grammar doesn't need: unlike a quote or
+    backslash, a literal newline or tab is not a *metacharacter* here,
+    so it can simply pass through unescaped without making the
+    surrounding string ambiguous. *)
+Fixpoint escape_text (s : string) : string :=
+  match s with
+  | EmptyString => EmptyString
+  | String c rest =>
+      if Ascii.eqb c quote_char then String backslash_char (String quote_char (escape_text rest))
+      else if Ascii.eqb c backslash_char then String backslash_char (String backslash_char (escape_text rest))
+      else String c (escape_text rest)
+  end.
+
+Lemma escape_text_cons :
+  forall c s, escape_text (String c s) =
+    if Ascii.eqb c quote_char then String backslash_char (String quote_char (escape_text s))
+    else if Ascii.eqb c backslash_char then String backslash_char (String backslash_char (escape_text s))
+    else String c (escape_text s).
+Proof. reflexivity. Qed.
+
+Definition quote_text (x : string) : string :=
+  String quote_char (escape_text x ++ String quote_char EmptyString).
+
+(** Consumes characters up to (and past) the first *unescaped* closing
+    quote, undoing [escape_text]'s own escaping one character at a
+    time. [fuel] is a plain structural bound on how many of the
+    *original* characters remain (one unit per original character,
+    regardless of whether it printed as one or two), not [eval]'s
+    kind of open-ended fuel -- any [fuel] at least the original
+    string's own length always suffices, proved below. *)
+Fixpoint parse_text_chars (fuel : nat) (s : string) : option (string * string) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match s with
+      | EmptyString => None
+      | String c rest =>
+          if Ascii.eqb c quote_char then Some (EmptyString, rest)
+          else if Ascii.eqb c backslash_char then
+            match rest with
+            | String c2 rest2 =>
+                match parse_text_chars fuel' rest2 with
+                | Some (tok, rest3) => Some (String c2 tok, rest3)
+                | None => None
+                end
+            | EmptyString => None
+            end
+          else
+            match parse_text_chars fuel' rest with
+            | Some (tok, rest') => Some (String c tok, rest')
+            | None => None
+            end
+      end
+  end.
+
+Lemma parse_text_chars_unfold :
+  forall fuel' s,
+    parse_text_chars (S fuel') s =
+      match s with
+      | EmptyString => None
+      | String c rest =>
+          if Ascii.eqb c quote_char then Some (EmptyString, rest)
+          else if Ascii.eqb c backslash_char then
+            match rest with
+            | String c2 rest2 =>
+                match parse_text_chars fuel' rest2 with
+                | Some (tok, rest3) => Some (String c2 tok, rest3)
+                | None => None
+                end
+            | EmptyString => None
+            end
+          else
+            match parse_text_chars fuel' rest with
+            | Some (tok, rest') => Some (String c tok, rest')
+            | None => None
+            end
+      end.
+Proof. reflexivity. Qed.
+
+Definition parse_qtext (s : string) : option (string * string) :=
+  match s with
+  | String a s1 =>
+      if Ascii.eqb a quote_char then parse_text_chars (S (String.length s1)) s1
+      else None
+  | EmptyString => None
+  end.
+
+Lemma parse_text_chars_print :
+  forall x fuel, (String.length x <= fuel)%nat ->
+    forall rest, parse_text_chars (S fuel) (escape_text x ++ String quote_char rest) = Some (x, rest).
+Proof.
+  induction x as [| c x' IH]; intros fuel Hfuel rest.
+  - reflexivity.
+  - destruct fuel as [| fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel. assert (Hfuel' : (String.length x' <= fuel')%nat) by lia.
+    rewrite escape_text_cons.
+    destruct (Ascii.eqb c quote_char) eqn:Hq.
+    + apply Ascii.eqb_eq in Hq; subst.
+      cbn [append]. rewrite parse_text_chars_unfold. cbn [Ascii.eqb quote_char backslash_char].
+      rewrite (IH fuel' Hfuel' rest). reflexivity.
+    + destruct (Ascii.eqb c backslash_char) eqn:Hb.
+      * apply Ascii.eqb_eq in Hb; subst.
+        cbn [append]. rewrite parse_text_chars_unfold. cbn [Ascii.eqb quote_char backslash_char].
+        rewrite (IH fuel' Hfuel' rest). reflexivity.
+      * cbn [append]. rewrite parse_text_chars_unfold. cbn [Ascii.eqb quote_char backslash_char].
+        rewrite Hq, Hb.
+        rewrite (IH fuel' Hfuel' rest). reflexivity.
+Qed.
+
+Lemma escape_text_append_length_ge :
+  forall x s, (String.length x <= String.length (escape_text x ++ s))%nat.
+Proof.
+  induction x as [| c x' IH]; intro s.
+  - simpl. lia.
+  - rewrite escape_text_cons.
+    destruct (Ascii.eqb c quote_char) eqn:Hq; simpl.
+    + pose proof (IH s) as IHs. simpl in IHs. lia.
+    + destruct (Ascii.eqb c backslash_char) eqn:Hb; simpl.
+      * pose proof (IH s) as IHs. simpl in IHs. lia.
+      * pose proof (IH s) as IHs. simpl in IHs. lia.
+Qed.
+
+Theorem parse_qtext_print :
+  forall x rest, parse_qtext (quote_text x ++ rest) = Some (x, rest).
+Proof.
+  intros x rest. unfold parse_qtext, quote_text.
+  simpl.
+  rewrite string_append_assoc. simpl.
+  pose proof (escape_text_append_length_ge x (String quote_char rest)) as Hfuel.
+  exact (parse_text_chars_print x (String.length (escape_text x ++ String quote_char rest)) Hfuel rest).
+Qed.
+
+(* ----------------------------------------------------------------- *)
 (** * Booleans *)
 
 (** Printed as bare [true]/[false] tokens, matching real JSON's boolean
@@ -374,6 +519,7 @@ Qed.
     not others depending on whether their first character happens to be
     syntactically concrete. *)
 Opaque parse_number parse_qstring quote_string parse_bool parse_nat nat_to_string.
+Opaque parse_qtext quote_text.
 
 (* ----------------------------------------------------------------- *)
 (** * Floats
@@ -615,7 +761,7 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""case"",""scrutinee"":" ++ print_expr scrutinee
         ++ ",""x1"":" ++ quote_string x1 ++ ",""case1"":" ++ print_expr case1
         ++ ",""x2"":" ++ quote_string x2 ++ ",""case2"":" ++ print_expr case2 ++ "}"
-  | EStrConst s => "{""tag"":""strconst"",""value"":" ++ quote_string s ++ "}"
+  | EStrConst s => "{""tag"":""strconst"",""value"":" ++ quote_text s ++ "}"
   | EStrConcat e1 e2 =>
       "{""tag"":""strconcat"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   | EStrEq e1 e2 =>
@@ -1490,7 +1636,7 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
     | None =>
     match expect "{""tag"":""strconst"",""value"":" s with
     | Some s1 =>
-        match parse_qstring s1 with
+        match parse_qtext s1 with
         | Some (sval, s2) =>
             match expect "}" s2 with
             | Some s3 => Some (EStrConst sval, s3)
@@ -2266,9 +2412,8 @@ reflexivity.
     rewrite ((IHn (expr_fuel case2) Hlt3 case2 (le_n _)) Hv3 fuel' Hf3). reflexivity.
   - (* EStrConst *)
     simpl in Hn.
-    simpl in Hvalid.
     rewrite string_append_assoc. simpl.
-    rewrite (parse_qstring_print s Hvalid (String "}"%char rest)).
+    rewrite (parse_qtext_print s (String "}"%char rest)).
     reflexivity.
   - (* EStrConcat *)
     simpl in Hn.

@@ -37,11 +37,15 @@
     [ECase]) instead of [eval] simply getting stuck -- a twelfth,
     [motion_phase_expr], a real string value ([EStrConst]/[EStrEq])
     labelling the same state Example 2's [landed_expr] already tests --
-    and a thirteenth, [euler_step_full_state_expr], Example 9's named
+    a thirteenth, [euler_step_full_state_expr], Example 9's named
     record again but with *four* fields at once ([ERecordN]/[EFieldN]),
-    genuinely beyond [ERecord]'s 2-field cap rather than nesting it.
+    genuinely beyond [ERecord]'s 2-field cap rather than nesting it --
+    and a fourteenth, [motion_report_expr], Example 12's label again
+    but as a general string literal (a space, an embedded quote mark)
+    rather than the identifier-shaped text [EStrConst] was first
+    restricted to.
 
-    All thirteen are expressed as terms of our supported [expr] subset
+    All fourteen are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -800,3 +804,63 @@ Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
     built by [PyPrint.v]'s [PRecordN] case walking the field list. *)
 Compute py_function "euler_step_full_state" ["x"; "v"; "a"; "dt"; "t"]
   (translate euler_step_full_state_expr).
+
+(* ----------------------------------------------------------------- *)
+(** * Example 14: a general string literal, no longer identifier-shaped *)
+
+(** [motion_phase_expr] (Example 12) could only ever produce
+    identifier-shaped labels (["landed"]/["falling"]) -- [EStrConst]'s
+    payload was checked by [is_valid_ident], the same restriction
+    [EVar]'s own name has. That restriction is lifted now (see Lang.v's
+    header and Json.v's [quote_text]/[parse_qtext]): a label can be an
+    ordinary human phrase, including a space and an embedded quote
+    mark that JSON's own quoting would otherwise make ambiguous. *)
+Definition motion_report_expr : expr :=
+  EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+      (EStrConst "status: ""landed""")
+      (EStrConst "status: still falling").
+
+Theorem motion_report_idents_valid :
+  expr_idents_valid is_valid_ident motion_report_expr = true.
+Proof. reflexivity. Qed.
+
+(** The same two states Example 12 already distinguishes: *)
+Example motion_report_landed :
+  eval 10 [("state", VPair (VZ (-15)) (VZ (-30)))] motion_report_expr
+    = Some (VStr "status: ""landed""").
+Proof. reflexivity. Qed.
+
+Example motion_report_falling :
+  eval 10 [("state", VPair (VZ 35) (VZ (-10)))] motion_report_expr
+    = Some (VStr "status: still falling").
+Proof. reflexivity. Qed.
+
+(** The embedded quote mark is escaped in the JSON wire encoding
+    ([quote_text]), not left bare -- visible directly below. *)
+Compute print_expr motion_report_expr.
+
+Corollary motion_report_json_roundtrip :
+  parse_expr_top (print_expr motion_report_expr) = Some (motion_report_expr, "").
+Proof. json_roundtrip_corollary motion_report_expr motion_report_idents_valid. Qed.
+
+Corollary motion_report_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate motion_report_expr)
+      = option_map value_to_pyvalue (eval fuel rho motion_report_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: a real string literal, with the embedded
+    quote escaped the way Python's own double-quoted syntax needs
+    ([PyPrint.v]'s [py_escape_text]), not the bare, unescaped wrap
+    [EField]'s/[ERecord]'s identifier-only keys still use. *)
+Compute py_function "motion_report" ["state"] (translate motion_report_expr).
+
+(** Run for real:
+
+    [[
+    >>> motion_report((-15, -30))
+    'status: "landed"'
+    >>> motion_report((35, -10))
+    'status: still falling'
+    ]]
+*)

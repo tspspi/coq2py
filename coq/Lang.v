@@ -155,14 +155,16 @@
     [EStrConst s]/[EStrConcat e1 e2]/[EStrEq e1 e2] add a fifth scalar
     value shape, [VStr], alongside [VZ]/[VBool]/[VFloat] -- genuine
     first-class strings, not just the identifiers [var] was already
-    used for everywhere else in this file. The honest restriction: a
-    string *value* here is deliberately still exactly as restricted as
-    an identifier ([EStrConst]'s payload has type [var], checked by
-    [is_valid_ident] in [expr_idents_valid] the same way [EVar]'s is),
-    not an arbitrary Unicode string -- reusing [Json.v]'s already-proven
-    [quote_string]/[parse_qstring] identifier codec as-is, rather than
-    building a second, general-purpose JSON string-escaping codec
-    (quotes, backslashes, control characters) as a separate effort. *)
+    used for everywhere else in this file. [EStrConst]'s payload has
+    type [var] (= [string]) for that reason -- reusing [var] rather
+    than inventing a second string type -- but [expr_idents_valid]
+    places *no* [is_valid_ident] restriction on it (unlike [EVar]'s
+    name): any string is a valid [EStrConst] literal, including one
+    containing a quote or backslash, round-tripped through [Json.v]'s
+    [quote_text]/[parse_qtext] -- a real escaping codec, not the
+    identifier-only [quote_string]/[parse_qstring] every *name* in
+    this file (vars, record/field keys, ...) still uses, since those
+    genuinely can't contain arbitrary text. *)
 
 (** [ERecordN fields]/[EFieldN name e] generalize [ERecord]/[EField] to
     an arbitrary number of named fields -- see this file's [eval] cases
@@ -617,7 +619,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
         (andb (is_valid_ident x1)
           (andb (expr_idents_valid is_valid_ident case1)
             (andb (is_valid_ident x2) (expr_idents_valid is_valid_ident case2))))
-  | EStrConst s => is_valid_ident s
+  | EStrConst _ => true
   | EStrConcat e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EStrEq e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | ERecordN fields =>

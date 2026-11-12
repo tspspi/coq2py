@@ -359,25 +359,32 @@ uses.
 A fifth scalar value shape is in too: `EStrConst s`/`EStrConcat e1
 e2`/`EStrEq e1 e2` (`VStr`), genuine first-class strings alongside
 `VZ`/`VBool`/`VFloat` — not just the identifiers `var` was already
-used for everywhere else in this file. The honest restriction: a
-string *value* here is deliberately still exactly as restricted as an
-identifier (`EStrConst`'s payload is checked by `is_valid_ident`, the
-same predicate `EVar`'s name already is), not an arbitrary Unicode
-string — this reuses `Json.v`'s already-proven `quote_string`/
-`parse_qstring` identifier codec as-is, rather than a second,
-general-purpose JSON string-escaping codec (quotes, backslashes,
-control characters) as its own separate effort. `examples/Kinematics.v`'s
-Example 12 reuses Example 2's `landed_expr` condition to label a
-state with a word (`"landed"`/`"falling"`) instead of just a bool.
-Generated Python renders a string value as a plain Python string
-literal, and `EStrConcat`/`EStrEq` as `+`/`==` — nothing exotic, since
-Python's own strings already are what this models.
+used for everywhere else in this file. `EStrConst`'s payload was first
+restricted exactly like an identifier (checked by `is_valid_ident`,
+the same predicate `EVar`'s name already is), reusing `Json.v`'s
+`quote_string`/`parse_qstring` identifier codec as-is — but that
+restriction is lifted now: `expr_idents_valid` no longer checks
+`EStrConst`'s payload at all, and `Json.v`'s `quote_text`/`parse_qtext`
+is a real escaping codec (any string, including one containing a
+literal quote or backslash, round-trips), proved the same way as
+every other case, no new axioms. Deliberately not a *full* JSON
+string codec: control characters (newline, tab, ...) pass through
+unescaped rather than gaining their own escape sequences, since
+unlike a quote or backslash they are not metacharacters in this
+grammar and escaping them would be unneeded complexity, not
+correctness. `PyPrint.v`'s `py_escape_text` mirrors the same two-
+character escaping for Python's own double-quoted string syntax.
+`examples/Kinematics.v`'s Example 12 first used this for an
+identifier-shaped label (`"landed"`/`"falling"`); Example 14 reuses
+the same condition for an ordinary human phrase with a space and an
+embedded quote mark, which Example 12's restricted form could never
+have represented. Generated Python renders a string value as a real,
+escaped Python string literal, and `EStrConcat`/`EStrEq` as `+`/`==`
+— nothing exotic, since Python's own strings already are what this
+models.
 
 Not yet covered, in roughly the order they'd likely be needed:
 
-- General Unicode/escaped string literals, not just identifier-shaped
-  text — needs a real JSON string-escaping codec, not just the
-  existing identifier quoting.
 - General mutually-recursive *groups* (more than two functions) —
   `ERecMut` only supports exactly two.
 - Numpy-shaped arrays specifically (fixed-rank, fixed-dtype, with

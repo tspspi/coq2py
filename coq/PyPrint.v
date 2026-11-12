@@ -103,6 +103,24 @@ Definition bool_to_py (b : bool) : string := if b then "True" else "False".
     escaping logic is needed. *)
 Definition py_qstring (x : var) : string := """" ++ x ++ """".
 
+(** [EStrConst]'s own payload (see Lang.v's header) is *not* restricted
+    to [is_valid_ident] -- any string, including one containing a
+    literal double-quote or backslash character, is a valid literal --
+    so rendering it needs real escaping, the same two characters
+    [Json.v]'s [escape_text] escapes for the same structural reason
+    (Python's own double-quoted string syntax needs exactly those two
+    escaped, nothing else, to stay unambiguous). *)
+Fixpoint py_escape_text (s : string) : string :=
+  match s with
+  | EmptyString => EmptyString
+  | String c rest =>
+      if Ascii.eqb c quote_char then String backslash_char (String c (py_escape_text rest))
+      else if Ascii.eqb c backslash_char then String backslash_char (String backslash_char (py_escape_text rest))
+      else String c (py_escape_text rest)
+  end.
+
+Definition py_text_qstring (x : var) : string := """" ++ py_escape_text x ++ """".
+
 Definition float_to_py (f : float) : string :=
   match Prim2SF f with
   | S754_zero false => "0.0"
@@ -182,7 +200,7 @@ Fixpoint py_expr (e : pyexpr) : string :=
       "(((" ++ x1 ++ " := (" ++ py_expr scrutinee ++ ")[1]), " ++ py_expr case1 ++ ")[-1] if ("
         ++ py_expr scrutinee ++ ")[0] == ""inl"" else ((" ++ x2 ++ " := ("
         ++ py_expr scrutinee ++ ")[1]), " ++ py_expr case2 ++ ")[-1])"
-  | PStrConst s => py_qstring s
+  | PStrConst s => py_text_qstring s
   | PStrConcat e1 e2 => "(" ++ py_expr e1 ++ " + " ++ py_expr e2 ++ ")"
   | PStrEq e1 e2 => "(" ++ py_expr e1 ++ " == " ++ py_expr e2 ++ ")"
   | PRecordN fields =>
