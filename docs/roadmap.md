@@ -101,6 +101,24 @@ an open guess.
   match the real definition for every input, translated, and run all
   the way through this project's existing `Translate.v`/`Json.v`/
   `PyPrint.v` pipeline to real, executing Python.
+- A second confirmed naming surprise, this time about `andb`/`orb`
+  specifically rather than name *disambiguation*: they don't reliably
+  extract as a named call *at all*. `andb`'s own definition is already
+  exactly a 2-case boolean match (`match a with true => b | false =>
+  false end`), small enough that extraction inlines it on the spot --
+  `andb (Z.leb x 0) (Z.ltb v 0)` (the natural, `&&`-based way to write
+  this project's own `landed_expr` check, confirmed directly) shows up
+  as an `expr:case` on `leb x 0` directly, never as an `expr:apply` of
+  `expr:global "andb"`. `RealIR.v`'s `RApp2` still recognizes a bare
+  named `"andb"`/`"orb"` call for whatever *does* reach one that way
+  (a `bool` value already sitting in a variable, say), but the
+  recognized encoding of surface-level `&&`/`||` is `RIfBool c1 c2
+  (RBoolLit false)`/`RIfBool c1 (RBoolLit true) c2` -- `andb`/`orb`'s
+  own definitions, encoded directly -- not an `RApp2 "andb"`/`"orb"`
+  call. `examples/NaturalCoq.v`'s fifth example, `landed_natural`, is
+  exactly this: the natural, `&&`-based sibling of Kinematics.v's own
+  `landed_expr`, its real captured extraction JSON reproduced
+  verbatim, encoded as `RIfBool`, and run all the way to real Python.
 
 What `RealIR.v` deliberately does *not* yet do, in roughly the order
 they'd be needed next:

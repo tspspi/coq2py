@@ -5,11 +5,13 @@
     *Certified Programming with Dependent Types* writes without a
     second thought -- carried all the way through to real, running
     Python, via [RealIR.v]'s [real_to_expr] and then this project's
-    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Four
+    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Five
     examples: [clamp_nonneg] (Z/bool arithmetic and [if]),
     [head_or_zero] (a real list pattern match), [swap_pair] (real pair
-    construction/projection), and [flip_point] (a real two-field
-    [Record], recognized as a plain pair).
+    construction/projection), [flip_point] (a real two-field
+    [Record], recognized as a plain pair), and [landed_natural] --
+    this project's own [landed_expr] (Kinematics.v), written the
+    natural way with [&&] instead of built directly as [EAnd].
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -430,5 +432,130 @@ Compute py_function "flip_point" ["p"] (translate flip_point_expr).
     [[
     >>> flip_point((3, 7))
     (7, 3)
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * A fifth example: the project's own physics, written naturally *)
+
+(** A fifth genuine, human-written Coq definition -- this one not
+    arbitrary, but the natural, source-level sibling of this project's
+    own [landed_expr] (Kinematics.v Example 2: "has the projectile
+    reached or passed ground level while still moving downward?"),
+    written the way a human actually writes it ([&&], not [EAnd]):
+    also run through [coqc]/[Extraction Language JSON] during this
+    session. *)
+Definition landed_natural (x v : Z) : bool :=
+  andb (Z.leb x 0) (Z.ltb v 0).
+
+(** What Coq's real extraction emitted for it, captured verbatim --
+    and a genuine surprise, found by direct experiment, not assumed:
+    [andb] does *not* extract as a named call the way [fst]/[negb] do.
+    [andb]'s own definition is already exactly a 2-case boolean match
+    ([match a with true => b | false => false end]), small enough that
+    extraction inlines it on the spot, so [andb (Z.leb x 0) (Z.ltb v
+    0)] shows up as an [expr:case] on [leb x 0] directly, not as an
+    [expr:apply] of [expr:global "andb"]:
+
+    [[
+    {
+      "what": "decl:term", "name": "landed_natural",
+      "type": { ... z -> z -> bool ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["x", "v"],
+        "body": {
+          "what": "expr:case",
+          "expr": {
+            "what": "expr:apply",
+            "func": {"what":"expr:global","name":"leb"},
+            "args": [{"what":"expr:rel","name":"x"},
+                     {"what":"expr:constructor","name":"Z0","args":[]}]
+          },
+          "cases": [
+            { "pat": {"name":"True","argnames":[]},
+              "body": {
+                "what": "expr:apply",
+                "func": {"what":"expr:global","name":"ltb"},
+                "args": [{"what":"expr:rel","name":"v"},
+                         {"what":"expr:constructor","name":"Z0","args":[]}]
+              } },
+            { "pat": {"name":"False","argnames":[]},
+              "body": {"what":"expr:constructor","name":"False","args":[]} }
+          ]
+        }
+      }
+    }
+    ]]
+
+    -- so a recognizer that only looks for a named [andb]/[orb] call
+    (as [RealIR.v]'s [RApp2] does) would never actually fire on [&&]/
+    [||] written at the Coq source level; it only applies to a [bool]
+    value already sitting in a variable. The *correctly* recognized
+    shape for [andb c1 c2] is [RIfBool c1 c2 (RBoolLit false)] --
+    exactly [andb]'s own definition, encoded directly: *)
+Definition landed_natural_ir : real_expr :=
+  RIfBool (RApp2 "leb" (RRel "x") (RZLit 0))
+          (RApp2 "ltb" (RRel "v") (RZLit 0))
+          (RBoolLit false).
+
+Example landed_natural_ir_matches_real_definition :
+  forall x v : Z,
+    real_eval [("x", VZ x); ("v", VZ v)] landed_natural_ir
+      = Some (VBool (landed_natural x v)).
+Proof.
+  intros x v. unfold landed_natural_ir, landed_natural. simpl.
+  destruct (Z.leb x 0); destruct (Z.ltb v 0); reflexivity.
+Qed.
+
+Definition landed_natural_expr : expr :=
+  match real_to_expr landed_natural_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: landed_natural_ir is in the recognized fragment *)
+  end.
+
+Example landed_natural_ir_translates :
+  real_to_expr landed_natural_ir = Some landed_natural_expr.
+Proof. reflexivity. Qed.
+
+Example landed_natural_expr_matches_real_definition :
+  forall x v : Z,
+    eval 10 [("x", VZ x); ("v", VZ v)] landed_natural_expr
+      = Some (VBool (landed_natural x v)).
+Proof.
+  intros x v.
+  rewrite (real_to_expr_preserves_semantics landed_natural_ir landed_natural_expr
+             landed_natural_ir_translates 10 [("x", VZ x); ("v", VZ v)] ltac:(simpl; lia)).
+  apply landed_natural_ir_matches_real_definition.
+Qed.
+
+Theorem landed_natural_idents_valid :
+  expr_idents_valid is_valid_ident landed_natural_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr landed_natural_expr.
+
+Corollary landed_natural_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate landed_natural_expr)
+      = option_map value_to_pyvalue (eval fuel rho landed_natural_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python -- an [if]/[else] rather than a Python [and],
+    tracking the real extracted shape exactly rather than the surface
+    [andb] call; compare Kinematics.v's own [landed_expr], which (built
+    directly as an [EAnd]) renders as a plain [and] instead -- two
+    different routes to the same boolean, both proven correct against
+    their own source. *)
+Compute py_function "landed_natural" ["x"; "v"] (translate landed_natural_expr).
+
+(** Run for real:
+
+    [[
+    >>> landed_natural(-1, -3)
+    True
+    >>> landed_natural(5, -3)
+    False
+    >>> landed_natural(-1, 3)
+    False
     ]]
 *)
