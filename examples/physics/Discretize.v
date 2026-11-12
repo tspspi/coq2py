@@ -43,7 +43,25 @@
     symbols involved, proved by [field]/[ring], not a numerical-analysis
     limit argument (which would need machinery -- Taylor's theorem with
     remainder -- this project's dependency policy (GOAL.md) deliberately
-    avoids pulling in). *)
+    avoids pulling in).
+
+    * What this theorem does *not* cover: stability
+
+    [leapfrog_exact_for_cubic_profile] is a statement about *one* step.
+    It says nothing about what happens after many steps -- in particular,
+    it does not require (or even mention) the classical Courant-Friedrichs-
+    Lewy condition [c * dt / dx <= 1], which is what actually keeps
+    repeated application of this scheme bounded rather than blowing up.
+    That's a textbook numerical-analysis fact (via a von Neumann/Fourier
+    stability analysis), not proved anywhere in this file or this project
+    -- an honestly-scoped gap, not an oversight. [runtime/wave1d.py]'s
+    [validate_parameters] is where this project draws the line between
+    "proved" and "merely checked at the boundary": it can't prove
+    stability, so it *validates* the CFL condition (and [dx > 0]/[c > 0])
+    as explicit runtime preconditions before running the simulation,
+    rather than silently producing numerically meaningless output if
+    they're violated. See that function's comment for the precise mapping
+    from each check back to the hypothesis or assumption it encodes. *)
 
 From Coq Require Import Reals Lra String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.

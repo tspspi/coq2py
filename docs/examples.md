@@ -411,6 +411,25 @@ seeing it land where predicted is a meaningful check that the extracted
 formula, the runtime's grid/loop plumbing, and the boundary conditions
 are all actually correct together, not just individually plausible.
 
+### What the proof doesn't cover, turned into a runtime check
+
+`leapfrog_exact_for_cubic_profile` has two hypotheses (`dx <> 0`,
+`b2 = c*c*a2`) and is silent about a third thing every reader of
+numerical PDE code eventually needs: the Courant-Friedrichs-Lewy (CFL)
+condition `c*dt/dx <= 1`, required for repeated application of this
+scheme to stay bounded rather than blow up — not proved anywhere in this
+repository (see `Discretize.v`'s comment on that theorem). Rather than
+let a violation silently produce numerically meaningless output,
+`wave1d.py`'s `validate_parameters` checks it (and `dx > 0`, `c > 0`)
+before running, raising a plain error instead:
+
+```
+$ python3 -c "from wave1d import run_simulation; run_simulation(cfl=1.5)"
+ValueError: CFL condition violated: c*dt/dx = 1.5 > 1 (leapfrog_exact_for_cubic_profile
+says nothing about stability -- see Discretize.v's comment -- so this is not
+something a proof catches for you)
+```
+
 ## Try it yourself
 
 ```

@@ -38,7 +38,16 @@ first step; for a "starts at rest" (zero initial velocity) initial
 condition, this script approximates that with u(-dt) := u(0), which is
 only first-order accurate for that one single step (a standard,
 textbook simplification, not specific to this project) -- every
-subsequent step uses the real, second-order-consistent scheme."""
+subsequent step uses the real, second-order-consistent scheme.
+
+Proof assumptions, turned into runtime checks: every Coq theorem has
+hypotheses, and a theorem only says something about inputs that satisfy
+them. `validate_parameters` below is where those hypotheses become
+actual guards on this script's inputs, each one labeled with exactly
+which proved (or explicitly *not* proved) fact it corresponds to -- the
+alternative, skipping the check, wouldn't make the simulation crash;
+it would make it silently compute numbers that are no longer backed by
+anything proved."""
 
 import os
 import sys
@@ -49,12 +58,51 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "generated"))
 from leapfrog_update import leapfrog_update  # noqa: E402  (generated, see module docstring)
 
 
+def validate_parameters(c, dx, dt):
+    """Check the preconditions `run_simulation` actually relies on, each
+    tied to a specific hypothesis (or explicit non-proof) in
+    examples/physics/Discretize.v:
+
+    - `dx != 0` is `leapfrog_exact_for_cubic_profile`'s own hypothesis
+      (needed to divide by `dx*dx` in `courant_sq`); `dx > 0` is the
+      stronger, physically-meaningful version that theorem doesn't
+      itself demand, but that this script's grid (`np.linspace`, meant
+      to be increasing) does.
+    - `c > 0`: a wave speed is physically positive; nothing in
+      Discretize.v's Coq code forces this either (`c` is just a real
+      there), so it's checked here instead.
+    - the CFL condition `c * dt / dx <= 1`: *not* a consequence of
+      `leapfrog_exact_for_cubic_profile`, which is silent about
+      stability under repeated iteration (see that theorem's comment,
+      "What this theorem does not cover"). Violating it doesn't make
+      any single step wrong -- it makes the *accumulated* result
+      numerically meaningless after enough steps, which is exactly the
+      kind of failure a crash-on-bad-input is better than.
+
+    Raises ValueError (not an assertion -- this is meant to run even
+    with Python's -O flag) naming which check failed."""
+    if not (dx > 0):
+        raise ValueError(f"dx must be > 0 (got {dx}); required for courant_sq's dx<>0 "
+                          "hypothesis and for the grid to be increasing")
+    if not (c > 0):
+        raise ValueError(f"c must be > 0 (got {c}); a wave speed is physically positive")
+    courant = c * dt / dx
+    if not (courant <= 1.0):
+        raise ValueError(
+            f"CFL condition violated: c*dt/dx = {courant:.4g} > 1 "
+            "(leapfrog_exact_for_cubic_profile says nothing about stability -- "
+            "see Discretize.v's comment -- so this is not something a proof "
+            "catches for you)"
+        )
+
+
 def run_simulation(nx=400, nt=1600, c=1.0, dx=0.01, cfl=0.5, x0=1.0, sigma=0.05):
     """Simulate the 1D scalar wave equation u_tt = c^2 u_xx on [0, (nx-1)*dx]
     with Dirichlet (u=0) boundaries, starting from a Gaussian pulse at rest.
 
     Returns (x, dt, snapshots) where snapshots is a list of (t, u) pairs."""
     dt = cfl * dx / c
+    validate_parameters(c, dx, dt)
     r = (c * dt / dx) ** 2  # courant_sq c dt dx, from Discretize.v
 
     x = np.linspace(0.0, (nx - 1) * dx, nx)
