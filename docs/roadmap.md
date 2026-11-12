@@ -92,13 +92,36 @@ minimum:
 
 ## Electromagnetism example: symmetry, Maxwell's equations, the wave equation
 
-`examples/physics/` contains a larger worked example built on reusable
-modules: Lorentz symmetry and the Minkowski metric, a multivariable
-calculus layer, Maxwell's equations and the electromagnetic wave
-equation, a discretized numerical scheme, and extraction to a Python/numpy
-simulator visualized with matplotlib. This depends on array and bounded-
-iteration support in `expr`/`pyexpr` (see above), which is core extractor
-work rather than part of the example itself.
+`examples/physics/` is a larger worked example built on reusable modules:
+
+- `Minkowski.v` — the Minkowski metric and the Lorentz group as linear
+  algebra, with a concrete boost matrix verified to preserve the metric.
+- `Calculus.v` — a symbolic multivariable calculus layer (fields closed
+  under differentiation with respect to each spacetime coordinate,
+  commuting mixed partials proved rather than assumed) and the vector
+  calculus identities (div/curl/grad/Laplacian, the double-curl identity)
+  built on it.
+- `Maxwell.v` — Maxwell's equations in vacuum as a hypothesis set, and
+  the electromagnetic wave equation for E and B derived from them.
+
+Remaining for this example: a discretized numerical scheme for the wave
+equation, extraction to a Python/numpy simulator, and visualization with
+matplotlib. This depends on array and bounded-iteration support in
+`expr`/`pyexpr` (see above), which is core extractor work rather than
+part of the example itself, plus one more design decision: `Calculus.v`
+and `Maxwell.v` use `R`, Coq's classical, axiomatically-constructed real
+numbers, which — unlike `Z` — have no computational content and cannot
+be extracted to a concrete numeric type at all (`R`'s equality isn't
+decidable; this is inherent to how it's built, not a missing extraction
+pragma). The discretized grid simulator will need its own, separately
+computable numeric representation in `expr`/`pyexpr` — either Coq's
+primitive, IEEE-754-backed float type (`Coq.Floats.PrimFloat`, extractable
+to OCaml's native `float` via the stock `ExtrOCamlFloats` realizer, no new
+dependency) or a fixed-point scheme over the existing `Z`. The proof
+connecting the discretization to the continuous wave equation above is,
+as already noted, a separate numerical-analysis question (standard: a
+second-order-consistent central-difference scheme), assumed rather than
+proved.
 
 ## Deployment target: the remote host
 
