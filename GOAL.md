@@ -165,6 +165,9 @@ via two mutually-recursive functions, that same division precondition
 reflected again as a 2-case sum-type value instead of a runtime
 check, and a real string value labelling a motion phase) with real captured
 output; `docs/roadmap.md` tracks what's intentionally deferred.
+`examples/Thermodynamics.v` applies that same proven `expr` subset to
+a second domain (classifying a substance's phase from temperature),
+to show the pipeline isn't specific to kinematics.
 A larger worked example lives in `examples/physics/`: Lorentz symmetry
 (`Minkowski.v`), a symbolic calculus layer (`Calculus.v`), Maxwell's
 equations and the wave equation derived from them (`Maxwell.v`), and a

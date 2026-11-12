@@ -715,11 +715,23 @@ says nothing about stability -- see Discretize.v's comment -- so this is not
 something a proof catches for you)
 ```
 
+## A second domain: thermodynamics
+
+Every example above builds on [`examples/Kinematics.v`](../examples/Kinematics.v)'s
+motion-tracking state. [`examples/Thermodynamics.v`](../examples/Thermodynamics.v) is
+a small, separate file in a different domain -- classifying the phase
+of a substance (solid/liquid/gas) from its temperature -- built
+entirely from the same already-proven `expr` subset (no new language
+feature), to show the pipeline isn't tied to kinematics specifically.
+`make examples` runs it; its own header comment and inline proofs are
+the full walkthrough, in the same style as this document.
+
 ## Try it yourself
 
 ```
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
+make examples  # checks Kinematics.v, NaturalCoq.v, and Thermodynamics.v
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
 make wave_sim  # generates + runs the Example 13 wave simulator, plots it
 ```
