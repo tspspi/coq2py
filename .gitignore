@@ -25,3 +25,6 @@ ocaml/driver/coq2py_core.mli
 
 # Generated Python output used for manual smoke testing
 /scratch/
+
+# Claude Code session-local state (scheduled task locks etc.), not project content
+/.claude/
