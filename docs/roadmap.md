@@ -119,10 +119,30 @@ an open guess.
   exactly this: the natural, `&&`-based sibling of Kinematics.v's own
   `landed_expr`, its real captured extraction JSON reproduced
   verbatim, encoded as `RIfBool`, and run all the way to real Python.
+- The `expr:lambda`/`argnames` wrapper around a whole `Definition` --
+  not just its body -- is recognized now too, via `RealIR.v`'s
+  `real_decl`: a thin wrapper carrying `argnames` alongside the
+  already-recognized body, since Coq's own extraction presents a
+  multi-arg function as *one* `expr:lambda` node with a direct list,
+  not curried (confirmed directly, see `RealIR.v`'s header) -- so no
+  new `real_expr` translation case was needed, only a record pairing
+  the names with the body and a preservation theorem that is a direct
+  corollary of `real_to_expr_preserves_semantics`.
+  `examples/NaturalCoq.v`'s `clamp_nonneg_decl` reuses the first
+  example's real captured JSON (including its real `argnames: ["a",
+  "b"]`) to show the whole declaration recognized, with
+  `py_function`'s parameter list now read off `rd_argnames` instead
+  of retyped by hand at the call site.
 
 What `RealIR.v` deliberately does *not* yet do, in roughly the order
 they'd be needed next:
 
+- Real recursive `decl:fixgroup`s (`ERec`'s cousin on the *ingestion*
+  side) -- `real_decl` above covers a non-recursive `Definition`'s
+  wrapper only; a `Fixpoint` additionally needs the function's own
+  name bound to itself while evaluating its body, which needs a new
+  `real_expr`-level notion of a self-referential declaration, not
+  just a names-plus-body record.
 - Parse the actual JSON *text* `Extraction Language JSON` emits into a
   `real_expr` -- today, `real_expr` terms are built directly as Gallina
   values (the same way `examples/Kinematics.v` already builds `expr`
@@ -137,9 +157,6 @@ they'd be needed next:
   JSON number. `real_expr`'s own `RZLit` already stores a plain `Z` (no
   new type invented for this), so folding the nested constructors into
   that `Z` is purely a job for the future JSON-text parser above.
-- Recognize the `expr:lambda`/`argnames` function wrapper itself (so a
-  whole `Definition`, not just its body, can be ingested) and real
-  recursive `decl:fixgroup`s (`ERec`'s cousin on the *ingestion* side).
 - Broaden the recognized intrinsic set further (sums, and general
   N-field `Record`s/mutual recursion once the ingestion side's own
   arity caps are lifted -- see below).

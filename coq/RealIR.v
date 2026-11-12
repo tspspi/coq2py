@@ -408,3 +408,59 @@ Proof.
     simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
     destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv]|]; reflexivity.
 Qed.
+
+(** [real_decl]: models the [decl:term]/[expr:lambda] wrapper around a
+    whole real, human-written multi-argument [Definition] -- not just
+    its body. Coq's own extraction JSON presents a multi-arg function
+    as *one* [expr:lambda] node carrying a direct [argnames] list, not
+    curried (confirmed directly, see this file's header) -- so this is
+    a thin wrapper around [real_to_expr], not a new translation
+    target: the body is translated exactly as before, and [argnames]
+    is carried through only to supply the generated Python function's
+    own parameter list ([PyPrint.v]'s [py_function]), the same names
+    [examples/Kinematics.v]/[examples/NaturalCoq.v] already pass by
+    hand at the call site -- now read off the real declaration itself
+    instead. *)
+Record real_decl : Type := mk_real_decl {
+  rd_argnames : list var;
+  rd_body : real_expr
+}.
+
+Definition real_decl_to_expr (rd : real_decl) : option expr :=
+  real_to_expr rd.(rd_body).
+
+(** The calling convention [py_function]'s generated Python parameter
+    list already assumes: [rd_argnames] zipped positionally against
+    the supplied arguments. Mismatched arity is simply [None] -- the
+    same honest partiality [real_to_expr] itself already uses, not a
+    new kind of runtime check. *)
+Fixpoint zip_env (names : list var) (args : list value) : option env :=
+  match names, args with
+  | [], [] => Some []
+  | n :: names', a :: args' =>
+      match zip_env names' args' with
+      | Some rest => Some ((n, a) :: rest)
+      | None => None
+      end
+  | _, _ => None
+  end.
+
+Definition real_decl_eval (rd : real_decl) (args : list value) : option value :=
+  match zip_env rd.(rd_argnames) args with
+  | Some rho => real_eval rho rd.(rd_body)
+  | None => None
+  end.
+
+(** A direct corollary of [real_to_expr_preserves_semantics]: nothing
+    new to prove about the body, only that the same environment built
+    from [rd_argnames]/[args] is what both sides evaluate under. *)
+Theorem real_decl_to_expr_preserves_semantics :
+  forall rd e, real_decl_to_expr rd = Some e ->
+    forall fuel args rho, (real_expr_depth rd.(rd_body) < fuel)%nat ->
+      zip_env rd.(rd_argnames) args = Some rho ->
+      eval fuel rho e = real_decl_eval rd args.
+Proof.
+  intros rd e Htrans fuel args rho Hfuel Hzip.
+  unfold real_decl_eval. rewrite Hzip.
+  apply (real_to_expr_preserves_semantics rd.(rd_body) e Htrans fuel rho Hfuel).
+Qed.

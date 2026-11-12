@@ -6,12 +6,16 @@
     second thought -- carried all the way through to real, running
     Python, via [RealIR.v]'s [real_to_expr] and then this project's
     already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Five
-    examples: [clamp_nonneg] (Z/bool arithmetic and [if]),
-    [head_or_zero] (a real list pattern match), [swap_pair] (real pair
-    construction/projection), [flip_point] (a real two-field
-    [Record], recognized as a plain pair), and [landed_natural] --
-    this project's own [landed_expr] (Kinematics.v), written the
-    natural way with [&&] instead of built directly as [EAnd].
+    examples: [clamp_nonneg] (Z/bool arithmetic and [if] -- plus,
+    right after it, [clamp_nonneg_decl]: the same definition again but
+    recognized as a *whole declaration*, via [RealIR.v]'s [real_decl],
+    reading its parameter names off the real JSON's own [argnames]
+    instead of supplying them by hand), [head_or_zero] (a real list
+    pattern match), [swap_pair] (real pair construction/projection),
+    [flip_point] (a real two-field [Record], recognized as a plain
+    pair), and [landed_natural] -- this project's own [landed_expr]
+    (Kinematics.v), written the natural way with [&&] instead of
+    built directly as [EAnd].
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -155,6 +159,44 @@ Compute py_function "clamp_nonneg" ["a"; "b"] (translate clamp_nonneg_expr).
     5
     ]]
 *)
+
+(** Everything above recognized only [clamp_nonneg]'s *body* -- the
+    real captured JSON's outer [decl:term]/[expr:lambda] wrapper and
+    its [argnames: ["a", "b"]] were supplied by hand at each call site
+    above ([eval [("a", ...); ("b", ...)] ...], [py_function
+    "clamp_nonneg" ["a"; "b"] ...]). [RealIR.v]'s [real_decl] now
+    recognizes that outer wrapper too, so the same two argument names
+    the real JSON actually carries drive both sides directly: *)
+Definition clamp_nonneg_decl : real_decl := mk_real_decl ["a"; "b"] clamp_nonneg_ir.
+
+Example clamp_nonneg_decl_matches_real_definition :
+  forall a b : Z,
+    real_decl_eval clamp_nonneg_decl [VZ a; VZ b] = Some (VZ (clamp_nonneg a b)).
+Proof.
+  intros a b. unfold real_decl_eval, clamp_nonneg_decl. simpl.
+  apply clamp_nonneg_ir_matches_real_definition.
+Qed.
+
+Example clamp_nonneg_decl_translates :
+  real_decl_to_expr clamp_nonneg_decl = Some clamp_nonneg_expr.
+Proof. reflexivity. Qed.
+
+Corollary clamp_nonneg_decl_translation_correct :
+  forall a b : Z,
+    eval 10 [("a", VZ a); ("b", VZ b)] clamp_nonneg_expr
+      = real_decl_eval clamp_nonneg_decl [VZ a; VZ b].
+Proof.
+  intros a b.
+  rewrite (real_decl_to_expr_preserves_semantics clamp_nonneg_decl clamp_nonneg_expr
+             clamp_nonneg_decl_translates 10 [VZ a; VZ b] [("a", VZ a); ("b", VZ b)]
+             ltac:(simpl; lia) eq_refl).
+  reflexivity.
+Qed.
+
+(** The same generated Python as before -- now with [py_function]'s
+    parameter list read straight off [clamp_nonneg_decl.(rd_argnames)]
+    instead of retyped by hand. *)
+Compute py_function "clamp_nonneg" clamp_nonneg_decl.(rd_argnames) (translate clamp_nonneg_expr).
 
 (* ----------------------------------------------------------------- *)
 (** * A second example: a real list pattern match *)
