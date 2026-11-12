@@ -248,9 +248,32 @@ modules:
 `Print Assumptions` confirms no new axioms on either `translate_
 preserves_semantics` or `parse_print_roundtrip`, and the full test
 suite (`examples`/`test`/`physics`/`wave_sim`) passes unchanged.
-General mutually-recursive *groups* (more than two functions) face the
-same induction obstacle and the same fix is expected to apply, but that
-is still a separate, not-yet-done step.
+
+**Done** (general mutually-recursive groups): `ERecGroup (fns : list
+(var * var * expr))` lifts `ERecMut`'s 2-function cap the same way
+`ERecordN` lifted `ERecord`'s 2-field one -- validated first in an
+isolated prototype (including a genuine 3-way cross-call, f calling g
+calling h), then landed across `Lang.v`, `PyLang.v`, `Translate.v` and
+`Json.v`. It deliberately *reuses* `ERecordN`'s own machinery rather
+than inventing a parallel position-indexed representation:
+`ERecGroup fns` evaluates to a `VRecordN` whose fields are the
+group's own names, each mapped to a `VClosureGroup fns cenv
+self_name` -- so a member is picked out with the *same* `EFieldN`
+that already picks a field out of any other `VRecordN`, and `EApp`'s
+own case rebuilds every member's binding (itself included) with a
+nested `fix` over `fns`, the same technique `ERecordN`'s own `eval`
+case already needed, applied twice more (once in `eval`/`peval`'s
+`EApp` case, once in `ERecGroup`'s own construction). `Translate.v`
+needed three reusable helper lemmas this time (one more than
+`ERecordN`'s two: a lookup-commutes-with-translation fact, plus one
+each for the two nested `fix`es -- construction and rebinding), proved
+once by `induction` on the member list; `Json.v`'s roundtrip proof is
+`print_parse_fieldsN_roundtrip`'s own template with one extra
+per-member identifier (`param`, alongside `name`) parsed. `Print
+Assumptions` confirms no new axioms either side, and the full test
+suite passes unchanged. `examples/Kinematics.v`'s `bounce3_expr`
+(Example 10's bounce, with a third member, `"report"`, added to the
+same group) is the worked instance, run as real, checked Python.
 
 ## Not proved: the pretty-printer
 
@@ -330,24 +353,32 @@ rather than by position — see `examples/Kinematics.v`'s
 `euler_step_record_expr`, Example 1's step again with named instead of
 positional output.
 
-Mutual recursion is now in too, also capped — at exactly two
-functions: `ERecMut f1 param1 body1 f2 param2 body2` (a `VClosureMut`),
-`ERec`'s cousin for a pair of functions that may each call *either* of
-themselves, not just `ERec`'s single self-call. The cap here reflects
-a real representation limit, not just proof convenience: Coq values
-can't be cyclic, so "two closures that capture each other" is only
-representable by bundling *both* bodies into one value (tagged with a
-`which : bool` saying which of the two it currently stands for) —
-`EApp` reconstructs *both* siblings' bindings into the callee's
-environment on every call, generalizing the single self-binding
-`ERec`'s `EApp` case already reconstructs. `ERecMut` evaluates to
-`VPair clo1 clo2`, so the usual `EFst`/`ESnd` picks out and calls
-either one. See `examples/Kinematics.v`'s `bounce_expr`, Example 10: an
-elastic bounce where `"fall"` (running Euler steps) hands off to
-`"rise"` (reflecting the velocity) — a genuine cross-call between two
-functions defined together, generated as two chained walrus
-assignments in Python (the same self-reference trick `PRec` already
-uses, extended to two names).
+Mutual recursion is now in too. The original form is still capped at
+exactly two functions: `ERecMut f1 param1 body1 f2 param2 body2` (a
+`VClosureMut`), `ERec`'s cousin for a pair of functions that may each
+call *either* of themselves, not just `ERec`'s single self-call. Coq
+values can't be cyclic, so "two closures that capture each other" is
+only representable by bundling *both* bodies into one value (tagged
+with a `which : bool` saying which of the two it currently stands
+for) — `EApp` reconstructs *both* siblings' bindings into the
+callee's environment on every call, generalizing the single
+self-binding `ERec`'s `EApp` case already reconstructs. `ERecMut`
+evaluates to `VPair clo1 clo2`, so the usual `EFst`/`ESnd` picks out
+and calls either one. See `examples/Kinematics.v`'s `bounce_expr`,
+Example 10: an elastic bounce where `"fall"` (running Euler steps)
+hands off to `"rise"` (reflecting the velocity) — a genuine cross-call
+between two functions defined together, generated as two chained
+walrus assignments in Python (the same self-reference trick `PRec`
+already uses, extended to two names). That cap is no longer the only
+option either: `ERecGroup (fns : list (var * var * expr))` (a
+`VClosureGroup`) covers an arbitrary number of mutually-recursive
+functions directly, tagging each member by *name* (reusing
+`ERecordN`'s own `VRecordN`/`EFieldN` machinery) rather than `which`'s
+boolean — the representation limit above was specific to the
+fixed-two-closures encoding, not mutual recursion itself. See
+`examples/Kinematics.v`'s `bounce3_expr`, Example 15: Example 10's own
+bounce with a third member, `"report"`, added to the same group — a
+genuine three-way chain (`"fall"` calls `"rise"` calls `"report"`).
 
 The last basic algebraic-data-type piece is in too: `EInl e`/`EInr e`/
 `ECase scrutinee x1 case1 x2 case2` (`VInl`/`VInr`), a 2-alternative
@@ -396,8 +427,6 @@ models.
 
 Not yet covered, in roughly the order they'd likely be needed:
 
-- General mutually-recursive *groups* (more than two functions) —
-  `ERecMut` only supports exactly two.
 - Numpy-shaped arrays specifically (fixed-rank, fixed-dtype, with
   broadcasting and view-vs-copy aliasing rules) — a cons-list isn't
   that; it's the general-recursion building block arrays would need

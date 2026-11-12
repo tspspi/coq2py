@@ -79,7 +79,8 @@ Inductive pyexpr : Type :=
   | PStrConcat (e1 e2 : pyexpr)
   | PStrEq (e1 e2 : pyexpr)
   | PRecordN (fields : list (var * pyexpr))
-  | PFieldN (name : var) (e : pyexpr).
+  | PFieldN (name : var) (e : pyexpr)
+  | PRecGroup (fns : list (var * var * pyexpr)).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -94,7 +95,8 @@ Inductive pyvalue : Type :=
   | PVInl (v : pyvalue)
   | PVInr (v : pyvalue)
   | PVStr (s : var)
-  | PVRecordN (fields : list (var * pyvalue)).
+  | PVRecordN (fields : list (var * pyvalue))
+  | PVClosureGroup (fns : list (var * var * pyexpr)) (cenv : list (var * pyvalue)) (self_name : var).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -102,6 +104,12 @@ Fixpoint plookup (rho : pyenv) (x : var) : option pyvalue :=
   match rho with
   | [] => None
   | (y, v) :: rest => if string_dec x y then Some v else plookup rest x
+  end.
+
+Fixpoint plookup_group_fn (fns : list (var * var * pyexpr)) (name : var) : option (var * pyexpr) :=
+  match fns with
+  | [] => None
+  | (f, p, b) :: rest => if string_dec f name then Some (p, b) else plookup_group_fn rest name
   end.
 
 (** [piterate] mirrors [Lang.iterate] exactly, constructor for
@@ -268,6 +276,18 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
           if which
           then peval fuel' ((param2, argv) :: cenv') body2
           else peval fuel' ((param1, argv) :: cenv') body1
+      | Some (PVClosureGroup fns cenv self_name), Some argv =>
+          match plookup_group_fn fns self_name with
+          | Some (param, body) =>
+              let cenv' :=
+                (fix build_bindings (gs : list (var * var * pyexpr)) : pyenv :=
+                   match gs with
+                   | [] => cenv
+                   | (f, p, b) :: rest => (f, PVClosureGroup fns cenv f) :: build_bindings rest
+                   end) fns in
+              peval fuel' ((param, argv) :: cenv') body
+          | None => None
+          end
       | _, _ => None
       end
   | PNil => Some (PVList [])
@@ -346,5 +366,12 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
              end) fields
       | _ => None
       end
+  | PRecGroup fns =>
+      Some (PVRecordN
+        ((fix build_fields (gs : list (var * var * pyexpr)) : list (var * pyvalue) :=
+            match gs with
+            | [] => []
+            | (f, p, b) :: rest => (f, PVClosureGroup fns rho f) :: build_fields rest
+            end) fns))
   end
   end.

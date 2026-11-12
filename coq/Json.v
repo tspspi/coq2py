@@ -780,6 +780,18 @@ Fixpoint print_expr (e : expr) : string :=
       ++ "]}"
   | EFieldN name e1 =>
       "{""tag"":""fieldn"",""name"":" ++ quote_string name ++ ",""value"":" ++ print_expr e1 ++ "}"
+  | ERecGroup fns =>
+      "{""tag"":""recgroup"",""fns"":[" ++
+      (fix print_fns (fs : list (var * var * expr)) : string :=
+         match fs with
+         | [] => ""
+         | [(f, p, b)] =>
+             "{""name"":" ++ quote_string f ++ ",""param"":" ++ quote_string p ++ ",""body"":" ++ print_expr b ++ "}"
+         | (f, p, b) :: rest =>
+             "{""name"":" ++ quote_string f ++ ",""param"":" ++ quote_string p ++ ",""body"":" ++ print_expr b ++ "},"
+               ++ print_fns rest
+         end) fns
+      ++ "]}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -820,6 +832,8 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | ERecordN fields =>
       S (length fields + fold_right (fun kf acc => Nat.max (expr_fuel (snd kf)) acc) O fields)
   | EFieldN _ e1 => S (expr_fuel e1)
+  | ERecGroup fns =>
+      S (length fns + fold_right (fun fpb acc => Nat.max (expr_fuel (snd fpb)) acc) O fns)
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1749,8 +1763,64 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""recgroup"",""fns"":[" s with
+    | Some s1 =>
+        match expect "]}" s1 with
+        | Some s2 => Some (ERecGroup [], s2)
+        | None =>
+            match (fix parse_fns (fuel : nat) (ss : string) : option (list (var * var * expr) * string) :=
+                     match fuel with
+                     | O => None
+                     | S fuel'0 =>
+                         match expect "{""name"":" ss with
+                         | Some ss1 =>
+                             match parse_qstring ss1 with
+                             | Some (f, ss2) =>
+                                 match expect ",""param"":" ss2 with
+                                 | Some ss3 =>
+                                     match parse_qstring ss3 with
+                                     | Some (p, ss4) =>
+                                         match expect ",""body"":" ss4 with
+                                         | Some ss5 =>
+                                             match parse_expr fuel'0 ss5 with
+                                             | Some (b, ss6) =>
+                                                 match expect "}" ss6 with
+                                                 | Some ss7 =>
+                                                     match expect "," ss7 with
+                                                     | Some ss8 =>
+                                                         match parse_fns fuel'0 ss8 with
+                                                         | Some (rest, ss9) => Some ((f, p, b) :: rest, ss9)
+                                                         | None => None
+                                                         end
+                                                     | None => Some ([(f, p, b)], ss7)
+                                                     end
+                                                 | None => None
+                                                 end
+                                             | None => None
+                                             end
+                                         | None => None
+                                         end
+                                     | None => None
+                                     end
+                                 | None => None
+                                 end
+                             | None => None
+                             end
+                         | None => None
+                         end
+                     end) fuel' s1
+            with
+            | Some (fns, s2) =>
+                match expect "]}" s2 with
+                | Some s3 => Some (ERecGroup fns, s3)
+                | None => None
+                end
+            | None => None
+            end
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1915,6 +1985,140 @@ Proof.
     reflexivity.
 Qed.
 
+(** [ERecGroup]'s own helper, the same category as [fields_fuel]/
+    [print_parse_fieldsN_roundtrip] above -- one extra per-member
+    identifier ([param], alongside [name]) is the only real
+    difference from a field list. *)
+Fixpoint fns_fuel (fns : list (var * var * expr)) : nat :=
+  match fns with
+  | [] => O
+  | (_, _, b) :: rest => S (Nat.max (expr_fuel b) (fns_fuel rest))
+  end.
+
+Lemma fns_fuel_le_len_fold :
+  forall fs, (fns_fuel fs <=
+    length fs + fold_right (fun fpb acc => Nat.max (expr_fuel (snd fpb)) acc) O fs)%nat.
+Proof.
+  induction fs as [| [[f p] b] fs' IH]; simpl.
+  - lia.
+  - apply le_n_S.
+    rewrite <- Nat.add_max_distr_l.
+    apply Nat.max_le_compat; [lia | exact IH].
+Qed.
+
+Lemma print_parse_fnsN_roundtrip :
+  forall f p b fns'
+    (Hvf : is_valid_ident f = true)
+    (Hvp : is_valid_ident p = true)
+    (Hbody : forall fuel, (expr_fuel b <= fuel)%nat ->
+               forall rest, parse_expr fuel (print_expr b ++ rest) = Some (b, rest))
+    (Hall : Forall (fun fpb => is_valid_ident (fst (fst fpb)) = true /\
+                     is_valid_ident (snd (fst fpb)) = true /\
+                     expr_idents_valid is_valid_ident (snd fpb) = true /\
+                     forall fuel, (expr_fuel (snd fpb) <= fuel)%nat ->
+                       forall rest, parse_expr fuel (print_expr (snd fpb) ++ rest) = Some (snd fpb, rest))
+                   fns')
+    fuel,
+    (fns_fuel ((f, p, b) :: fns') <= fuel)%nat ->
+    forall rest,
+      (fix parse_fns (fuel0 : nat) (ss : string) : option (list (var * var * expr) * string) :=
+         match fuel0 with
+         | O => None
+         | S fuel0' =>
+             match expect "{""name"":" ss with
+             | Some ss1 =>
+                 match parse_qstring ss1 with
+                 | Some (f0, ss2) =>
+                     match expect ",""param"":" ss2 with
+                     | Some ss3 =>
+                         match parse_qstring ss3 with
+                         | Some (p0, ss4) =>
+                             match expect ",""body"":" ss4 with
+                             | Some ss5 =>
+                                 match parse_expr fuel0' ss5 with
+                                 | Some (b0, ss6) =>
+                                     match expect "}" ss6 with
+                                     | Some ss7 =>
+                                         match expect "," ss7 with
+                                         | Some ss8 =>
+                                             match parse_fns fuel0' ss8 with
+                                             | Some (rest0, ss9) => Some ((f0, p0, b0) :: rest0, ss9)
+                                             | None => None
+                                             end
+                                         | None => Some ([(f0, p0, b0)], ss7)
+                                         end
+                                     | None => None
+                                     end
+                                 | None => None
+                                 end
+                             | None => None
+                             end
+                         | None => None
+                         end
+                     | None => None
+                     end
+                 | None => None
+                 end
+             | None => None
+             end
+         end) fuel
+        ((fix print_fns (fs : list (var * var * expr)) : string :=
+            match fs with
+            | [] => ""
+            | [(f0, p0, b0)] =>
+                "{""name"":" ++ quote_string f0 ++ ",""param"":" ++ quote_string p0 ++ ",""body"":" ++ print_expr b0 ++ "}"
+            | (f0, p0, b0) :: rest0 =>
+                "{""name"":" ++ quote_string f0 ++ ",""param"":" ++ quote_string p0 ++ ",""body"":" ++ print_expr b0 ++ "},"
+                  ++ print_fns rest0
+            end) ((f, p, b) :: fns') ++ "]" ++ rest)
+      = Some ((f, p, b) :: fns', "]" ++ rest).
+Proof.
+  intros f p b fns'. revert f p b.
+  induction fns' as [| [[f2 p2] b2] fns'' IH]; intros f p b Hvf Hvp Hbody Hall fuel Hfuel rest.
+  - (* singleton *)
+    simpl in Hfuel. destruct fuel as [|fuel']; [lia|]. simpl in Hfuel.
+    assert (Hone : (expr_fuel b <= fuel')%nat) by lia.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print f Hvf). simpl.
+    repeat rewrite string_append_assoc.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print p Hvp). simpl.
+    repeat rewrite string_append_assoc.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (Hbody fuel' Hone).
+    simpl.
+    destruct (expect "," ("]" ++ rest)) eqn:Hcomma.
+    + unfold expect in Hcomma. simpl in Hcomma. discriminate.
+    + reflexivity.
+  - (* cons *)
+    simpl in Hfuel. destruct fuel as [|fuel']; [lia|]. simpl in Hfuel.
+    assert (Hone : (expr_fuel b <= fuel')%nat) by lia.
+    pose proof (Nat.le_max_r (expr_fuel b) (S (Nat.max (expr_fuel b2) (fns_fuel fns'')))) as Hmax.
+    assert (Hfuel' : (fns_fuel ((f2, p2, b2) :: fns'') <= fuel')%nat) by (simpl; lia).
+    inversion Hall as [| x l Hx Hl]; subst.
+    destruct Hx as [Hvf2 [Hvp2 [Hvb2 Hbody2]]].
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print f Hvf). simpl.
+    repeat rewrite string_append_assoc.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print p Hvp). simpl.
+    repeat rewrite string_append_assoc.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (Hbody fuel' Hone).
+    simpl.
+    repeat rewrite string_append_assoc.
+    pose proof (IH f2 p2 b2 Hvf2 Hvp2 Hbody2 Hl fuel' Hfuel' rest) as IH'.
+    simpl in IH'.
+    rewrite IH'.
+    reflexivity.
+Qed.
+
 Theorem parse_print_roundtrip :
   forall e,
     expr_idents_valid is_valid_ident e = true ->
@@ -1974,7 +2178,8 @@ Proof.
       | e1 e2                 (* EStrConcat *)
       | e1 e2                 (* EStrEq *)
       | fields                (* ERecordN *)
-      | name e1 ];            (* EFieldN *)
+      | name e1               (* EFieldN *)
+      | fns ];                (* ERecGroup *)
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
   - (* EConst *)
@@ -2488,6 +2693,52 @@ reflexivity.
     rewrite (parse_qstring_print name Hname). simpl.
     repeat rewrite string_append_assoc.
     rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). reflexivity.
+  - (* ERecGroup *)
+    simpl in Hn.
+    destruct fns as [| [[f p] b] fns'].
+    + simpl. reflexivity.
+    + simpl in Hn.
+      simpl in Hfuel.
+      simpl in Hvalid.
+      apply andb_true_iff in Hvalid as [Hvk0 Hvrest].
+      apply andb_true_iff in Hvk0 as [Hvf Hvk0'].
+      apply andb_true_iff in Hvk0' as [Hvp Hvb].
+      assert (Hone : (expr_fuel b < n)%nat).
+      { pose proof (Nat.le_max_l (expr_fuel b)
+                      (fold_right (fun fpb acc => Nat.max (expr_fuel (snd fpb)) acc) O fns')) as Hmax.
+        lia. }
+      assert (Hall : Forall (fun fpb => is_valid_ident (fst (fst fpb)) = true /\
+                       is_valid_ident (snd (fst fpb)) = true /\
+                       expr_idents_valid is_valid_ident (snd fpb) = true /\
+                       forall fuel0, (expr_fuel (snd fpb) <= fuel0)%nat ->
+                         forall rest0, parse_expr fuel0 (print_expr (snd fpb) ++ rest0) = Some (snd fpb, rest0))
+                     fns').
+      { apply Forall_forall. intros [[f0 p0] b0] Hin.
+        pose proof Hvrest as Hvrest0.
+        apply forallb_forall with (x := (f0, p0, b0)) in Hvrest0; [| exact Hin].
+        simpl in Hvrest0.
+        apply andb_true_iff in Hvrest0 as [Hvf0 Hvrest0'].
+        apply andb_true_iff in Hvrest0' as [Hvp0 Hvb0].
+        assert (Hlt0 : (expr_fuel b0 < n)%nat).
+        { assert (Hle : (expr_fuel b0 <= fold_right (fun fpb acc => Nat.max (expr_fuel (snd fpb)) acc) O fns')%nat).
+          { clear -Hin. induction fns' as [| fpb' fns'' IHf]; simpl in *.
+            - inversion Hin.
+            - destruct Hin as [Heq | Hin'].
+              + subst. apply Nat.le_max_l.
+              + eapply Nat.le_trans; [apply IHf, Hin' | apply Nat.le_max_r]. }
+          simpl in Hn. lia. }
+        repeat split; try assumption.
+        intros fuel0 Hf0 rest0.
+        exact ((IHn (expr_fuel b0) Hlt0 b0 (le_n _)) Hvb0 fuel0 Hf0 rest0). }
+      assert (Hfone : (fns_fuel ((f, p, b) :: fns') <= fuel')%nat).
+      { pose proof (fns_fuel_le_len_fold ((f, p, b) :: fns')) as Hle.
+        simpl in Hle. simpl. lia. }
+      pose proof (print_parse_fnsN_roundtrip f p b fns' Hvf Hvp
+                    (fun fuel0 Hf0 rest0 => (IHn (expr_fuel b) Hone b (le_n _)) Hvb fuel0 Hf0 rest0)
+                    Hall fuel' Hfone) as Hpf.
+      destruct fns' as [| [[f2 p2] b2] fns''];
+        repeat rewrite string_append_assoc; simpl; simpl in Hpf;
+        rewrite (Hpf (String "}"%char rest)); reflexivity.
 
   }
   intros e Hvalid fuel Hfuel rest.

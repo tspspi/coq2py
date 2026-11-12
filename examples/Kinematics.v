@@ -40,12 +40,15 @@
     a thirteenth, [euler_step_full_state_expr], Example 9's named
     record again but with *four* fields at once ([ERecordN]/[EFieldN]),
     genuinely beyond [ERecord]'s 2-field cap rather than nesting it --
-    and a fourteenth, [motion_report_expr], Example 12's label again
+    a fourteenth, [motion_report_expr], Example 12's label again
     but as a general string literal (a space, an embedded quote mark)
     rather than the identifier-shaped text [EStrConst] was first
-    restricted to.
+    restricted to -- and a fifteenth, [bounce3_expr], Example 10's
+    bounce again but with a *third* mutually-recursive member added
+    to the same group ([ERecGroup], genuinely beyond [ERecMut]'s
+    2-function cap), exercising a real three-way cross-call.
 
-    All fourteen are expressed as terms of our supported [expr] subset
+    All fifteen are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -862,5 +865,84 @@ Compute py_function "motion_report" ["state"] (translate motion_report_expr).
     'status: "landed"'
     >>> motion_report((35, -10))
     'status: still falling'
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * Example 15: a genuinely N-way mutually-recursive group *)
+
+(** [ERecMut] (Example 10) only lets exactly two functions call each
+    other. [ERecGroup] lifts that to an arbitrary number: [bounce3_expr]
+    is Example 10's own bounce, with a *third* member, ["report"],
+    added to the same group -- so ["fall"] still hands off to
+    ["rise"] once it lands, but ["rise"] now hands off again, to
+    ["report"], which packages the final state as a named record
+    (Example 9's [ERecordN]) instead of returning the bare pair. A
+    genuine three-way chain (["fall"] calls ["rise"] calls ["report"]),
+    not two independent pairs -- exercising the actual cross-call
+    mechanics a 2-way [ERecMut] can't exhibit. [ERecGroup] evaluates to
+    a [VRecordN] of closures (Lang.v's own comment), so a member is
+    picked out with [EFieldN] -- the *same* accessor a plain
+    [ERecordN] field already uses, not a new one. *)
+Definition bounce3_fall_body : expr :=
+  EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+      (EApp (EVar "rise") (EVar "state"))
+      (EApp (EVar "fall") euler_multi_step_body).
+
+Definition bounce3_rise_body : expr :=
+  EApp (EVar "report") (EPair (EFst (EVar "state")) (ESub (EConst 0) (ESnd (EVar "state")))).
+
+Definition bounce3_report_body : expr :=
+  ERecordN [("x", EFst (EVar "state")); ("v", ESnd (EVar "state"))].
+
+Definition bounce3_expr : expr :=
+  ERecGroup [
+    ("fall", "state", bounce3_fall_body);
+    ("rise", "state", bounce3_rise_body);
+    ("report", "state", bounce3_report_body)
+  ].
+
+Theorem bounce3_idents_valid :
+  expr_idents_valid is_valid_ident bounce3_expr = true.
+Proof. reflexivity. Qed.
+
+(** Same drop as Example 10 (height 45, "gravity" [a = -10], [dt = 1]):
+    lands at [(-15, -30)], ["rise"] reflects the velocity to [30], and
+    ["report"] -- the new third member -- wraps the result as
+    [{"x": -15, "v": 30}] instead of a bare pair. *)
+Example bounce3_concrete :
+  eval 100 [("a", VZ (-10)); ("dt", VZ 1)]
+    (EApp (EFieldN "fall" bounce3_expr) (EPair (EConst 45) (EConst 0)))
+    = Some (VRecordN [("x", VZ (-15)); ("v", VZ 30)]).
+Proof. reflexivity. Qed.
+
+Compute print_expr (EApp (EFieldN "fall" bounce3_expr) (EPair (EConst 45) (EConst 0))).
+
+Corollary bounce3_json_roundtrip :
+  parse_expr_top (print_expr (EApp (EFieldN "fall" bounce3_expr) (EPair (EConst 45) (EConst 0))))
+    = Some (EApp (EFieldN "fall" bounce3_expr) (EPair (EConst 45) (EConst 0)), "").
+Proof.
+  json_roundtrip_corollary
+    (EApp (EFieldN "fall" bounce3_expr) (EPair (EConst 45) (EConst 0)))
+    bounce3_idents_valid.
+Qed.
+
+Corollary bounce3_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate bounce3_expr)
+      = option_map value_to_pyvalue (eval fuel rho bounce3_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: all three closures are built together, via
+    three chained walrus assignments ending in a [dict] instead of
+    [ERecMut]'s own pair (PyPrint.v's comment on [PRecGroup]) -- a
+    member is called by reading it back out of that [dict] by name. *)
+Compute py_function "bounce3" ["a"; "dt"] (translate bounce3_expr).
+
+(** Run for real:
+
+    [[
+    >>> bounce3(-10, 1)["fall"]((45, 0))
+    {'x': -15, 'v': 30}
     ]]
 *)

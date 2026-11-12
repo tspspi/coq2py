@@ -170,6 +170,32 @@
     an arbitrary number of named fields -- see this file's [eval] cases
     and docs/roadmap.md for the design rationale. *)
 
+(** [ERecGroup fns] generalizes [ERecMut] to an arbitrary number of
+    mutually-recursive functions, each named, each possibly calling
+    any sibling (including itself) by name. It deliberately reuses
+    [ERecordN]'s own machinery rather than inventing a parallel
+    position-indexed representation: [ERecGroup fns] evaluates to a
+    [VRecordN] whose fields are the group's own names, each mapped to
+    a [VClosureGroup] -- so an individual member is picked out of the
+    group with the *same* [EFieldN] that already picks a field out of
+    any other [VRecordN], not a new selector. [VClosureGroup fns cenv
+    self_name] is [VClosure]'s cousin: it doesn't carry its own
+    [param]/[body] directly (unlike [VClosure]/[VClosureMut], which
+    is why [EApp] needs [lookup_group_fn] to find them from
+    [self_name] first) -- carrying the *name* rather than, say, a
+    numeric index keeps the field names [EFieldN] already requires as
+    the one and only way to identify a member, with nothing to keep
+    in sync. [EApp]'s own case rebuilds *every* member's binding
+    (itself included) into the callee's environment before evaluating
+    its body, generalizing the single/double self-binding
+    [ERec]/[ERecMut]'s own [EApp] cases already reconstruct -- this
+    needs a nested [fix] over [fns] the same way [ERecordN]'s own
+    [eval] case needs one over its fields (see that case's comment),
+    not a second top-level mutually-recursive [Fixpoint]. Validated
+    first in an isolated prototype (including a genuine 3-way cross-
+    call, f calling g calling h) before being applied here verbatim --
+    see docs/roadmap.md. *)
+
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
@@ -223,7 +249,8 @@ Inductive expr : Type :=
   | EStrConcat (e1 e2 : expr)
   | EStrEq (e1 e2 : expr)
   | ERecordN (fields : list (var * expr))
-  | EFieldN (name : var) (e : expr).
+  | EFieldN (name : var) (e : expr)
+  | ERecGroup (fns : list (var * var * expr)).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -246,7 +273,8 @@ Inductive value : Type :=
   | VInl (v : value)
   | VInr (v : value)
   | VStr (s : var)
-  | VRecordN (fields : list (var * value)).
+  | VRecordN (fields : list (var * value))
+  | VClosureGroup (fns : list (var * var * expr)) (cenv : list (var * value)) (self_name : var).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -259,6 +287,14 @@ Fixpoint lookup (rho : env) (x : var) : option value :=
   match rho with
   | [] => None
   | (y, v) :: rest => if string_dec x y then Some v else lookup rest x
+  end.
+
+(** Find the (param, body) a group member's own name picks out of its
+    group's [fns] list -- see [ERecGroup]'s own comment below. *)
+Fixpoint lookup_group_fn (fns : list (var * var * expr)) (name : var) : option (var * expr) :=
+  match fns with
+  | [] => None
+  | (f, p, b) :: rest => if string_dec f name then Some (p, b) else lookup_group_fn rest name
   end.
 
 (** Apply [f] to [v], then to that result, [n] times in total, stopping
@@ -434,6 +470,18 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
           if which
           then eval fuel' ((param2, argv) :: cenv') body2
           else eval fuel' ((param1, argv) :: cenv') body1
+      | Some (VClosureGroup fns cenv self_name), Some argv =>
+          match lookup_group_fn fns self_name with
+          | Some (param, body) =>
+              let cenv' :=
+                (fix build_bindings (gs : list (var * var * expr)) : env :=
+                   match gs with
+                   | [] => cenv
+                   | (f, p, b) :: rest => (f, VClosureGroup fns cenv f) :: build_bindings rest
+                   end) fns in
+              eval fuel' ((param, argv) :: cenv') body
+          | None => None
+          end
       | _, _ => None
       end
   | ENil => Some (VList [])
@@ -512,6 +560,13 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
              end) fields
       | _ => None
       end
+  | ERecGroup fns =>
+      Some (VRecordN
+        ((fix build_fields (gs : list (var * var * expr)) : list (var * value) :=
+            match gs with
+            | [] => []
+            | (f, p, b) :: rest => (f, VClosureGroup fns rho f) :: build_fields rest
+            end) fns))
   end
   end.
 
@@ -625,4 +680,9 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | ERecordN fields =>
       forallb (fun kf => andb (is_valid_ident (fst kf)) (expr_idents_valid is_valid_ident (snd kf))) fields
   | EFieldN name e1 => andb (is_valid_ident name) (expr_idents_valid is_valid_ident e1)
+  | ERecGroup fns =>
+      forallb (fun fpb => match fpb with
+                 | (f, p, b) =>
+                     andb (is_valid_ident f) (andb (is_valid_ident p) (expr_idents_valid is_valid_ident b))
+                 end) fns
   end.

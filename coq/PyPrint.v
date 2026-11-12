@@ -85,7 +85,19 @@
     the same way the fixed-arity [PRecord]/[PField] already do -- a
     [dict] literal keyed by field name, looked up by name -- just built
     from a nested anonymous [fix] walking the field list instead of a
-    fixed two-field literal. *)
+    fixed two-field literal.
+
+    [PRecGroup] (genuinely-N-way mutual recursion, see Lang.v) renders
+    as [PRecMut]'s own walrus-self-reference trick, generalized from a
+    fixed pair to a list: one [(name := (lambda param: body)), ] per
+    member, ending in a [dict] -- [PRecordN]'s own encoding, not a new
+    one, since a group's *value* genuinely is a [VRecordN] of
+    closures (Lang.v's [ERecGroup] comment) -- so an individual member
+    is called by reading it back out of that [dict] with the *same*
+    [PFieldN] a [PRecordN] field already uses, not a new accessor.
+    Python resolves each member's free reference to a sibling against
+    the enclosing scope at *call* time, the same reason [PRec]'s/
+    [PRecMut]'s own single/double self-reference already works. *)
 
 From Coq Require Import String List ZArith.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
@@ -213,6 +225,22 @@ Fixpoint py_expr (e : pyexpr) : string :=
          end) fields
       ++ "}"
   | PFieldN name e1 => "(" ++ py_expr e1 ++ ")[" ++ py_qstring name ++ "]"
+  | PRecGroup fns =>
+      "(" ++
+      (fix py_group_assigns (fs : list (var * var * pyexpr)) : string :=
+         match fs with
+         | [] => ""
+         | (f, p, b) :: rest =>
+             "(" ++ f ++ " := (lambda " ++ p ++ ": " ++ py_expr b ++ ")), " ++ py_group_assigns rest
+         end) fns
+      ++ "{" ++
+      (fix py_group_dict (fs : list (var * var * pyexpr)) : string :=
+         match fs with
+         | [] => ""
+         | [(f, p, b)] => py_qstring f ++ ": " ++ f
+         | (f, p, b) :: rest => py_qstring f ++ ": " ++ f ++ ", " ++ py_group_dict rest
+         end) fns
+      ++ "})[-1]"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=
