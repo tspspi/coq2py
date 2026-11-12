@@ -30,6 +30,7 @@ examples:
 physics: coq
 	coqc -Q coq "" -Q examples/physics "" examples/physics/Minkowski.v
 	coqc -Q coq "" -Q examples/physics "" examples/physics/Calculus.v
+	coqc -Q coq "" -Q examples/physics "" examples/physics/Maxwell.v
 
 test: ocaml
 	@echo "--- euler_step (pairs/tuples): examples/Kinematics.v's euler_step_expr ---"
