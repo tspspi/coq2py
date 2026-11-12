@@ -5,63 +5,82 @@ the vision in [GOAL.md](../GOAL.md), referenced from several source files
 so the gaps are visible right next to the code they apply to rather than
 only here.
 
-## Not yet wired: real `coqc` JSON output
+## In progress: ingesting real `coqc` JSON output
 
 `Json.v`'s grammar is a restricted JSON-flavoured encoding this project
-defines and proves a parser for — it is **not yet** reconciled against
-what Coq's own `Extraction Language JSON` backend actually emits for a
-real `.v` file. Today, `expr` values are constructed directly as Gallina
-terms (see `examples/Kinematics.v`) or fed to the CLI by hand-writing the
-JSON.
+defines and proves a parser for -- it is **not yet fully** reconciled
+against what Coq's own `Extraction Language JSON` backend actually emits
+for a real, human-written `.v` file, though a first, proven step now
+exists (`coq/RealIR.v`). Everything below was checked empirically (Coq
+8.18.0, the dev-machine version per GOAL.md's table) rather than left as
+an open guess.
 
-This was empirically checked (Coq 8.18.0, the dev-machine version per
-GOAL.md's table) rather than left as an open guess, and the honest
-answer is: it's a materially bigger gap than "adjust the grammar a bit."
+- With this project's own OCaml-native realizers loaded (`ExtrOcamlZInt`
+  etc, needed so `Z`/`float` extract to OCaml's native types rather than
+  Peano-style trees), the JSON output leaks raw OCaml source snippets as
+  constructor names (a constructor literally named `"(fun p->1+2*p)"`)
+  and pulls in unrelated transitive standard-library declarations
+  (`Stdlib.Int.succ`, ...) -- confirmed directly. `Extract Constant`/
+  `Extract Inductive` realizer pragmas do **not** give a clean,
+  target-independent JSON IR; they just make the *OCaml-flavoured* mess
+  visible inside it.
+- Without those realizers, a genuinely human-written definition --
+  ```coq
+  Definition clamp_nonneg (a b : Z) : Z := if Z.ltb a 0 then b else a.
+  ```
+  -- extracts to clean, generic MiniML-shaped JSON: a `decl:term` whose
+  `value` is an `expr:lambda` with `argnames: ["a"; "b"]` (a direct,
+  *multi-argument* list, not curried) and an `expr:case` body dispatching
+  on an `expr:apply` of `expr:global "ltb"` (the `Z.` module prefix is
+  dropped in the emitted name) to an `expr:rel "a"` and an
+  `expr:constructor "Z0"` (the literal `0`), with two `pat:constructor`
+  cases on `True`/`False`. This is the real target. The catch: every
+  individual arithmetic/comparison *operation* still extracts its own
+  full recursive definition over `Z`/`positive`'s binary encoding (two
+  one-line `Z`-valued definitions together ran to 67KB) unless the
+  consuming code specifically recognizes well-known operation names
+  (`"add"`, `"ltb"`, `"andb"`, ...) as intrinsics and simply ignores their
+  extracted bodies -- exactly the same move a real compiler makes for
+  built-ins.
+- `coq/RealIR.v` is that recognizer, as a first proven step: `real_expr`
+  models exactly this fragment (variables, `Z`/`bool` literals, named
+  unary/binary intrinsic calls, a 2-case boolean `if`), `real_eval`'s
+  reference semantics calls Coq's own `Z.add`/`Z.ltb`/etc *directly*
+  (not a reimplementation -- the trust boundary here is exactly "Coq's
+  standard library means what it says", the same category as the kernel
+  itself), and `real_to_expr : real_expr -> option expr` translates into
+  this project's existing, already-proven `expr` subset, with
+  `real_to_expr_preserves_semantics` proving the translation matches
+  `real_eval` exactly (no new axioms -- confirmed via `Print
+  Assumptions`). `examples/NaturalCoq.v` closes the loop concretely for
+  `clamp_nonneg` above: its real captured JSON output is reproduced
+  verbatim in a comment, hand-encoded as a `real_expr` term, proved to
+  match calling the real `clamp_nonneg` for all `a`/`b`, translated, and
+  run all the way through this project's existing `Translate.v`/
+  `Json.v`/`PyPrint.v` pipeline to real, executing Python.
 
-- `Recursive Extraction add1.` for a one-line `Definition add1 (x : Z) :
-  Z := x + 1.` emits **~1700 lines** of JSON — the real backend pulls in
-  the full transitive closure of everything the function's type and body
-  touch, here `Z`'s own `positive`-based binary representation and all of
-  *its* recursive helper functions (`add`, `succ`, ...), each as a full
-  `decl:ind`/`decl:fixgroup` declaration. `Extract Constant`/`Extract
-  Inductive` realizer pragmas (the ones that successfully suppress this
-  for the OCaml backend, e.g. `ExtrOcamlZInt`) do **not** suppress it for
-  JSON — they only rename the emitted declarations, the expansion still
-  happens.
-- The practical entry point is instead the *non-recursive* `Extraction
-  add1.` (no `Recursive`), which emits just one bounded `decl:term` for
-  `add1` itself — 41 lines, referencing `Z`/`Zpos`/`XH`/`Z.add` (as
-  `add0`) *by name* rather than inlining their definitions. That's a
-  genuinely usable starting shape.
-- But even that shape is further from `Json.v`'s grammar than hoped:
-  - Functions are **curried lambdas** (`expr:lambda` with an arg-name
-    list and a body) applied via a general `expr:apply` node — this
-    project's `expr` has no function values or application *at all* yet
-    (every "function" is the outermost `py_function` wrapper, not a
-    first-class value), so supporting this is a prerequisite, not a
-    grammar tweak.
-  - Integer literals are **`positive`'s own binary constructor tree**
-    (`1` prints as `Zpos XH`; bigger numbers nest `XI`/`XO` constructors
-    bit by bit), not a flat decimal numeral the way `z_to_string` emits
-    — needs its own conversion, structurally similar to (but distinct
-    from) the `spec_float`/`Prim2SF` decomposition `Json.v`'s float codec
-    already does.
-  - Arithmetic appears as a **named function call** (`x + 1` is
-    `expr:apply` of `expr:global "add0"`, not a primitive `+` node) --
-    recognizing this as `EAdd` means pattern-matching on that specific
-    global name, which is an extraction-internal detail, not a stable,
-    documented one (confirming the schema-stability caveat below).
+What `RealIR.v` deliberately does *not* yet do, in roughly the order
+they'd be needed next:
 
-None of this is a reason to abandon the idea — the non-recursive,
-single-declaration shape is a real, bounded starting point. The
-"needs function application in `expr`/`pyexpr` first" prerequisite is
-now done (`ELam`/`ERec`/`EApp`, see below) — what's still missing is a
-translation layer from this richer, curried, named-global-reference
-MiniML-style IR down to the subset `expr` actually covers (binary
-`EAdd` vs. a named 2-argument `expr:apply`, binary-tree integer
-literals vs. flat decimals, etc.), not a small adjustment to `Json.v`'s
-current flat grammar. Re-doing the round-trip proof against whatever
-grammar comes out the other end is still step 3, unchanged.
+- Parse the actual JSON *text* `Extraction Language JSON` emits into a
+  `real_expr` -- today, `real_expr` terms are built directly as Gallina
+  values (the same way `examples/Kinematics.v` already builds `expr`
+  terms directly, without first round-tripping through `Json.v`'s
+  parser). Writing that parser means handling arbitrary nesting (`decl`/
+  `expr`/`pat`/`type` tags with list-valued fields), which reopens
+  exactly the structural-induction problem the 2-field-record/2-function-
+  mutual-recursion caps were designed around, for a *new* grammar this
+  time, not `Json.v`'s own.
+- Recognize integer literals: a numeral extracts as nested `Z0`/`Zpos`/
+  `Zneg`/`positive` (`XH`/`XO`/`XI`) constructor applications, not a flat
+  JSON number. `real_expr`'s own `RZLit` already stores a plain `Z` (no
+  new type invented for this), so folding the nested constructors into
+  that `Z` is purely a job for the future JSON-text parser above.
+- Recognize the `expr:lambda`/`argnames` function wrapper itself (so a
+  whole `Definition`, not just its body, can be ingested) and real
+  recursive `decl:fixgroup`s (`ERec`'s cousin on the *ingestion* side).
+- Broaden the recognized intrinsic set beyond `Z`/`bool` (lists, pairs,
+  the other operations this project's `expr` already has).
 
 ## Not proved: the pretty-printer
 

@@ -180,6 +180,18 @@ theory and the discretized, extracted `PrimFloat` simulator are
 connected by `Discretize.v`'s consistency theorem, not by one continuous
 proof chain from `R` down to the generated Python.
 
+A first step toward ingesting real, human-written Coq (rather than
+hand-built `expr` terms) now also exists: `coq/RealIR.v` proves that a
+recognized fragment of Coq's own `Extraction Language JSON` output
+(`Z`/`bool` arithmetic and `if`, real intrinsic calls like `Z.ltb`
+verified against Coq's own semantics directly, not a reimplementation)
+translates into the existing `expr` subset with no new axioms;
+`examples/NaturalCoq.v` carries one real, empirically-captured
+extraction example (`clamp_nonneg`) all the way through to running
+Python. See `docs/roadmap.md` for exactly what's proven versus what's
+still missing (parsing the JSON text itself, numeral-literal
+reconstruction, the function/recursion wrappers).
+
 Decisions made along the way (superseding the "Open questions" below
 where they overlap):
 - The pretty-printer is left unproved (structure-preserving, not
@@ -198,10 +210,17 @@ where they overlap):
   N-field records, mutually-recursive groups larger than two, general
   (non-identifier-shaped) string literals, richer inductive types —
   see `docs/roadmap.md`).
-- Reconciling `Json.v`'s grammar against Coq's actual
-  `Extraction Language JSON` output (currently `expr` values are
-  constructed directly rather than ingested from real `.v` sources — see
-  `docs/roadmap.md`).
+- Fully reconciling `Json.v`'s grammar against Coq's actual
+  `Extraction Language JSON` output. A first proven step exists
+  (`coq/RealIR.v`, `examples/NaturalCoq.v`): a recognized fragment of
+  real, human-written Coq (`Z`/`bool` arithmetic and `if`, real
+  `Z.ltb`/etc. calls, verified against Coq's own captured extraction
+  JSON) translates into this project's existing `expr` subset with no
+  new axioms. Still missing: parsing the JSON *text* itself (rather than
+  hand-encoding `real_expr` terms directly), numeral-literal
+  reconstruction from nested `Z0`/`Zpos`/`positive` constructors, and the
+  `expr:lambda`/`decl:fixgroup` function/recursion wrappers — see
+  `docs/roadmap.md`.
 - What exactly the "theory-evaluating agent" on the remote host needs from
   `coq2py` at the interface level (input format, invocation, how generated
   Python gets executed) — needed to scope the deployment packaging.

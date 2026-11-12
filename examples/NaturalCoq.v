@@ -1,0 +1,151 @@
+(** NaturalCoq.v
+
+    Closes the loop RealIR.v opens: a genuine, human-style Coq
+    [Definition] -- the kind of thing chapter 2 of a book like
+    *Certified Programming with Dependent Types* writes without a
+    second thought -- carried all the way through to real, running
+    Python, via [RealIR.v]'s [real_to_expr] and then this project's
+    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline.
+
+    [clamp_nonneg] below is not invented for this file: it is exactly
+    what was typed into a throwaway [.v] file and run through
+    [coqc]/[Extraction Language JSON] during this session, to find out
+    what Coq's own extraction backend really emits (see [RealIR.v]'s
+    header for the two complications that experiment found). The
+    captured JSON is reproduced in the comment above [clamp_nonneg_ir]
+    below so the encoding can be checked by eye against the real
+    output, not just trusted. *)
+
+From Coq Require Import ZArith String List Bool Lia.
+Import ListNotations.
+Require Import Lang.
+Require Import PyLang.
+Require Import Translate.
+Require Import Json.
+Require Import PyPrint.
+Require Import RealIR.
+Open Scope Z_scope.
+Open Scope string_scope.
+
+(** The real, human-written Coq this example starts from: *)
+Definition clamp_nonneg (a b : Z) : Z :=
+  if Z.ltb a 0 then b else a.
+
+(** What [coqc]/[Extraction Language JSON] (with no OCaml-targeting
+    realizer loaded -- see RealIR.v's header) actually emitted for it,
+    captured verbatim during this session:
+
+    [[
+    {
+      "what": "decl:term", "name": "clamp_nonneg",
+      "type": { ... Z -> Z -> Z ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["a", "b"],
+        "body": {
+          "what": "expr:case",
+          "expr": {
+            "what": "expr:apply",
+            "func": { "what": "expr:global", "name": "ltb" },
+            "args": [
+              { "what": "expr:rel", "name": "a" },
+              { "what": "expr:constructor", "name": "Z0", "args": [] }
+            ]
+          },
+          "cases": [
+            { "pat": {"name": "True", ...},  "body": {"what":"expr:rel","name":"b"} },
+            { "pat": {"name": "False", ...}, "body": {"what":"expr:rel","name":"a"} }
+          ]
+        }
+      }
+    }
+    ]]
+
+    [clamp_nonneg_ir]'s shape below is that JSON tree, written as a
+    [real_expr] term by hand (the textual-JSON-to-[real_expr] parser
+    itself is the next step -- see docs/roadmap.md) -- an
+    [expr:apply]/[expr:global "ltb"] over two [expr:rel]/[expr:
+    constructor "Z0"] arguments becomes [RApp2 "ltb" (RRel "a") (RZLit
+    0)], and the 2-case [expr:case] over [True]/[False] becomes
+    [RIfBool] with the [True]-case's body first, matching the real
+    JSON's case order exactly. *)
+Definition clamp_nonneg_ir : real_expr :=
+  RIfBool (RApp2 "ltb" (RRel "a") (RZLit 0)) (RRel "b") (RRel "a").
+
+(** [real_eval] calls Coq's own [Z.ltb] directly (RealIR.v's header),
+    so this is already a check against the real [clamp_nonneg]
+    definition, not a hand reimplementation of it. *)
+Example clamp_nonneg_ir_matches_real_definition :
+  forall a b : Z,
+    real_eval [("a", VZ a); ("b", VZ b)] clamp_nonneg_ir = Some (VZ (clamp_nonneg a b)).
+Proof.
+  intros a b. unfold clamp_nonneg_ir, clamp_nonneg. simpl.
+  destruct (Z.ltb a 0); reflexivity.
+Qed.
+
+(** Translating into our existing, already-proven [expr] subset: *)
+Definition clamp_nonneg_expr : expr :=
+  match real_to_expr clamp_nonneg_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: clamp_nonneg_ir is in the recognized fragment *)
+  end.
+
+Example clamp_nonneg_ir_translates :
+  real_to_expr clamp_nonneg_ir = Some clamp_nonneg_expr.
+Proof. reflexivity. Qed.
+
+(** [RealIR.v]'s preservation theorem then carries the match with
+    [Z.ltb]/[Z.add]/etc proved above all the way down to [eval]: *)
+Example clamp_nonneg_expr_matches_real_definition :
+  forall a b : Z,
+    eval 10 [("a", VZ a); ("b", VZ b)] clamp_nonneg_expr = Some (VZ (clamp_nonneg a b)).
+Proof.
+  intros a b.
+  rewrite (real_to_expr_preserves_semantics clamp_nonneg_ir clamp_nonneg_expr
+             clamp_nonneg_ir_translates 10 [("a", VZ a); ("b", VZ b)] ltac:(simpl; lia)).
+  apply clamp_nonneg_ir_matches_real_definition.
+Qed.
+
+Theorem clamp_nonneg_idents_valid :
+  expr_idents_valid is_valid_ident clamp_nonneg_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr clamp_nonneg_expr.
+
+Lemma string_app_nil_r : forall s : string, s ++ "" = s.
+Proof.
+  induction s as [| c s' IH]; simpl.
+  - reflexivity.
+  - rewrite IH. reflexivity.
+Qed.
+
+Corollary clamp_nonneg_json_roundtrip :
+  parse_expr_top (print_expr clamp_nonneg_expr) = Some (clamp_nonneg_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip clamp_nonneg_expr clamp_nonneg_idents_valid
+                (String.length (print_expr clamp_nonneg_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H. exact H.
+Qed.
+
+Corollary clamp_nonneg_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate clamp_nonneg_expr)
+      = option_map value_to_pyvalue (eval fuel rho clamp_nonneg_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The real, running Python -- from a human-written [Definition],
+    through Coq's own extraction JSON shape (modeled, not yet parsed
+    from text), through every already-proven stage this project has:
+    [translate], [Json.v]'s codec, and [PyPrint.v]. *)
+Compute py_function "clamp_nonneg" ["a"; "b"] (translate clamp_nonneg_expr).
+
+(** Run for real:
+
+    [[
+    >>> clamp_nonneg(-5, 7)
+    7
+    >>> clamp_nonneg(5, 7)
+    5
+    ]]
+*)
