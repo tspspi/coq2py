@@ -34,11 +34,14 @@
     other, not just [ERec]'s single self-call -- an eleventh,
     [safe_time_to_stop_expr]/[stop_time_or_minus_one_expr], Example 6's
     division precondition reflected as a genuine value ([EInl]/[EInr]/
-    [ECase]) instead of [eval] simply getting stuck -- and a twelfth,
+    [ECase]) instead of [eval] simply getting stuck -- a twelfth,
     [motion_phase_expr], a real string value ([EStrConst]/[EStrEq])
-    labelling the same state Example 2's [landed_expr] already tests.
+    labelling the same state Example 2's [landed_expr] already tests --
+    and a thirteenth, [euler_step_full_state_expr], Example 9's named
+    record again but with *four* fields at once ([ERecordN]/[EFieldN]),
+    genuinely beyond [ERecord]'s 2-field cap rather than nesting it.
 
-    All twelve are expressed as terms of our supported [expr] subset
+    All thirteen are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -731,3 +734,69 @@ Compute py_function "is_landed_label" ["state"] (translate is_landed_label_expr)
     False
     ]]
 *)
+
+(* ----------------------------------------------------------------- *)
+(** * Example 13: a genuinely N-ary state record *)
+
+(** [euler_step_record_expr] (Example 9) stayed inside [ERecord]'s
+    2-field cap. [euler_step_full_state_expr] is the same Euler step,
+    but threads *four* named fields through at once -- position,
+    velocity, the (unchanged) acceleration, and an elapsed-time clock
+    -- exercising [ERecordN]/[EFieldN] genuinely, not by nesting
+    [ERecord]. Lifting the cap needed a different induction technique
+    (strong induction on a fuel measure, not more constructors) before
+    this was even provable -- see docs/roadmap.md. *)
+Definition euler_step_full_state_expr : expr :=
+  ELet "v2" (EAdd (EVar "v") (EMul (EVar "a") (EVar "dt")))
+    (ERecordN [
+       ("x", EAdd (EVar "x") (EMul (EVar "v2") (EVar "dt")));
+       ("v", EVar "v2");
+       ("a", EVar "a");
+       ("t", EAdd (EVar "t") (EVar "dt"))
+     ]).
+
+Theorem euler_step_full_state_idents_valid :
+  expr_idents_valid is_valid_ident euler_step_full_state_expr = true.
+Proof. reflexivity. Qed.
+
+(** Same motion as [euler_step_concrete] (Example 1), now also
+    carrying a clock: starting at rest with acceleration 2, one step
+    of dt=1 from t=0 reaches {"x": 2, "v": 2, "a": 2, "t": 1}. *)
+Example euler_step_full_state_concrete :
+  eval 10 [("x", VZ 0); ("v", VZ 0); ("a", VZ 2); ("dt", VZ 1); ("t", VZ 0)]
+    euler_step_full_state_expr
+    = Some (VRecordN [("x", VZ 2); ("v", VZ 2); ("a", VZ 2); ("t", VZ 1)]).
+Proof. reflexivity. Qed.
+
+(** [EFieldN] reads a field back out by name, the same way [EField]
+    already does for the 2-field form: *)
+Definition elapsed_time_expr : expr := EFieldN "t" euler_step_full_state_expr.
+
+Theorem elapsed_time_idents_valid :
+  expr_idents_valid is_valid_ident elapsed_time_expr = true.
+Proof. reflexivity. Qed.
+
+Example elapsed_time_concrete :
+  eval 10 [("x", VZ 0); ("v", VZ 0); ("a", VZ 2); ("dt", VZ 1); ("t", VZ 0)]
+    elapsed_time_expr = Some (VZ 1).
+Proof. reflexivity. Qed.
+
+Compute print_expr euler_step_full_state_expr.
+
+Corollary euler_step_full_state_json_roundtrip :
+  parse_expr_top (print_expr euler_step_full_state_expr)
+    = Some (euler_step_full_state_expr, "").
+Proof.
+  json_roundtrip_corollary euler_step_full_state_expr euler_step_full_state_idents_valid.
+Qed.
+
+Corollary euler_step_full_state_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate euler_step_full_state_expr)
+      = option_map value_to_pyvalue (eval fuel rho euler_step_full_state_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: a dict literal with all four field names,
+    built by [PyPrint.v]'s [PRecordN] case walking the field list. *)
+Compute py_function "euler_step_full_state" ["x"; "v"; "a"; "dt"; "t"]
+  (translate euler_step_full_state_expr).
