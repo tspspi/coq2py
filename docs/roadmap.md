@@ -124,13 +124,31 @@ a list of velocity samples of whatever length it happens to have).
 Generated Python renders a list as nested tuples (`()` for `Nil`,
 `(hd, tl)` for `Cons` — the same shape as pairs already use, not
 Python's native mutable `list`; see `PyPrint.v`'s comment on
-`PListMatch`).
+PListMatch`).
+
+Records are now in too, but deliberately capped at exactly two named
+fields: `ERecord k1 e1 k2 e2`/`EField name e` (a `VRecord`; nesting
+handles more than two fields — `ERecord "a" e1 "rest" (ERecord "b" e2
+"c" e3)` for three — the same way `EPair`/`VPair` are already capped
+at two components). That cap isn't arbitrary: a general `list (string
+* expr)`-shaped record needs a custom induction principle for `expr`
+before `Json.v`'s structurally-inducting `parse_print_roundtrip`
+theorem can state a useful hypothesis about a sub-expression buried
+inside a list field, and a `Fixpoint eval ... with eval_fields ...
+with lookup_field ...` attempt at it fails to compile outright
+("cannot guess decreasing argument of fix") — confirmed directly
+before settling on the fixed-arity design. Generated Python renders a
+record as a `dict` literal keyed by the field names (`{"x": ...,
+"v": ...}`), looked up by name (`state["x"]`) rather than by position —
+see `examples/Kinematics.v`'s `euler_step_record_expr`, Example 1's
+step again with named instead of positional output.
 
 Not yet covered, in roughly the order they'd likely be needed:
 
 - Mutual recursion (two or more `ERec`-like functions calling each
   other) — `ERec` only supports a function calling *itself*.
-- Records and non-trivial inductive types beyond pairs and lists.
+- General N-field records / non-trivial inductive types beyond pairs,
+  lists, and 2-field records.
 - Numpy-shaped arrays specifically (fixed-rank, fixed-dtype, with
   broadcasting and view-vs-copy aliasing rules) — a cons-list isn't
   that; it's the general-recursion building block arrays would need

@@ -21,12 +21,16 @@
     run the same step function (via genuine recursion, [ERec], not
     [ERepeat]) until [landed_expr] actually holds, however many steps
     that takes -- not knowable at "compile time" the way Example 5's
-    fixed [n] was -- and an eighth, [total_distance_expr], summing
+    fixed [n] was -- an eighth, [total_distance_expr], summing
     [v * dt] over a genuine list of velocity samples ([ENil]/[ECons]/
     [EListMatch]): a Riemann sum over data of whatever length it
-    happens to have, not a single step or a fixed count of them.
+    happens to have, not a single step or a fixed count of them -- and
+    a ninth, [euler_step_record_expr], Example 1's step again but
+    returning a 2-field named record ([ERecord]/[EField]) instead of a
+    positional pair, so the generated Python looks state up by name
+    ([state["x"]]) instead of by position ([state[0]]).
 
-    All eight are expressed as terms of our supported [expr] subset
+    All nine are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -464,3 +468,46 @@ Compute py_function "total_distance" ["dt"] (translate total_distance_expr).
     12
     ]]
 *)
+
+(* ----------------------------------------------------------------- *)
+(** * Example 9: the same Euler step, returning a named record *)
+
+(** [euler_step_expr] (Example 1) again, but returning the new state as
+    a 2-field named record {"x": x', "v": v'} instead of a positional
+    pair -- exercising [ERecord]/[EField]. Unlike [EFst]/[EPair], a
+    record's fields carry their own names all the way through to the
+    generated Python, where they can be looked up by name instead of by
+    position. *)
+Definition euler_step_record_expr : expr :=
+  ELet "v2" (EAdd (EVar "v") (EMul (EVar "a") (EVar "dt")))
+    (ERecord "x" (EAdd (EVar "x") (EMul (EVar "v2") (EVar "dt"))) "v" (EVar "v2")).
+
+Theorem euler_step_record_idents_valid :
+  expr_idents_valid is_valid_ident euler_step_record_expr = true.
+Proof. reflexivity. Qed.
+
+(** Same motion as [euler_step_concrete] (Example 1): starting at rest
+    with acceleration 2 for one step of dt=1, the new state is
+    {"x": 2, "v": 2}. *)
+Example euler_step_record_concrete :
+  eval 10 [("x", VZ 0); ("v", VZ 0); ("a", VZ 2); ("dt", VZ 1)] euler_step_record_expr
+    = Some (VRecord "x" (VZ 2) "v" (VZ 2)).
+Proof. reflexivity. Qed.
+
+Compute print_expr euler_step_record_expr.
+Compute parse_expr_top (print_expr euler_step_record_expr).
+
+Corollary euler_step_record_json_roundtrip :
+  parse_expr_top (print_expr euler_step_record_expr) = Some (euler_step_record_expr, "").
+Proof. json_roundtrip_corollary euler_step_record_expr euler_step_record_idents_valid. Qed.
+
+Corollary euler_step_record_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate euler_step_record_expr)
+      = option_map value_to_pyvalue (eval fuel rho euler_step_record_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: a dict literal with the same two field names,
+    looked up by name ([state["x"]]) rather than by position
+    ([state[0]]) -- see PyPrint.v's [PRecord]/[PField] cases. *)
+Compute py_function "euler_step_record" ["x"; "v"; "a"; "dt"] (translate euler_step_record_expr).

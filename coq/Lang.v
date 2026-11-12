@@ -98,7 +98,22 @@
     binds [hd]/[tl] to the head and tail and runs [conscase] (non-empty)
     -- the same two-case shape [Coq.Lists.List.list]'s own [match] has.
     A list of the wrong shape (or a scrutinee that isn't a list at all)
-    gets stuck, same as everywhere else. *)
+    gets stuck, same as everywhere else.
+
+    [ERecord k1 e1 k2 e2]/[EField name e] add named-field records --
+    Gallina's record types, in miniature: deliberately capped at exactly
+    two fields, the same way [EPair]/[VPair] are capped at two
+    components rather than supporting arbitrary-arity tuples. A general
+    N-field record would need [expr] to embed a *list* of fields, and
+    while [eval] can process such a list just fine computationally (the
+    same way it already processes a closure's captured environment or a
+    list value), [Json.v]'s round-trip proof inducts directly on [expr]
+    rather than on fuel, and Coq's auto-generated induction principle
+    for [expr] does not hand back a usable inductive hypothesis for
+    sub-expressions buried inside a list field -- fixing the arity at
+    two sidesteps that entirely, with no loss of expressiveness (nest,
+    the same way three-or-more-tuples already nest pairs: [ERecord "a"
+    e1 "rest" (ERecord "b" e2 "c" e3)] is a genuine 3-field record). *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -142,7 +157,9 @@ Inductive expr : Type :=
   | EApp (func arg : expr)
   | ENil
   | ECons (hd tl : expr)
-  | EListMatch (scrutinee nilcase : expr) (hd tl : var) (conscase : expr).
+  | EListMatch (scrutinee nilcase : expr) (hd tl : var) (conscase : expr)
+  | ERecord (k1 : var) (e1 : expr) (k2 : var) (e2 : expr)
+  | EField (name : var) (e : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -158,7 +175,8 @@ Inductive value : Type :=
   | VPair (v1 v2 : value)
   | VFloat (f : float)
   | VClosure (self : option var) (param : var) (body : expr) (cenv : list (var * value))
-  | VList (vs : list value).
+  | VList (vs : list value)
+  | VRecord (k1 : var) (v1 : value) (k2 : var) (v2 : value).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -349,6 +367,19 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       | Some (VList (hv :: tvs)) => eval fuel' ((hd, hv) :: (tl, VList tvs) :: rho) conscase
       | _ => None
       end
+  | ERecord k1 e1 k2 e2 =>
+      match eval fuel' rho e1, eval fuel' rho e2 with
+      | Some v1, Some v2 => Some (VRecord k1 v1 k2 v2)
+      | _, _ => None
+      end
+  | EField name e1 =>
+      match eval fuel' rho e1 with
+      | Some (VRecord k1 v1 k2 v2) =>
+          if String.eqb name k1 then Some v1
+          else if String.eqb name k2 then Some v2
+          else None
+      | _ => None
+      end
   end
   end.
 
@@ -438,4 +469,9 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
         (andb (expr_idents_valid is_valid_ident nilcase)
           (andb (is_valid_ident hd)
             (andb (is_valid_ident tl) (expr_idents_valid is_valid_ident conscase))))
+  | ERecord k1 e1 k2 e2 =>
+      andb (is_valid_ident k1)
+        (andb (expr_idents_valid is_valid_ident e1)
+          (andb (is_valid_ident k2) (expr_idents_valid is_valid_ident e2)))
+  | EField name e1 => andb (is_valid_ident name) (expr_idents_valid is_valid_ident e1)
   end.

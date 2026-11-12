@@ -68,7 +68,9 @@ Inductive pyexpr : Type :=
   | PApp (func arg : pyexpr)
   | PNil
   | PCons (hd tl : pyexpr)
-  | PListMatch (scrutinee nilcase : pyexpr) (hd tl : var) (conscase : pyexpr).
+  | PListMatch (scrutinee nilcase : pyexpr) (hd tl : var) (conscase : pyexpr)
+  | PRecord (k1 : var) (e1 : pyexpr) (k2 : var) (e2 : pyexpr)
+  | PField (name : var) (e : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -76,7 +78,8 @@ Inductive pyvalue : Type :=
   | PVPair (v1 v2 : pyvalue)
   | PVFloat (f : float)
   | PVClosure (self : option var) (param : var) (body : pyexpr) (cenv : list (var * pyvalue))
-  | PVList (vs : list pyvalue).
+  | PVList (vs : list pyvalue)
+  | PVRecord (k1 : var) (v1 : pyvalue) (k2 : var) (v2 : pyvalue).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -251,6 +254,19 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
       match peval fuel' rho scrutinee with
       | Some (PVList []) => peval fuel' rho nilcase
       | Some (PVList (hv :: tvs)) => peval fuel' ((hd, hv) :: (tl, PVList tvs) :: rho) conscase
+      | _ => None
+      end
+  | PRecord k1 e1 k2 e2 =>
+      match peval fuel' rho e1, peval fuel' rho e2 with
+      | Some v1, Some v2 => Some (PVRecord k1 v1 k2 v2)
+      | _, _ => None
+      end
+  | PField name e1 =>
+      match peval fuel' rho e1 with
+      | Some (PVRecord k1 v1 k2 v2) =>
+          if String.eqb name k1 then Some v1
+          else if String.eqb name k2 then Some v2
+          else None
       | _ => None
       end
   end

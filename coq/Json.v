@@ -599,6 +599,11 @@ Fixpoint print_expr (e : expr) : string :=
         ++ ",""nilcase"":" ++ print_expr nilcase
         ++ ",""hd"":" ++ quote_string hd ++ ",""tl"":" ++ quote_string tl
         ++ ",""conscase"":" ++ print_expr conscase ++ "}"
+  | ERecord k1 e1 k2 e2 =>
+      "{""tag"":""record"",""key1"":" ++ quote_string k1 ++ ",""value1"":" ++ print_expr e1
+        ++ ",""key2"":" ++ quote_string k2 ++ ",""value2"":" ++ print_expr e2 ++ "}"
+  | EField name e1 =>
+      "{""tag"":""field"",""name"":" ++ quote_string name ++ ",""value"":" ++ print_expr e1 ++ "}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -627,6 +632,8 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | ECons hd tl => S (Nat.max (expr_fuel hd) (expr_fuel tl))
   | EListMatch scrutinee nilcase _ _ conscase =>
       S (Nat.max (expr_fuel scrutinee) (Nat.max (expr_fuel nilcase) (expr_fuel conscase)))
+  | ERecord _ e1 _ e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
+  | EField _ e1 => S (expr_fuel e1)
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1270,8 +1277,62 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""record"",""key1"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (k1, s2) =>
+            match expect ",""value1"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e1, s4) =>
+                    match expect ",""key2"":" s4 with
+                    | Some s5 =>
+                        match parse_qstring s5 with
+                        | Some (k2, s6) =>
+                            match expect ",""value2"":" s6 with
+                            | Some s7 =>
+                                match parse_expr fuel' s7 with
+                                | Some (e2, s8) =>
+                                    match expect "}" s8 with
+                                    | Some s9 => Some (ERecord k1 e1 k2 e2, s9)
+                                    | None => None
+                                    end
+                                | None => None
+                                end
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""field"",""name"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (name, s2) =>
+            match expect ",""value"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e1, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EField name e1, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1323,7 +1384,9 @@ Proof.
     | func IH1 arg IH2           (* EApp *)
     |                            (* ENil *)
     | hd IH1 tl IH2              (* ECons *)
-    | scrutinee IH1 nilcase IH2 hd tl conscase IH3 ]; (* EListMatch *)
+    | scrutinee IH1 nilcase IH2 hd tl conscase IH3  (* EListMatch *)
+    | k1 e1 IH1 k2 e2 IH2        (* ERecord *)
+    | name e1 IH1 ];             (* EField *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -1561,4 +1624,23 @@ Proof.
     rewrite (parse_qstring_print tl Hvtl). simpl.
     repeat rewrite string_append_assoc.
     rewrite (IH3 Hv3 fuel' Hf3). reflexivity.
+  - (* ERecord *) apply andb_true_iff in Hvalid as [Hk1 Hrest1].
+    apply andb_true_iff in Hrest1 as [Hv1 Hrest2].
+    apply andb_true_iff in Hrest2 as [Hk2 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print k1 Hk1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print k2 Hk2). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EField *) apply andb_true_iff in Hvalid as [Hname Hv1].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print name Hname). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). reflexivity.
 Qed.

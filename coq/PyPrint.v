@@ -91,6 +91,12 @@ Open Scope string_scope.
 
 Definition bool_to_py (b : bool) : string := if b then "True" else "False".
 
+(** Field/key names are restricted to [is_valid_ident] (alnum/underscore,
+    nonempty -- see [Lang.expr_idents_valid]), so a plain wrap in double
+    quotes is always a valid, unambiguous Python string literal; no
+    escaping logic is needed. *)
+Definition py_qstring (x : var) : string := """" ++ x ++ """".
+
 Definition float_to_py (f : float) : string :=
   match Prim2SF f with
   | S754_zero false => "0.0"
@@ -156,6 +162,10 @@ Fixpoint py_expr (e : pyexpr) : string :=
       "(" ++ py_expr nilcase ++ " if (" ++ py_expr scrutinee ++ ") == () else "
         ++ "((" ++ hd ++ " := (" ++ py_expr scrutinee ++ ")[0]), ("
         ++ tl ++ " := (" ++ py_expr scrutinee ++ ")[1]), " ++ py_expr conscase ++ ")[-1])"
+  | PRecord k1 e1 k2 e2 =>
+      "{" ++ py_qstring k1 ++ ": " ++ py_expr e1 ++ ", "
+        ++ py_qstring k2 ++ ": " ++ py_expr e2 ++ "}"
+  | PField name e1 => "(" ++ py_expr e1 ++ ")[" ++ py_qstring name ++ "]"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

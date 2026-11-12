@@ -326,7 +326,7 @@ ZeroDivisionError: integer division or modulo by zero
 
 Python's own `//` already raises on a zero divisor — the same
 undefined case `eval` already refuses to answer, enforced by the target
-language for free. (Compare Example 9's wave simulator: there, the CFL
+language for free. (Compare Example 10's wave simulator: there, the CFL
 precondition *isn't* automatically enforced by anything, so
 `wave1d.py` has to check it explicitly — the two examples are opposite
 ends of the same idea.)
@@ -395,7 +395,44 @@ def total_distance(dt):
 12
 ```
 
-## Example 9: a wave simulator, from Maxwell's equations to a running plot
+## Example 9: the same Euler step, returning a named record
+
+`ERecord k1 e1 k2 e2`/`EField name e` add 2-field named records — deliberately
+capped at two fields (nesting handles more, the same way `EPair` is
+capped at two components; see [roadmap.md](roadmap.md) for why).
+`euler_step_record_expr` is Example 1's step again, but returning the
+new state as `{"x": ..., "v": ...}` instead of a positional pair:
+
+```coq
+Definition euler_step_record_expr : expr :=
+  ELet "v2" (EAdd (EVar "v") (EMul (EVar "a") (EVar "dt")))
+    (ERecord "x" (EAdd (EVar "x") (EMul (EVar "v2") (EVar "dt"))) "v" (EVar "v2")).
+```
+
+Same motion as Example 1 — starting at rest with acceleration 2 for one
+step of `dt=1`, the new state is `{"x": 2, "v": 2}`:
+
+```coq
+Example euler_step_record_concrete :
+  eval 10 [("x", VZ 0); ("v", VZ 0); ("a", VZ 2); ("dt", VZ 1)] euler_step_record_expr
+    = Some (VRecord "x" (VZ 2) "v" (VZ 2)).
+Proof. reflexivity. Qed.
+```
+
+A record renders as a Python `dict` literal, looked up by field name
+rather than by position:
+
+```
+def euler_step_record(x, v, a, dt):
+    return ((v2 := (v + (a * dt))), {"x": (x + (v2 * dt)), "v": v2})[1]
+```
+
+```
+>>> euler_step_record(0, 0, 2, 1)
+{'x': 2, 'v': 2}
+```
+
+## Example 10: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -536,5 +573,5 @@ something a proof catches for you)
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 9 wave simulator, plots it
+make wave_sim  # generates + runs the Example 10 wave simulator, plots it
 ```
