@@ -252,6 +252,32 @@ Proof.
 Qed.
 
 (* ----------------------------------------------------------------- *)
+(** * Natural numbers (the [ERepeat] iteration count) *)
+
+(** Reuses the [Z] codec entirely -- a [nat] is just a [Z] known to be
+    non-negative, so there is no new numeral syntax here, and the
+    round-trip carries straight over from [parse_number_print] plus
+    [Nat2Z.id] (a standard-library fact, not a new assumption). *)
+Definition nat_to_string (n : nat) : string := z_to_string (Z.of_nat n).
+
+Definition parse_nat (s : string) : option (nat * string) :=
+  match parse_number s with
+  | Some (z, rest) => Some (Z.to_nat z, rest)
+  | None => None
+  end.
+
+Lemma parse_nat_print :
+  forall n (a : ascii) rest,
+    is_digit a = false -> a <> minus_char ->
+    parse_nat (nat_to_string n ++ String a rest) = Some (n, String a rest).
+Proof.
+  intros n a rest Hdig Hmin.
+  unfold parse_nat, nat_to_string.
+  rewrite (parse_number_print (Z.of_nat n) a rest Hdig Hmin).
+  rewrite Nat2Z.id. reflexivity.
+Qed.
+
+(* ----------------------------------------------------------------- *)
 (** * Quoted identifiers *)
 
 Definition quote_string (x : string) : string :=
@@ -347,7 +373,7 @@ Qed.
     rather than have [simpl] eagerly (and inconsistently) inline some but
     not others depending on whether their first character happens to be
     syntactically concrete. *)
-Opaque parse_number parse_qstring quote_string parse_bool.
+Opaque parse_number parse_qstring quote_string parse_bool parse_nat nat_to_string.
 
 (* ----------------------------------------------------------------- *)
 (** * Floats
@@ -550,6 +576,10 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""flt"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   | EFLe e1 e2 =>
       "{""tag"":""fle"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | ERepeat n x body init =>
+      "{""tag"":""repeat"",""count"":" ++ nat_to_string n
+        ++ ",""name"":" ++ quote_string x
+        ++ ",""body"":" ++ print_expr body ++ ",""init"":" ++ print_expr init ++ "}"
   end.
 
 Fixpoint expr_fuel (e : expr) : nat :=
@@ -564,6 +594,7 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | EFAdd e1 e2 | EFSub e1 e2 | EFMul e1 e2 | EFDiv e1 e2
   | EFEq e1 e2 | EFLt e1 e2 | EFLe e1 e2 =>
       S (Nat.max (expr_fuel e1) (expr_fuel e2))
+  | ERepeat _ _ body init => S (Nat.max (expr_fuel body) (expr_fuel init))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1004,8 +1035,43 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""repeat"",""count"":" s with
+    | Some s1 =>
+        match parse_nat s1 with
+        | Some (n, s2) =>
+            match expect ",""name"":" s2 with
+            | Some s3 =>
+                match parse_qstring s3 with
+                | Some (x, s4) =>
+                    match expect ",""body"":" s4 with
+                    | Some s5 =>
+                        match parse_expr fuel' s5 with
+                        | Some (body, s6) =>
+                            match expect ",""init"":" s6 with
+                            | Some s7 =>
+                                match parse_expr fuel' s7 with
+                                | Some (init, s8) =>
+                                    match expect "}" s8 with
+                                    | Some s9 => Some (ERepeat n x body init, s9)
+                                    | None => None
+                                    end
+                                | None => None
+                                end
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1048,7 +1114,8 @@ Proof.
     | e1 IH1 e2 IH2              (* EFDiv *)
     | e1 IH1 e2 IH2              (* EFEq *)
     | e1 IH1 e2 IH2              (* EFLt *)
-    | e1 IH1 e2 IH2 ];           (* EFLe *)
+    | e1 IH1 e2 IH2              (* EFLe *)
+    | n x body IH1 init IH2 ];  (* ERepeat *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -1209,6 +1276,18 @@ Proof.
   - (* EFLe *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* ERepeat *) apply andb_true_iff in Hvalid as [Hvx Hv12].
+    apply andb_true_iff in Hv12 as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel body <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel init <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc. simpl.
+    rewrite (parse_nat_print n ","%char _ not_digit_comma not_minus_comma). simpl.
+    repeat rewrite string_append_assoc. simpl.
+    rewrite (parse_qstring_print x Hvx). simpl.
     repeat rewrite string_append_assoc.
     rewrite (IH1 Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.

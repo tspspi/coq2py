@@ -9,11 +9,13 @@
     returning the pair (x', v') -- exercising pairs/tuples -- plus a
     second example, [landed_expr], exercising general comparisons and
     booleans: "has the projectile reached or passed ground level while
-    still moving downward?" -- and two more, [euler_step_float_expr] and
+    still moving downward?" -- two more, [euler_step_float_expr] and
     [landed_float_expr], the same integration step and landing check
-    again but over real [PrimFloat.float] state instead of [Z].
+    again but over real [PrimFloat.float] state instead of [Z] -- and a
+    fifth, [euler_multi_step_expr], chaining [n] Euler steps into a
+    whole trajectory via bounded iteration ([ERepeat]).
 
-    All four are expressed as terms of our supported [expr] subset
+    All five are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -28,9 +30,10 @@
     vector -- chosen to stay inside the subset that's actually proven
     today rather than gesture at scope the proofs don't yet cover. Examples
     3 and 4 close that gap for a single step (real float arithmetic and
-    comparisons, proven the same way) -- see docs/roadmap.md for what's
-    still missing before a genuine discretized simulator (bounded
-    iteration, arrays). *)
+    comparisons, proven the same way); Example 5 closes it for a whole
+    multi-step trajectory, computed *inside* the proven subset (no
+    external loop) -- see docs/roadmap.md for what's still missing before
+    a genuine numpy-shaped simulator (arrays). *)
 
 From Coq Require Import ZArith String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -222,3 +225,56 @@ Example landed_float_concrete_false_still_above_ground :
 Proof. reflexivity. Qed.
 
 Compute py_function "landed_float" ["x"; "v"] (translate landed_float_expr).
+
+(* ----------------------------------------------------------------- *)
+(** * Example 5: a multi-step trajectory, via bounded iteration *)
+
+(** [euler_step_expr] (Example 1) applied [n] times in a row by
+    [ERepeat], the whole trajectory computed *inside* the proven subset
+    -- no external loop needed, unlike the wave simulator
+    (examples/physics/Discretize.v), which has to reach for one because
+    its state is a whole numpy array, not a small pair like here. The
+    loop variable ["state"] carries [(x, v)] across iterations; [a] and
+    [dt] stay constant, read from the outer environment every step. *)
+Definition euler_multi_step_body : expr :=
+  ELet "x" (EFst (EVar "state"))
+  (ELet "v" (ESnd (EVar "state"))
+    (ELet "v2" (EAdd (EVar "v") (EMul (EVar "a") (EVar "dt")))
+      (EPair (EAdd (EVar "x") (EMul (EVar "v2") (EVar "dt"))) (EVar "v2")))).
+
+Definition euler_multi_step_expr (n : nat) : expr :=
+  ERepeat n "state" euler_multi_step_body (EPair (EVar "x0") (EVar "v0")).
+
+(** Identifier validity doesn't depend on the iteration count at all
+    (see [expr_idents_valid]'s [ERepeat] case), so this holds for every
+    [n] at once, not just the one instance used below. *)
+Theorem euler_multi_step_idents_valid :
+  forall n, expr_idents_valid is_valid_ident (euler_multi_step_expr n) = true.
+Proof. intro n. reflexivity. Qed.
+
+(** Three steps of the same constant-acceleration motion as Example 1,
+    starting at rest: (x,v) = (0,0) -> (2,2) -> (6,4) -> (12,6). *)
+Example euler_multi_step_concrete :
+  eval [("x0", VZ 0); ("v0", VZ 0); ("a", VZ 2); ("dt", VZ 1)]
+    (euler_multi_step_expr 3)
+    = Some (VPair (VZ 12) (VZ 6)).
+Proof. reflexivity. Qed.
+
+Corollary euler_multi_step_json_roundtrip :
+  parse_expr_top (print_expr (euler_multi_step_expr 3))
+    = Some (euler_multi_step_expr 3, "").
+Proof.
+  json_roundtrip_corollary (euler_multi_step_expr 3) (euler_multi_step_idents_valid 3).
+Qed.
+
+Corollary euler_multi_step_translation_correct :
+  forall n rho,
+    peval (env_to_pyenv rho) (translate (euler_multi_step_expr n))
+      = option_map value_to_pyvalue (eval rho (euler_multi_step_expr n)).
+Proof. intros n rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python literally unrolls the 3 steps -- see PyPrint.v's
+    comment on [PRepeat] for why that's the right call for a bounded,
+    compile-time-known count. *)
+Compute py_function "euler_trajectory_3" ["x0"; "v0"; "a"; "dt"]
+  (translate (euler_multi_step_expr 3)).

@@ -30,11 +30,23 @@
     (that's the hard problem [Json.v]'s codec comment explains avoiding).
     This is unverified text formatting like the rest of this file, not a
     new proof obligation -- but it's worth noting it was easy to get
-    exactly right, unlike a decimal pretty-printer would have been. *)
+    exactly right, unlike a decimal pretty-printer would have been.
+
+    [PRepeat] -- bounded iteration -- is rendered by literally unrolling
+    the loop [n] times at print time (valid since [n] is a compile-time
+    [nat], not a runtime value): a tuple of [n+1] walrus assignments to
+    [x] (the first seeded from [init], each later one re-reading and
+    overwriting [x] with [body]'s value) followed by a bare [x], indexed
+    with [-1] to take the last one. For [n = 0] this degenerates to just
+    binding and returning [init], matching [piterate 0 f v = Some v]. No
+    Python [for]/[while] statement is used -- [pyexpr] still has no
+    statement forms -- so this stays a single expression like everything
+    else in this file. *)
 
 From Coq Require Import String List ZArith.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
 Import ListNotations.
+Require Import Lang. (* reuses var *)
 Require Import PyLang.
 Require Import Json. (* reuses z_to_string *)
 Open Scope string_scope.
@@ -52,6 +64,14 @@ Definition float_to_py (f : float) : string :=
       "(" ++ z_to_string (Zpos m) ++ " * (2.0 ** " ++ z_to_string e ++ "))"
   | S754_finite true m e =>
       "(-" ++ z_to_string (Zpos m) ++ " * (2.0 ** " ++ z_to_string e ++ "))"
+  end.
+
+(** [n] repetitions of [", (x := body_str)"], one per remaining
+    iteration -- see [py_expr]'s [PRepeat] case. *)
+Fixpoint py_repeat_steps (n : nat) (x : var) (body_str : string) : string :=
+  match n with
+  | O => ""
+  | S n' => ", (" ++ x ++ " := " ++ body_str ++ ")" ++ py_repeat_steps n' x body_str
   end.
 
 Fixpoint py_expr (e : pyexpr) : string :=
@@ -83,6 +103,9 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PFEq e1 e2 => "(" ++ py_expr e1 ++ " == " ++ py_expr e2 ++ ")"
   | PFLt e1 e2 => "(" ++ py_expr e1 ++ " < " ++ py_expr e2 ++ ")"
   | PFLe e1 e2 => "(" ++ py_expr e1 ++ " <= " ++ py_expr e2 ++ ")"
+  | PRepeat n x body init =>
+      "((" ++ x ++ " := " ++ py_expr init ++ ")"
+        ++ py_repeat_steps n x (py_expr body) ++ ", " ++ x ++ ")[-1]"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

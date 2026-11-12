@@ -31,7 +31,16 @@
     integers already don't. [EFEq]/[EFLt]/[EFLe] mirror [EEq]/[ELt]/[ELe]
     for floats, returning [VBool] the same way; there is still no
     [EIf]-usable float-to-bool coercion beyond that (a float condition
-    gets stuck, same as any other wrong-shape value). *)
+    gets stuck, same as any other wrong-shape value).
+
+    [ERepeat n x body init] is bounded iteration: evaluate [init] to a
+    starting value, then apply [body] (with [x] bound to the current
+    value) exactly [n] times, [n] a literal [nat] fixed at "compile
+    time" -- not a runtime-computed count, which is exactly what makes
+    this cheaper than general recursion (see docs/roadmap.md): [eval]
+    terminates on it by the same structural-recursion-on-[n] Coq already
+    checks for free, no fuel parameter or well-founded-recursion argument
+    needed anywhere in this file or its proofs. *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -72,7 +81,8 @@ Inductive expr : Type :=
   | EFDiv (e1 e2 : expr)
   | EFEq (e1 e2 : expr)
   | EFLt (e1 e2 : expr)
-  | EFLe (e1 e2 : expr).
+  | EFLe (e1 e2 : expr)
+  | ERepeat (n : nat) (x : var) (body init : expr).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -85,6 +95,22 @@ Fixpoint lookup (rho : env) (x : var) : option value :=
   match rho with
   | [] => None
   | (y, v) :: rest => if string_dec x y then Some v else lookup rest x
+  end.
+
+(** Apply [f] to [v], then to that result, [n] times in total, stopping
+    early (returning [None]) the first time [f] gets stuck. Parametrized
+    over an arbitrary [f] rather than folded directly into [eval]'s
+    [ERepeat] case so that this is a plain structural recursion on [n]
+    with no dependency on [expr]/[eval] at all -- [eval] below just
+    supplies [f] as a closure over one fixed [body]/[rho]. *)
+Fixpoint iterate (n : nat) (f : value -> option value) (v : value) : option value :=
+  match n with
+  | O => Some v
+  | S n' =>
+      match f v with
+      | Some v' => iterate n' f v'
+      | None => None
+      end
   end.
 
 Fixpoint eval (rho : env) (e : expr) : option value :=
@@ -199,6 +225,11 @@ Fixpoint eval (rho : env) (e : expr) : option value :=
       | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 <=? f2)%float)
       | _, _ => None
       end
+  | ERepeat n x body init =>
+      match eval rho init with
+      | Some v0 => iterate n (fun v => eval ((x, v) :: rho) body) v0
+      | None => None
+      end
   end.
 
 (** Identifier validity: the restricted grammar in Json.v only round-trips
@@ -238,4 +269,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EFEq e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFLt e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFLe e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | ERepeat _ x body init =>
+      andb (is_valid_ident x)
+           (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident init))
   end.

@@ -58,7 +58,8 @@ Inductive pyexpr : Type :=
   | PFDiv (e1 e2 : pyexpr)
   | PFEq (e1 e2 : pyexpr)
   | PFLt (e1 e2 : pyexpr)
-  | PFLe (e1 e2 : pyexpr).
+  | PFLe (e1 e2 : pyexpr)
+  | PRepeat (n : nat) (x : var) (body init : pyexpr).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -66,6 +67,18 @@ Fixpoint plookup (rho : pyenv) (x : var) : option pyvalue :=
   match rho with
   | [] => None
   | (y, v) :: rest => if string_dec x y then Some v else plookup rest x
+  end.
+
+(** [piterate] mirrors [Lang.iterate] exactly, constructor for
+    constructor, for the same reason given there. *)
+Fixpoint piterate (n : nat) (f : pyvalue -> option pyvalue) (v : pyvalue) : option pyvalue :=
+  match n with
+  | O => Some v
+  | S n' =>
+      match f v with
+      | Some v' => piterate n' f v'
+      | None => None
+      end
   end.
 
 Fixpoint peval (rho : pyenv) (e : pyexpr) : option pyvalue :=
@@ -179,5 +192,10 @@ Fixpoint peval (rho : pyenv) (e : pyexpr) : option pyvalue :=
       match peval rho e1, peval rho e2 with
       | Some (PVFloat f1), Some (PVFloat f2) => Some (PVBool (f1 <=? f2)%float)
       | _, _ => None
+      end
+  | PRepeat n x body init =>
+      match peval rho init with
+      | Some v0 => piterate n (fun v => peval ((x, v) :: rho) body) v0
+      | None => None
       end
   end.

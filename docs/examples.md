@@ -270,7 +270,32 @@ def landed_float(x, v):
     return ((x <= 0.0) and (v < 0.0))
 ```
 
-## Example 5: a wave simulator, from Maxwell's equations to a running plot
+## Example 5: a multi-step trajectory, via bounded iteration
+
+`ERepeat n x body init` applies `body` to `init` `n` times in a row —
+`n` a compile-time `nat`, not a runtime value. `euler_multi_step_expr`
+chains `euler_step_expr` (Example 1) this way, computing a whole
+trajectory *inside* the proven subset, with no external loop:
+
+```coq
+Definition euler_multi_step_expr (n : nat) : expr :=
+  ERepeat n "state" euler_multi_step_body (EPair (EVar "x0") (EVar "v0")).
+```
+
+Three steps from rest with acceleration 2: `(0,0) -> (2,2) -> (6,4) -> (12,6)`,
+checked the same `reflexivity` way as every earlier example. The
+generated Python literally unrolls the loop (see `PyPrint.v`'s `PRepeat`
+comment for why that's correct and not just a size hack):
+
+```
+def euler_trajectory_3(x0, v0, a, dt):
+    return ((state := (x0, v0)), (state := ((x := (state)[0]), ((v := (state)[1]), ((v2 := (v + (a * dt))), ((x + (v2 * dt)), v2))[1])[1])[1]), (state := ((x := (state)[0]), ((v := (state)[1]), ((v2 := (v + (a * dt))), ((x + (v2 * dt)), v2))[1])[1])[1]), (state := ((x := (state)[0]), ((v := (state)[1]), ((v2 := (v + (a * dt))), ((x + (v2 * dt)), v2))[1])[1])[1]), state)[-1]
+```
+
+Run for real: `euler_trajectory_3(0, 0, 2, 1)` gives `(12, 6)`, matching
+the proof.
+
+## Example 6: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -392,5 +417,5 @@ are all actually correct together, not just individually plausible.
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 5 wave simulator, plots it
+make wave_sim  # generates + runs the Example 6 wave simulator, plots it
 ```

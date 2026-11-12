@@ -44,17 +44,19 @@ comparisons (`=`/`<`/`<=`, over both integers and floats, via
 `EEq`/`ELt`/`ELe` and `EFEq`/`EFLt`/`EFLe` respectively) and boolean
 connectives (`and`/`or`/`not`), a general `if` (on a genuine boolean
 condition, not the earlier "equals zero" hack), pairs/tuples
-(construction and projection), and a single non-recursive `let`. Values
-are now a real four-way sum (`VZ`/`VBool`/`VPair`/`VFloat`), not bare
-integers — operations applied to a value of the wrong shape get stuck
-(`None`), the same way an unbound variable already did; there is no
-separate static type system layered on top. Not yet covered, in roughly
-the order they'd likely be needed:
+(construction and projection), a single non-recursive `let`, and bounded
+iteration (`ERepeat n x body init`, `n` a literal, compile-time `nat` —
+see `examples/Kinematics.v`'s `euler_multi_step_expr` for a worked
+instance chaining a whole trajectory this way, no external loop needed).
+Values are now a real four-way sum (`VZ`/`VBool`/`VPair`/`VFloat`), not
+bare integers — operations applied to a value of the wrong shape get
+stuck (`None`), the same way an unbound variable already did; there is
+no separate static type system layered on top. Not yet covered, in
+roughly the order they'd likely be needed:
 
-- Bounded iteration (a fixed, statically-known number of repetitions of a
-  state-transforming expression) as a cheaper first step toward real
-  recursion — see the next section.
-- Mutual and recursive `let`/`fix` (general structural recursion).
+- Mutual and recursive `let`/`fix` (general structural recursion, where
+  the number of steps depends on runtime data rather than being fixed
+  up front the way `ERepeat`'s count is).
 - Records and non-trivial inductive types beyond pairs.
 - Lists/arrays (needed before numpy-shaped state makes sense).
 - Modules and typeclasses.
@@ -180,15 +182,18 @@ error actually comes from) — this theorem proves the error's *leading
 term* is what remains after cubic-order matching, not that the leading
 term is small.
 
-What `Discretize.v` does *not* do is add arrays or bounded iteration to
-`expr`/`pyexpr` itself (still the gap tracked above). Instead,
-`leapfrog_update_expr` is the proven, extracted *per-point* update rule
-(five scalar floats in, one out), and `runtime/wave1d.py` is a
-hand-written, explicitly unproven external runtime — in the same trust
-category as `ocaml/driver/main.ml`'s CLI glue or `PyPrint.v`'s
-pretty-printer — that allocates the numpy grid, applies Dirichlet
-boundary conditions, and drives the time-stepping loop, calling the
-*literal* extracted `leapfrog_update` function (imported, not
+What `Discretize.v` does *not* do is add arrays to `expr`/`pyexpr` itself
+(still the gap tracked above) — `ERepeat` (bounded iteration, now
+covered) doesn't close this one on its own, since the wave simulator's
+state is a whole grid, not a small, fixed-shape value `ERepeat` could
+carry around the way `examples/Kinematics.v`'s `euler_multi_step_expr`
+does for a `(x, v)` pair. Instead, `leapfrog_update_expr` is the proven,
+extracted *per-point* update rule (five scalar floats in, one out), and
+`runtime/wave1d.py` is a hand-written, explicitly unproven external
+runtime — in the same trust category as `ocaml/driver/main.ml`'s CLI glue
+or `PyPrint.v`'s pretty-printer — that allocates the numpy grid, applies
+Dirichlet boundary conditions, and drives the time-stepping loop, calling
+the *literal* extracted `leapfrog_update` function (imported, not
 re-transcribed) once per step, over whole-array numpy slices (its body is
 plain `+`/`-`/`*`/`**`, so passing numpy arrays instead of scalars just
 works via Python's operator overloading — no separate "vectorized"

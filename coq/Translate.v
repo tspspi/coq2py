@@ -47,6 +47,7 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EFEq e1 e2 => PFEq (translate e1) (translate e2)
   | EFLt e1 e2 => PFLt (translate e1) (translate e2)
   | EFLe e1 e2 => PFLe (translate e1) (translate e2)
+  | ERepeat n x body init => PRepeat n x (translate body) (translate init)
   end.
 
 Fixpoint value_to_pyvalue (v : value) : pyvalue :=
@@ -69,6 +70,29 @@ Proof.
   induction rho as [| [y v] rho' IH]; intro x; simpl.
   - reflexivity.
   - destruct (string_dec x y); [reflexivity | apply IH].
+Qed.
+
+(** [iterate]/[piterate] (Lang.v/PyLang.v) agree under translation,
+    carrying forward whatever correctness [body] already has (at *every*
+    environment, since each iteration extends [rho] with a fresh binding
+    for [x]) through all [n] steps. This is the one piece of real proof
+    work [ERepeat] needs beyond the mechanical per-constructor cases
+    below -- an induction on the iteration count, not a new technique. *)
+Lemma iterate_translate_correct :
+  forall (n : nat) (x : var) (body : expr) (rho : env),
+    (forall rho', peval (env_to_pyenv rho') (translate body) = option_map value_to_pyvalue (eval rho' body)) ->
+    forall v,
+      piterate n (fun pv => peval ((x, pv) :: env_to_pyenv rho) (translate body)) (value_to_pyvalue v)
+      = option_map value_to_pyvalue (iterate n (fun v' => eval ((x, v') :: rho) body) v).
+Proof.
+  induction n as [| n' IH]; intros x body rho Hbody v; simpl.
+  - reflexivity.
+  - pose proof (Hbody ((x, v) :: rho)) as Hstep.
+    simpl in Hstep.
+    rewrite Hstep.
+    destruct (eval ((x, v) :: rho) body) as [v'|].
+    + simpl. apply IH, Hbody.
+    + reflexivity.
 Qed.
 
 (** The correctness theorem: for every source term and every environment,
@@ -107,7 +131,8 @@ Proof.
     | e1 IH1 e2 IH2               (* EFDiv *)
     | e1 IH1 e2 IH2               (* EFEq *)
     | e1 IH1 e2 IH2               (* EFLt *)
-    | e1 IH1 e2 IH2 ];            (* EFLe *)
+    | e1 IH1 e2 IH2               (* EFLe *)
+    | n x body IH1 init IH2 ];    (* ERepeat *)
   intro rho; simpl.
   - (* EConst *) reflexivity.
   - (* EBool *) reflexivity.
@@ -162,4 +187,8 @@ Proof.
     destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* EFLe *) rewrite IH1, IH2.
     destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
+  - (* ERepeat *) rewrite IH2.
+    destruct (eval rho init) as [v0|].
+    + apply (iterate_translate_correct n x body rho IH1 v0).
+    + reflexivity.
 Qed.
