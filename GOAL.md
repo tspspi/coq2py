@@ -136,16 +136,33 @@ is binary-only).
 Net: the proven Gallina pipeline should build from nothing beyond what's
 already installed on both machines today.
 
+## Status
+
+A first vertical slice is implemented and proven (see `coq/`, `examples/`,
+`docs/`): a small arithmetic/let-binding `expr` subset, translated to a
+Python-subset AST with a proven preservation theorem, round-tripped
+through a restricted JSON codec with its own proven round-trip theorem,
+extracted to OCaml, and wrapped in a working CLI that produces real,
+executing Python. `docs/examples.md` walks through all of it with real
+captured output; `docs/roadmap.md` tracks what's intentionally deferred.
+
+Decisions made along the way (superseding the "Open questions" below
+where they overlap):
+- The pretty-printer is left unproved (structure-preserving, not
+  semantics-affecting — see `docs/duality.md`'s trust-boundary section).
+- Invocation is a standalone CLI reading JSON on stdin, not a Coq
+  vernacular command — simplest to get working first; revisit if the
+  TEM-host integration wants something tighter.
+
 ## Open questions
 
-- Should the `PyAST -> string` pretty-printer be proven correct too, or left
-  as tested-but-unverified boundary code (lower risk since it's
-  structure-preserving, not semantics-altering)?
-- Exact initial supported Coq subset (first cut: non-mutual structural
-  recursion, inductives, records, pattern matching — confirm/refine).
-- Exact initial supported Python subset semantics to formalize first.
-- Invocation UX: a Coq vernacular command run inside `.v` files, vs. a
-  standalone CLI run after `coqc`.
+- Exact initial supported Coq subset beyond the current one (next likely
+  additions: mutual/recursive `let`/`fix`, records, richer inductive
+  types — see `docs/roadmap.md`).
+- Reconciling `Json.v`'s grammar against Coq's actual
+  `Extraction Language JSON` output (currently `expr` values are
+  constructed directly rather than ingested from real `.v` sources — see
+  `docs/roadmap.md`).
 - What exactly the "theory-evaluating agent" on the TEM host needs from
   `coq2py` at the interface level (input format, invocation, how generated
   Python gets executed) — needed to scope the deployment packaging.
