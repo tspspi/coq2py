@@ -41,7 +41,20 @@ an open guess.
   consuming code specifically recognizes well-known operation names
   (`"add"`, `"ltb"`, `"andb"`, ...) as intrinsics and simply ignores their
   extracted bodies -- exactly the same move a real compiler makes for
-  built-ins.
+  built-ins. These names are **not even stable across a single
+  extraction unit**, confirmed directly: `Z.ltb` extracted cleanly as
+  `"ltb"` in one test, but in a second test requiring nothing but
+  `ZArith`, `Z.add` (via plain `+`) extracted as `"add0"`, not `"add"`
+  -- `positive`'s own internal `add` helper claims the bare name first
+  (dependency order, not anything about `Z.add` itself), bumping `Z.add`
+  to a disambiguated suffix. A name-based intrinsic recognizer that
+  hardcodes `"add"` would silently fail to recognize `Z.add` the moment
+  anything else in the same extracted module also defines (or itself
+  transitively needs) an `add`. This is exactly the "extraction-internal
+  detail, not a stable, documented one" risk flagged below in sharper,
+  now-confirmed form -- not yet solved, since solving it needs either
+  controlling what else shares the extraction unit or matching
+  structurally rather than by name, and `RealIR.v` does neither yet.
 - `coq/RealIR.v` is that recognizer, as a first proven step: `real_expr`
   models exactly this fragment (variables, `Z`/`bool` literals, named
   unary/binary intrinsic calls, a 2-case boolean `if`), `real_eval`'s
@@ -81,6 +94,11 @@ they'd be needed next:
   recursive `decl:fixgroup`s (`ERec`'s cousin on the *ingestion* side).
 - Broaden the recognized intrinsic set beyond `Z`/`bool` (lists, pairs,
   the other operations this project's `expr` already has).
+- Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
+  disambiguation above -- e.g. by controlling the extraction unit so
+  only the intrinsics themselves are ever extracted (no competing
+  declaration to force a rename), rather than matching an unstable
+  textual name.
 
 ## Not proved: the pretty-printer
 
