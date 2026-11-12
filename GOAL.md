@@ -147,18 +147,30 @@ already installed on both machines today.
 ## Status
 
 A first vertical slice is implemented and proven (see `coq/`, `examples/`,
-`docs/`): an `expr` subset covering integer/boolean arithmetic,
+`docs/`): an `expr` subset covering integer/boolean/float arithmetic,
 comparisons, boolean connectives, a general `if`, pairs/tuples, and
 non-recursive `let`, translated to a Python-subset AST with a proven
 preservation theorem, round-tripped through a restricted JSON codec with
 its own proven round-trip theorem, extracted to OCaml, and wrapped in a
 working CLI that produces real, executing Python. `docs/examples.md`
-walks through two worked examples (a pair-returning Euler integration
-step, and a boolean/comparison-based landing check) with real captured
-output; `docs/roadmap.md` tracks what's intentionally deferred. A larger
-worked example — Lorentz symmetry, Maxwell's equations, the wave
-equation, discretized extraction, and visualization — is being built in
-`examples/physics/`.
+walks through three worked examples (a pair-returning Euler integration
+step over integers, a boolean/comparison-based landing check, and the
+same Euler step again over real `PrimFloat.float` state) with real
+captured output; `docs/roadmap.md` tracks what's intentionally deferred.
+A larger worked example lives in `examples/physics/`: Lorentz symmetry
+(`Minkowski.v`), a symbolic calculus layer (`Calculus.v`), Maxwell's
+equations and the wave equation derived from them (`Maxwell.v`), and a
+discretized numerical scheme for that wave equation with its own
+consistency proof, extracted and actually run as a Python/numpy simulator
+with a matplotlib plot (`Discretize.v`, `runtime/wave1d.py`, `make
+wave_sim` — see `docs/examples.md`'s Example 4 for the full walkthrough).
+That simulator's grid/loop/boundary-condition plumbing is hand-written,
+unproven external runtime, not a formalized numpy subset (see
+`docs/roadmap.md`'s electromagnetism entry for exactly what that does and
+doesn't cover) — `Calculus.v`/`Maxwell.v`'s symbolic `R`-valued field
+theory and the discretized, extracted `PrimFloat` simulator are
+connected by `Discretize.v`'s consistency theorem, not by one continuous
+proof chain from `R` down to the generated Python.
 
 Decisions made along the way (superseding the "Open questions" below
 where they overlap):

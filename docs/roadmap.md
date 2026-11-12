@@ -148,24 +148,60 @@ minimum:
 - `Maxwell.v` — Maxwell's equations in vacuum as a hypothesis set, and
   the electromagnetic wave equation for E and B derived from them.
 
-Remaining for this example: a discretized numerical scheme for the wave
-equation, extraction to a Python/numpy simulator, and visualization with
-matplotlib. This depends on array and bounded-iteration support in
-`expr`/`pyexpr` (see above), which is core extractor work rather than
-part of the example itself, plus one more design decision: `Calculus.v`
-and `Maxwell.v` use `R`, Coq's classical, axiomatically-constructed real
-numbers, which — unlike `Z` — have no computational content and cannot
-be extracted to a concrete numeric type at all (`R`'s equality isn't
-decidable; this is inherent to how it's built, not a missing extraction
-pragma). The discretized grid simulator will need its own, separately
-computable numeric representation in `expr`/`pyexpr` — either Coq's
-primitive, IEEE-754-backed float type (`Coq.Floats.PrimFloat`, extractable
-to OCaml's native `float` via the stock `ExtrOCamlFloats` realizer, no new
-dependency) or a fixed-point scheme over the existing `Z`. The proof
-connecting the discretization to the continuous wave equation above is,
-as already noted, a separate numerical-analysis question (standard: a
-second-order-consistent central-difference scheme), assumed rather than
-proved.
+- `Discretize.v` — the discretized numerical scheme for the wave
+  equation, a genuine (not assumed) consistency proof for it, the
+  extractable `expr` term for its per-point update rule, and (via
+  `make wave_sim` and `runtime/wave1d.py`) an actual running Python/numpy
+  simulator built from the extracted code, with a matplotlib plot. See
+  `docs/examples.md`'s wave-simulator walkthrough for a full worked
+  account with captured output, and below for exactly what is and isn't
+  covered.
+
+`Calculus.v` and `Maxwell.v` use `R`, Coq's classical,
+axiomatically-constructed real numbers, which — unlike `Z` — have no
+computational content and cannot be extracted to a concrete numeric type
+at all (`R`'s equality isn't decidable; this is inherent to how it's
+built, not a missing extraction pragma); the discretized grid simulator
+needs its own, separately computable numeric representation, which is
+`Coq.Floats.PrimFloat` (`VFloat`/`EFConst`/`EFAdd`/`EFSub`/`EFMul`/`EFDiv`
+— see the `PrimFloat.float` section above), not a fixed-point scheme over
+`Z`.
+
+`Discretize.v`'s `leapfrog_exact_for_cubic_profile` is a genuine
+numerical-analysis theorem, not the "assumed, standard" hand-wave this
+entry used to settle for: given that the continuous wave equation holds
+at a point and the true solution agrees with its own third-order Taylor
+expansion there (both in space and in time — exactly what "the solution
+is smooth" buys locally), the discrete leapfrog update recovers the
+*exact* next-time-step value, with literally zero error — not just
+asymptotically small. It's proved by `field` over `R`, the same style as
+`Calculus.v`'s `pderiv_comm`, not a limit/remainder argument (which would
+need Taylor's-theorem machinery this project's dependency policy avoids
+pulling in). The honest scope of what this does *not* claim: it says
+nothing about points where the true solution's local Taylor expansion has
+a nonzero 4th-order term (that's where real `O(dx^2+dt^2)` truncation
+error actually comes from) — this theorem proves the error's *leading
+term* is what remains after cubic-order matching, not that the leading
+term is small.
+
+What `Discretize.v` does *not* do is add arrays or bounded iteration to
+`expr`/`pyexpr` itself (still the gap tracked above). Instead,
+`leapfrog_update_expr` is the proven, extracted *per-point* update rule
+(five scalar floats in, one out), and `runtime/wave1d.py` is a
+hand-written, explicitly unproven external runtime — in the same trust
+category as `ocaml/driver/main.ml`'s CLI glue or `PyPrint.v`'s
+pretty-printer — that allocates the numpy grid, applies Dirichlet
+boundary conditions, and drives the time-stepping loop, calling the
+*literal* extracted `leapfrog_update` function (imported, not
+re-transcribed) once per step, over whole-array numpy slices (its body is
+plain `+`/`-`/`*`/`**`, so passing numpy arrays instead of scalars just
+works via Python's operator overloading — no separate "vectorized"
+rewrite was needed). This is a real, if narrower, way to reach "extracted
+Python actually running a simulator" without first doing the
+substantially larger numpy-semantics formalization described above; it
+is not a substitute for that formalization, which remains future work if
+arrays/loops ever need to live *inside* the proven subset (e.g. to prove
+something about the loop itself, not just each step it runs).
 
 ## Deployment target: the remote host
 

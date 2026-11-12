@@ -8,7 +8,7 @@
 # Use `gmake` if your platform's default `make` is BSD make (coqc's own
 # generated-makefile conventions assume GNU make).
 
-.PHONY: all coq ocaml examples physics test clean
+.PHONY: all coq ocaml examples physics test wave_sim clean
 
 all: coq ocaml
 
@@ -31,6 +31,22 @@ physics: coq
 	coqc -Q coq "" -Q examples/physics "" examples/physics/Minkowski.v
 	coqc -Q coq "" -Q examples/physics "" examples/physics/Calculus.v
 	coqc -Q coq "" -Q examples/physics "" examples/physics/Maxwell.v
+	coqc -Q coq "" -Q examples/physics "" examples/physics/Discretize.v
+
+# Generates runtime/generated/leapfrog_update.py by piping the JSON
+# encoding of examples/physics/Discretize.v's `leapfrog_update_expr`
+# through the real coq2py CLI (byte-identical to that file's own
+# `Compute print_expr leapfrog_update_expr`), then runs the external
+# numpy/matplotlib runtime (runtime/wave1d.py) against it -- see that
+# file's header for the trust-boundary split this represents.
+LEAPFROG_UPDATE_JSON := {"tag":"fadd","lhs":{"tag":"fsub","lhs":{"tag":"fmul","lhs":{"tag":"fconst","kind":"finite","sign":false,"mantissa":4503599627370496,"exponent":-51},"rhs":{"tag":"var","name":"u_center"}},"rhs":{"tag":"var","name":"u_prev"}},"rhs":{"tag":"fmul","lhs":{"tag":"var","name":"r"},"rhs":{"tag":"fsub","lhs":{"tag":"fadd","lhs":{"tag":"var","name":"u_left"},"rhs":{"tag":"var","name":"u_right"}},"rhs":{"tag":"fmul","lhs":{"tag":"fconst","kind":"finite","sign":false,"mantissa":4503599627370496,"exponent":-51},"rhs":{"tag":"var","name":"u_center"}}}}}
+
+wave_sim: ocaml
+	mkdir -p runtime/generated
+	echo -n '$(LEAPFROG_UPDATE_JSON)' \
+	  | (cd ocaml && dune exec driver/main.exe -- leapfrog_update r,u_prev,u_left,u_center,u_right) \
+	  > runtime/generated/leapfrog_update.py
+	cd runtime && python3 wave1d.py
 
 test: ocaml
 	@echo "--- euler_step (pairs/tuples): examples/Kinematics.v's euler_step_expr ---"

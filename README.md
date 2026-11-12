@@ -23,28 +23,44 @@ yet.
 ## What's actually proved here
 
 - **`Translate.translate_preserves_semantics`** — the translation from the
-  supported Gallina subset (`Lang.v`: integers, booleans, pairs,
+  supported Gallina subset (`Lang.v`: integers, booleans, floats, pairs,
   comparisons, `if`, `let`) to the Python-subset AST (`PyLang.v`)
   preserves semantics, for every term and environment, unconditionally.
 - **`Json.parse_print_roundtrip`** — the JSON-flavoured parser
   (`Json.v`) is a proven inverse of its own printer, over every term with
   valid identifiers.
 
-Both are axiom-free. What's *not* proved — the final Python pretty-printer,
-and the correspondence between this project's formal Python semantics and
-real CPython's actual behaviour — is explained and justified in
-[docs/duality.md](docs/duality.md), not left implicit.
+Neither relies on any axiom *of this project's own introduction*; `Print
+Assumptions` on both does report a short list, but every entry is either a
+Coq primitive type/operation (`PrimFloat`/`PrimInt63` — trusted at the
+same level as the kernel's native `Z`/`bool`, not a project-specific
+assumption) or, for `Json.parse_print_roundtrip` only,
+`FloatAxioms.SF2Prim_Prim2SF` — a standard-library axiom asserting Coq's
+own float-decomposition functions round-trip, used by `Json.v`'s float
+JSON codec (see its comment) and in the same trust category as the kernel
+itself. What's *not* proved — the final Python pretty-printer, and the
+correspondence between this project's formal Python semantics (and
+`PrimFloat`'s own IEEE-754 semantics) and real CPython's actual behaviour
+— is explained and justified in [docs/duality.md](docs/duality.md), not
+left implicit.
 
 ## Building
 
 ```
-make all    # builds the Coq proofs, extracts to OCaml, builds the CLI
-make test   # runs the CLI end-to-end against examples/Kinematics.v's terms
+make all       # builds the Coq proofs, extracts to OCaml, builds the CLI
+make test      # runs the CLI end-to-end against examples/Kinematics.v's terms
+make physics   # checks the Minkowski/Calculus/Maxwell/Discretize.v example
+make wave_sim  # extracts + runs the Discretize.v wave simulator, plots it
 ```
 
-Requires `coqc`/`coq-stdlib`, OCaml, and `dune` — nothing beyond what's
-already needed for ordinary Coq extraction (see GOAL.md's dependency
-policy: deliberately no MetaCoq/coq-equations/bignum libraries).
+Requires `coqc`/`coq-stdlib`, OCaml, and `dune` for the first three —
+nothing beyond what's already needed for ordinary Coq extraction (see
+GOAL.md's dependency policy: deliberately no MetaCoq/coq-equations/bignum
+libraries). `make wave_sim` additionally needs `numpy` (required) and
+`matplotlib` (optional — skipped with a message if absent) to run
+`runtime/wave1d.py`, the hand-written, unproven external runtime
+described in [docs/examples.md](docs/examples.md)'s Example 4 and
+[docs/roadmap.md](docs/roadmap.md)'s electromagnetism entry.
 
 If your system's default `make` is BSD make (as on FreeBSD), use `gmake`
 instead — `coqc`'s own generated build conventions assume GNU make.
