@@ -12,18 +12,54 @@ defines and proves a parser for — it is **not yet** reconciled against
 what Coq's own `Extraction Language JSON` backend actually emits for a
 real `.v` file. Today, `expr` values are constructed directly as Gallina
 terms (see `examples/Kinematics.v`) or fed to the CLI by hand-writing the
-JSON. Closing this gap means:
+JSON.
 
-1. Picking a Coq subset to target first (this repo's `expr` is a
-   reasonable first slice: arithmetic, variables, let-bindings,
-   conditionals).
-2. Reading `coqc`'s actual JSON backend output for small fixtures in that
-   subset (empirically, against the exact Coq version in use — the schema
-   isn't a stable, independently documented spec) and either adjusting
-   `Json.v`'s grammar to match it, or writing a translation layer between
-   the two.
-3. Re-doing the round-trip proof against whatever grammar actually comes
-   out the other end.
+This was empirically checked (Coq 8.18.0, the dev-machine version per
+GOAL.md's table) rather than left as an open guess, and the honest
+answer is: it's a materially bigger gap than "adjust the grammar a bit."
+
+- `Recursive Extraction add1.` for a one-line `Definition add1 (x : Z) :
+  Z := x + 1.` emits **~1700 lines** of JSON — the real backend pulls in
+  the full transitive closure of everything the function's type and body
+  touch, here `Z`'s own `positive`-based binary representation and all of
+  *its* recursive helper functions (`add`, `succ`, ...), each as a full
+  `decl:ind`/`decl:fixgroup` declaration. `Extract Constant`/`Extract
+  Inductive` realizer pragmas (the ones that successfully suppress this
+  for the OCaml backend, e.g. `ExtrOcamlZInt`) do **not** suppress it for
+  JSON — they only rename the emitted declarations, the expansion still
+  happens.
+- The practical entry point is instead the *non-recursive* `Extraction
+  add1.` (no `Recursive`), which emits just one bounded `decl:term` for
+  `add1` itself — 41 lines, referencing `Z`/`Zpos`/`XH`/`Z.add` (as
+  `add0`) *by name* rather than inlining their definitions. That's a
+  genuinely usable starting shape.
+- But even that shape is further from `Json.v`'s grammar than hoped:
+  - Functions are **curried lambdas** (`expr:lambda` with an arg-name
+    list and a body) applied via a general `expr:apply` node — this
+    project's `expr` has no function values or application *at all* yet
+    (every "function" is the outermost `py_function` wrapper, not a
+    first-class value), so supporting this is a prerequisite, not a
+    grammar tweak.
+  - Integer literals are **`positive`'s own binary constructor tree**
+    (`1` prints as `Zpos XH`; bigger numbers nest `XI`/`XO` constructors
+    bit by bit), not a flat decimal numeral the way `z_to_string` emits
+    — needs its own conversion, structurally similar to (but distinct
+    from) the `spec_float`/`Prim2SF` decomposition `Json.v`'s float codec
+    already does.
+  - Arithmetic appears as a **named function call** (`x + 1` is
+    `expr:apply` of `expr:global "add0"`, not a primitive `+` node) --
+    recognizing this as `EAdd` means pattern-matching on that specific
+    global name, which is an extraction-internal detail, not a stable,
+    documented one (confirming the schema-stability caveat below).
+
+None of this is a reason to abandon the idea — the non-recursive,
+single-declaration shape is a real, bounded starting point — but closing
+this gap for real needs function application in `expr`/`pyexpr` first
+(see the recursion entry below), then a translation layer from this
+richer MiniML-style IR down to the subset `expr` actually covers, not a
+small adjustment to `Json.v`'s current flat grammar. Re-doing the
+round-trip proof against whatever grammar comes out the other end is
+still step 3, unchanged.
 
 ## Not proved: the pretty-printer
 
