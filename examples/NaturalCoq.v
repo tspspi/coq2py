@@ -18,9 +18,11 @@
     built directly as [EAnd] -- a sixth, [any_true]: a genuinely
     self-recursive [Fixpoint], recognized via [RealIR.v]'s [RSelf]/
     [real_fix_decl], the first real recursion this file reaches (the
-    first five examples are all non-recursive) -- and a seventh,
+    first five examples are all non-recursive) -- a seventh,
     [classify]: a real 2-case sum ([Z + Z]), recognized via
-    [RealIR.v]'s [RCase].
+    [RealIR.v]'s [RCase] -- and an eighth, [swap_xz]: a real *3*-field
+    [Record] (Example 4's [point] grown a field), recognized via
+    [RealIR.v]'s [RRecord3]/[RProj3_1]/[RProj3_2]/[RProj3_3].
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -857,5 +859,120 @@ Compute py_function "classify" ["s"] (translate classify_expr).
     5
     >>> classify(("inr", 5))
     -5
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * An eighth example: a real 3-field Record *)
+
+(** An eighth genuine, human-written Coq definition -- Example 4's
+    [point] grown a third field, and its own [flip_point] grown to
+    swap the two outer fields while keeping the middle one fixed --
+    also run through [coqc]/[Extraction Language JSON] during this
+    session: *)
+Record point3 := mkpoint3 { px3 : Z; py3 : Z; pz3 : Z }.
+
+Definition swap_xz (p : point3) : point3 := mkpoint3 (pz3 p) (py3 p) (px3 p).
+
+(** What Coq's real extraction emitted for it, captured verbatim
+    (abbreviated -- [point3]'s own [decl:ind] declares [Mkpoint3] with
+    3 [z] fields, unremarkable and omitted here): construction is now
+    a 3-arg [expr:constructor] (Example 4's [Mkpoint] shape, just with
+    one more argument), and each access is still a 1-case [expr:case]
+    with [argnames] binding exactly the accessed field to a real name,
+    the *other two* to ["_"]:
+
+    [[
+    {
+      "what": "decl:term", "name": "swap_xz",
+      "type": { ... point3 -> point3 ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["p"],
+        "body": {
+          "what": "expr:constructor", "name": "Mkpoint3",
+          "args": [
+            { "what": "expr:case", "expr": {"what":"expr:rel","name":"p"},
+              "cases": [{"pat": {"name":"Mkpoint3","argnames":["_","_","pz3"]},
+                         "body": {"what":"expr:rel","name":"pz3"}}] },
+            { "what": "expr:case", "expr": {"what":"expr:rel","name":"p"},
+              "cases": [{"pat": {"name":"Mkpoint3","argnames":["_","py3","_"]},
+                         "body": {"what":"expr:rel","name":"py3"}}] },
+            { "what": "expr:case", "expr": {"what":"expr:rel","name":"p"},
+              "cases": [{"pat": {"name":"Mkpoint3","argnames":["px3","_","_"]},
+                         "body": {"what":"expr:rel","name":"px3"}}] }
+          ]
+        }
+      }
+    }
+    ]]
+
+    -- [swap_xz_ir] is that JSON tree, written by hand: [Mkpoint3]'s
+    3-arg construction becomes [RealIR.v]'s new [RRecord3], and each
+    access becomes [RProj3_3]/[RProj3_2]/[RProj3_1] respectively (see
+    [RealIR.v]'s header on why a 3-field [Record] is modeled as the
+    *nested pair* [EPair e1 (EPair e2 e3)] a human would write by hand
+    to work around [ERecord]'s 2-field cap, not [ERecordN]). *)
+Definition swap_xz_ir : real_expr :=
+  RRecord3 (RProj3_3 (RRel "p")) (RProj3_2 (RRel "p")) (RProj3_1 (RRel "p")).
+
+Example swap_xz_ir_matches_real_definition :
+  forall a b c : Z,
+    real_eval [("p", VPair (VZ a) (VPair (VZ b) (VZ c)))] swap_xz_ir
+      = Some (VPair (VZ c) (VPair (VZ b) (VZ a))).
+Proof. reflexivity. Qed.
+
+Definition swap_xz_expr : expr :=
+  match real_to_expr swap_xz_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: swap_xz_ir is in the recognized fragment *)
+  end.
+
+Example swap_xz_ir_translates :
+  real_to_expr swap_xz_ir = Some swap_xz_expr.
+Proof. reflexivity. Qed.
+
+Example swap_xz_expr_matches_real_definition :
+  forall a b c : Z,
+    eval 10 [("p", VPair (VZ a) (VPair (VZ b) (VZ c)))] swap_xz_expr
+      = Some (VPair (VZ c) (VPair (VZ b) (VZ a))).
+Proof.
+  intros a b c.
+  rewrite (real_to_expr_preserves_semantics swap_xz_ir swap_xz_expr
+             swap_xz_ir_translates 10 [("p", VPair (VZ a) (VPair (VZ b) (VZ c)))]
+             ltac:(simpl; lia)).
+  apply swap_xz_ir_matches_real_definition.
+Qed.
+
+Theorem swap_xz_idents_valid :
+  expr_idents_valid is_valid_ident swap_xz_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr swap_xz_expr.
+
+Corollary swap_xz_json_roundtrip :
+  parse_expr_top (print_expr swap_xz_expr) = Some (swap_xz_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip swap_xz_expr swap_xz_idents_valid
+                (String.length (print_expr swap_xz_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H. exact H.
+Qed.
+
+Corollary swap_xz_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate swap_xz_expr)
+      = option_map value_to_pyvalue (eval fuel rho swap_xz_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: the same nested-tuple shape [flip_point]'s
+    own 2-field version already renders, one level deeper. *)
+Compute py_function "swap_xz" ["p"] (translate swap_xz_expr).
+
+(** Run for real:
+
+    [[
+    >>> swap_xz((1, (2, 3)))
+    (3, (2, 1))
     ]]
 *)

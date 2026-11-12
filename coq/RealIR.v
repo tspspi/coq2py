@@ -125,6 +125,30 @@
     standard, not a gap specific to [RSelf]. See examples/NaturalCoq.v's
     [any_true_expr_matches_real_definition]. *)
 
+(** [RRecord3]/[RProj3_1]/[RProj3_2]/[RProj3_3]: a real, human-written
+    *3*-field [Record] -- confirmed directly against a real extracted
+    [Record point3 := mkpoint3 { px : Z; py : Z; pz : Z }.]: just like
+    the 2-field case, construction is a single [expr:constructor] (now
+    with 3 args instead of 2), and each field *access* is a 1-case
+    [expr:case] match on that constructor with [argnames] binding
+    exactly the accessed field to a real name and the other two to
+    ["_"] -- e.g. [["_"; "py"; "_"]] for [py]. [Lang.v]'s own
+    [expr]/[value] have no 3-ary product, so -- the same way the
+    2-field case already models a [Record] as the plain-pair shape
+    [RPair]/[VPair] already has, not a new keyed representation --
+    these model a 3-field [Record] as the *nested* pair
+    [EPair e1 (EPair e2 e3)] a human would write by hand to work
+    around [ERecord]'s own 2-field cap (`docs/roadmap.md`), rather
+    than reaching for the genuinely-N-ary [ERecordN]: field *names*
+    live only in the extracted projection functions (confirmed by the
+    2-field case already), never in the runtime representation, so
+    there is no name to recover and key an [ERecordN] by here either.
+    This is also the first case in this file whose translation nests
+    two levels deep (`EFst (ESnd _)`/`ESnd (ESnd _)` for the 2nd/3rd
+    field), so unlike every single-level case above, [real_expr_depth]
+    needs an extra `S` for those two, and the proof needs a second
+    [destruct fuel] step to match. *)
+
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
 Require Import Lang.
@@ -145,7 +169,11 @@ Inductive real_expr : Type :=
   | RProj1 (scrutinee : real_expr)
   | RProj2 (scrutinee : real_expr)
   | RCase (scrutinee : real_expr) (x1 : var) (case1 : real_expr) (x2 : var) (case2 : real_expr)
-  | RSelf (arg : real_expr).
+  | RSelf (arg : real_expr)
+  | RRecord3 (e1 e2 e3 : real_expr)
+  | RProj3_1 (scrutinee : real_expr)
+  | RProj3_2 (scrutinee : real_expr)
+  | RProj3_3 (scrutinee : real_expr).
 
 (** The reference semantics: not a reimplementation of [Z.add]/
     [Z.ltb]/etc, but a direct call to Coq's own, so this file's trust
@@ -223,6 +251,26 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | _ => None
       end
   | RSelf _ => None
+  | RRecord3 e1 e2 e3 =>
+      match real_eval rho e1, real_eval rho e2, real_eval rho e3 with
+      | Some v1, Some v2, Some v3 => Some (VPair v1 (VPair v2 v3))
+      | _, _, _ => None
+      end
+  | RProj3_1 scrutinee =>
+      match real_eval rho scrutinee with
+      | Some (VPair v1 _) => Some v1
+      | _ => None
+      end
+  | RProj3_2 scrutinee =>
+      match real_eval rho scrutinee with
+      | Some (VPair _ (VPair v2 _)) => Some v2
+      | _ => None
+      end
+  | RProj3_3 scrutinee =>
+      match real_eval rho scrutinee with
+      | Some (VPair _ (VPair _ v3)) => Some v3
+      | _ => None
+      end
   end.
 
 (** The translator: recognize each intrinsic by the exact unqualified
@@ -293,6 +341,26 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | _, _, _ => None
       end
   | RSelf _ => None
+  | RRecord3 e1 e2 e3 =>
+      match real_to_expr e1, real_to_expr e2, real_to_expr e3 with
+      | Some e1', Some e2', Some e3' => Some (EPair e1' (EPair e2' e3'))
+      | _, _, _ => None
+      end
+  | RProj3_1 scrutinee =>
+      match real_to_expr scrutinee with
+      | Some e => Some (EFst e)
+      | None => None
+      end
+  | RProj3_2 scrutinee =>
+      match real_to_expr scrutinee with
+      | Some e => Some (EFst (ESnd e))
+      | None => None
+      end
+  | RProj3_3 scrutinee =>
+      match real_to_expr scrutinee with
+      | Some e => Some (ESnd (ESnd e))
+      | None => None
+      end
   end.
 
 (** [real_expr] has no closures/recursion at all (that is exactly what
@@ -317,6 +385,14 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RCase scrutinee _ case1 _ case2 =>
       S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth case1) (real_expr_depth case2)))
   | RSelf arg => S (real_expr_depth arg)
+  | RRecord3 e1 e2 e3 =>
+      (* translates to the nested [EPair e1' (EPair e2' e3')] -- [e2]/
+         [e3] sit one [EPair] dispatch deeper than [e1], so they need
+         one more fuel unit, not a flat 3-way max. *)
+      S (Nat.max (real_expr_depth e1) (S (Nat.max (real_expr_depth e2) (real_expr_depth e3))))
+  | RProj3_1 scrutinee => S (real_expr_depth scrutinee)
+  | RProj3_2 scrutinee => S (S (real_expr_depth scrutinee))
+  | RProj3_3 scrutinee => S (S (real_expr_depth scrutinee))
   end.
 
 Theorem real_to_expr_preserves_semantics :
@@ -492,6 +568,65 @@ Proof.
   - (* RSelf: [real_to_expr] gives it [None] unconditionally (see this
        file's header), so the hypothesis [Htrans] is vacuous here. *)
     discriminate Htrans.
+  - (* RRecord3: translates to the nested [EPair e1 (EPair e2 e3)],
+       so [e2]/[e3] need one more fuel level than [e1] -- the first
+       case in this file needing two [destruct fuel] steps, not one.
+       [e1] is rewritten (at the still-opaque [fuel1]) *before* the
+       second [destruct], so [simpl] has no concrete [S _] fuel
+       argument yet to eagerly unfold [eval] through. *)
+    destruct (real_to_expr re1) as [e1|] eqn:Hre1; [|discriminate].
+    destruct (real_to_expr re2) as [e2|] eqn:Hre2; [|discriminate].
+    destruct (real_to_expr re3) as [e3|] eqn:Hre3; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel1]; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    pose proof (Nat.le_max_l (real_expr_depth re1)
+                  (S (Nat.max (real_expr_depth re2) (real_expr_depth re3)))) as Hmax1.
+    pose proof (Nat.le_max_r (real_expr_depth re1)
+                  (S (Nat.max (real_expr_depth re2) (real_expr_depth re3)))) as Hmax2.
+    assert (Hd1 : (real_expr_depth re1 < fuel1)%nat) by lia.
+    simpl.
+    rewrite (IHre1 e1 eq_refl fuel1 rho Hd1).
+    destruct fuel1 as [|fuel2]; [lia|].
+    pose proof (Nat.le_max_l (real_expr_depth re2) (real_expr_depth re3)) as Hmax3.
+    pose proof (Nat.le_max_r (real_expr_depth re2) (real_expr_depth re3)) as Hmax4.
+    assert (Hd2 : (real_expr_depth re2 < fuel2)%nat) by lia.
+    assert (Hd3 : (real_expr_depth re3 < fuel2)%nat) by lia.
+    simpl.
+    rewrite (IHre2 e2 eq_refl fuel2 rho Hd2).
+    rewrite (IHre3 e3 eq_refl fuel2 rho Hd3).
+    destruct (real_eval rho re1); destruct (real_eval rho re2); destruct (real_eval rho re3); reflexivity.
+  - (* RProj3_1 *)
+    destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
+    simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|]; reflexivity.
+  - (* RProj3_2: translates to [EFst (ESnd e)] -- a two-level
+       composition, needing a second [destruct fuel] the same way
+       [RRecord3] does, but [reflexivity] alone closes every case: a
+       [match p2 with VPair v2 _ => Some v2 | _ => None end]-shaped
+       term appears *identically* on both sides, with no need to know
+       [p2] concretely. *)
+    destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel1]; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    destruct fuel1 as [|fuel2]; [lia|].
+    assert (Hd1 : (real_expr_depth re < fuel2)%nat) by lia.
+    simpl. rewrite (IHre e1 eq_refl fuel2 rho Hd1).
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|]; reflexivity.
+  - (* RProj3_3: symmetric to [RProj3_2]. *)
+    destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel1]; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    destruct fuel1 as [|fuel2]; [lia|].
+    assert (Hd1 : (real_expr_depth re < fuel2)%nat) by lia.
+    simpl. rewrite (IHre e1 eq_refl fuel2 rho Hd1).
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|]; reflexivity.
 Qed.
 
 (** [real_to_expr_ctx]: [real_to_expr] again, case for case, but
@@ -573,6 +708,26 @@ Fixpoint real_to_expr_ctx (self : option var) (re : real_expr) : option expr :=
       match self, real_to_expr_ctx self arg with
       | Some f, Some arg' => Some (EApp (EVar f) arg')
       | _, _ => None
+      end
+  | RRecord3 e1 e2 e3 =>
+      match real_to_expr_ctx self e1, real_to_expr_ctx self e2, real_to_expr_ctx self e3 with
+      | Some e1', Some e2', Some e3' => Some (EPair e1' (EPair e2' e3'))
+      | _, _, _ => None
+      end
+  | RProj3_1 scrutinee =>
+      match real_to_expr_ctx self scrutinee with
+      | Some e => Some (EFst e)
+      | None => None
+      end
+  | RProj3_2 scrutinee =>
+      match real_to_expr_ctx self scrutinee with
+      | Some e => Some (EFst (ESnd e))
+      | None => None
+      end
+  | RProj3_3 scrutinee =>
+      match real_to_expr_ctx self scrutinee with
+      | Some e => Some (ESnd (ESnd e))
+      | None => None
       end
   end.
 

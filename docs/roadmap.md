@@ -162,6 +162,25 @@ an open guess.
   carries no payload, so it doesn't fit this shape without a second,
   separate encoding. `examples/NaturalCoq.v`'s `classify` (over
   `Z + Z`) is the worked instance, run all the way to real Python.
+- A real *3*-field `Record` is recognized too, via `RealIR.v`'s
+  `RRecord3`/`RProj3_1`/`RProj3_2`/`RProj3_3`: construction is still a
+  single `expr:constructor`, now with 3 args instead of 2, and each
+  field access is still a 1-case `expr:case` with `argnames` binding
+  the one accessed field to a real name and the *other two* to `"_"`
+  (confirmed directly). Field names live only in the extracted
+  projection functions, never in the runtime representation (true
+  already for the 2-field case), so there is no name to key an
+  `ERecordN` by here -- these model a 3-field `Record` the same way
+  the 2-field case already does, as the nested pair
+  `EPair e1 (EPair e2 e3)` a human would write by hand to work around
+  `ERecord`'s own 2-field cap, not the genuinely-N-ary `ERecordN`.
+  The first case in this file whose translation nests two `EPair`
+  dispatches deep (`EFst (ESnd _)`/`ESnd (ESnd _)`, for the 2nd/3rd
+  field), needing one extra fuel unit and a second `destruct fuel`
+  step in the proof, unlike every single-level case before it.
+  `examples/NaturalCoq.v`'s `swap_xz` (Example 4's two-field `point`
+  grown a field) is the worked instance, run all the way to real
+  Python.
 
 What `RealIR.v` deliberately does *not* yet do, in roughly the order
 they'd be needed next:
@@ -180,9 +199,11 @@ they'd be needed next:
   JSON number. `real_expr`'s own `RZLit` already stores a plain `Z` (no
   new type invented for this), so folding the nested constructors into
   that `Z` is purely a job for the future JSON-text parser above.
-- Broaden the recognized intrinsic set further (general N-field
-  `Record`s/mutual recursion once the ingestion side's own arity caps
-  are lifted -- see below; `option`, per `RCase`'s own note above).
+- Broaden the recognized intrinsic set further: genuinely *N-ary*
+  `Record`s/mutual-recursion groups specifically (an `ERecordN`-style
+  recognizer that works for *any* field count, not one more fixed
+  arity at a time the way `RRecord3` above is one more instance of the
+  nested-pair workaround); `option`, per `RCase`'s own note above.
 - Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
   disambiguation above -- e.g. by controlling the extraction unit so
   only the intrinsics themselves are ever extracted (no competing
