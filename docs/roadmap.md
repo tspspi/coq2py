@@ -172,10 +172,10 @@ on *fuel*, not on `e`) to get past `EApp`'s non-structural recursion
 into a closure -- just applied to `Json.v`'s induction instead of
 `Translate.v`'s.
 
-**Done**: `Json.v`'s real `parse_print_roundtrip` theorem has been
-converted. That proof used to induct structurally on `e` (`induction e
-as [...]`) across every constructor; it's now proved via the
-`Hstrong` helper, strong induction on `expr_fuel e`
+**Done** (the refactor): `Json.v`'s real `parse_print_roundtrip` theorem
+has been converted. That proof used to induct structurally on `e`
+(`induction e as [...]`) across every constructor; it's now proved via
+the `Hstrong` helper, strong induction on `expr_fuel e`
 (`well_founded_induction lt_wf`), with every former `rewrite (IHk Hv
 fuel' Hf)`-style call converted to the new blanket hypothesis's
 calling convention (`rewrite ((IHn (expr_fuel ek) Hltk ek (le_n _)) Hv
@@ -184,10 +184,33 @@ bound by `lia`) -- a large, mostly mechanical change (done via a
 one-off conversion script, then hand-verified), but a pure refactor:
 no case's own reasoning changed, only how its induction hypothesis is
 obtained. `Print Assumptions` confirms no new axioms, and the full
-test suite passes unchanged. The technique directly unblocks general
-N-field records *and* general mutually-recursive groups (the same
-induction obstacle, the same fix) -- adding either as an actual
-feature on top of this is still a separate, not-yet-done step.
+test suite passes unchanged.
+
+**Done** (the feature): genuinely N-ary records, `ERecordN (fields :
+list (var * expr))`/`EFieldN name e` (`VRecordN`), landed on top of the
+refactor above, across `Lang.v`, `PyLang.v`, `Translate.v` and `Json.v`.
+Two further obstacles beyond the induction one had to be cleared first,
+both confirmed in an isolated throwaway file before touching the real
+modules:
+
+- `eval`/`peval`'s own `ERecordN` case can't be a top-level mutually
+  recursive `Fixpoint eval ... with eval_fields ...` (Coq's guardedness
+  checker rejects it, "cannot guess decreasing argument of fix" -- the
+  same failure the 2-field cap's own history already hit once). The
+  fix: an *anonymous* `fix` nested inside `eval`'s own body, scoped to
+  just that one case, rather than a second top-level `Fixpoint`.
+- `Translate.v`'s preservation proof and `Json.v`'s roundtrip proof each
+  need one reusable helper lemma over the field list (`eval_fields_
+  translate_correct`, `print_parse_fieldsN_roundtrip`), proved once by
+  plain `induction` on the list and applied at the call site -- not
+  re-derived inline per field.
+
+`Print Assumptions` confirms no new axioms on either `translate_
+preserves_semantics` or `parse_print_roundtrip`, and the full test
+suite (`examples`/`test`/`physics`/`wave_sim`) passes unchanged.
+General mutually-recursive *groups* (more than two functions) face the
+same induction obstacle and the same fix is expected to apply, but that
+is still a separate, not-yet-done step.
 
 ## Not proved: the pretty-printer
 
@@ -252,22 +275,20 @@ Generated Python renders a list as nested tuples (`()` for `Nil`,
 Python's native mutable `list`; see `PyPrint.v`'s comment on
 PListMatch`).
 
-Records are now in too, but deliberately capped at exactly two named
-fields: `ERecord k1 e1 k2 e2`/`EField name e` (a `VRecord`; nesting
-handles more than two fields — `ERecord "a" e1 "rest" (ERecord "b" e2
-"c" e3)` for three — the same way `EPair`/`VPair` are already capped
-at two components). That cap isn't arbitrary: a general `list (string
-* expr)`-shaped record needs a custom induction principle for `expr`
-before `Json.v`'s structurally-inducting `parse_print_roundtrip`
-theorem can state a useful hypothesis about a sub-expression buried
-inside a list field, and a `Fixpoint eval ... with eval_fields ...
-with lookup_field ...` attempt at it fails to compile outright
-("cannot guess decreasing argument of fix") — confirmed directly
-before settling on the fixed-arity design. Generated Python renders a
-record as a `dict` literal keyed by the field names (`{"x": ...,
-"v": ...}`), looked up by name (`state["x"]`) rather than by position —
-see `examples/Kinematics.v`'s `euler_step_record_expr`, Example 1's
-step again with named instead of positional output.
+Records are now in too. The original form is still capped at exactly
+two named fields: `ERecord k1 e1 k2 e2`/`EField name e` (a `VRecord`;
+nesting handles more than two fields — `ERecord "a" e1 "rest" (ERecord
+"b" e2 "c" e3)` for three — the same way `EPair`/`VPair` are already
+capped at two components). That cap was never arbitrary — see the
+induction obstacle explained above — but it is no longer the only
+option: `ERecordN (fields : list (var * expr))`/`EFieldN name e` (a
+`VRecordN`) now covers genuinely-N-ary records directly, once the
+strong-induction/nested-`fix` fix above cleared the way. Generated
+Python renders either record form as a `dict` literal keyed by the
+field names (`{"x": ..., "v": ...}`), looked up by name (`state["x"]`)
+rather than by position — see `examples/Kinematics.v`'s
+`euler_step_record_expr`, Example 1's step again with named instead of
+positional output.
 
 Mutual recursion is now in too, also capped — at exactly two
 functions: `ERecMut f1 param1 body1 f2 param2 body2` (a `VClosureMut`),
@@ -328,8 +349,6 @@ Not yet covered, in roughly the order they'd likely be needed:
 - General Unicode/escaped string literals, not just identifier-shaped
   text — needs a real JSON string-escaping codec, not just the
   existing identifier quoting.
-- General N-field records / non-trivial inductive types beyond pairs,
-  lists, 2-field records, and 2-case sums.
 - General mutually-recursive *groups* (more than two functions) —
   `ERecMut` only supports exactly two.
 - Numpy-shaped arrays specifically (fixed-rank, fixed-dtype, with

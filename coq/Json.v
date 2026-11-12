@@ -620,6 +620,20 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""strconcat"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   | EStrEq e1 e2 =>
       "{""tag"":""streq"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | ERecordN fields =>
+      "{""tag"":""recordn"",""fields"":[" ++
+      (fix print_fields (fs : list (var * expr)) : string :=
+         match fs with
+         | [] => ""
+         | [(k, fe)] =>
+             "{""key"":" ++ quote_string k ++ ",""value"":" ++ print_expr fe ++ "}"
+         | (k, fe) :: rest =>
+             "{""key"":" ++ quote_string k ++ ",""value"":" ++ print_expr fe ++ "},"
+               ++ print_fields rest
+         end) fields
+      ++ "]}"
+  | EFieldN name e1 =>
+      "{""tag"":""fieldn"",""name"":" ++ quote_string name ++ ",""value"":" ++ print_expr e1 ++ "}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -657,6 +671,9 @@ Fixpoint expr_fuel (e : expr) : nat :=
       S (Nat.max (expr_fuel scrutinee) (Nat.max (expr_fuel case1) (expr_fuel case2)))
   | EStrConst _ => 1
   | EStrConcat e1 e2 | EStrEq e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
+  | ERecordN fields =>
+      S (length fields + fold_right (fun kf acc => Nat.max (expr_fuel (snd kf)) acc) O fields)
+  | EFieldN _ e1 => S (expr_fuel e1)
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1519,8 +1536,75 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""recordn"",""fields"":[" s with
+    | Some s1 =>
+        match expect "]}" s1 with
+        | Some s2 => Some (ERecordN [], s2)
+        | None =>
+            match (fix parse_fields (fuel : nat) (ss : string) : option (list (var * expr) * string) :=
+                     match fuel with
+                     | O => None
+                     | S fuel'0 =>
+                         match expect "{""key"":" ss with
+                         | Some ss1 =>
+                             match parse_qstring ss1 with
+                             | Some (k, ss2) =>
+                                 match expect ",""value"":" ss2 with
+                                 | Some ss3 =>
+                                     match parse_expr fuel'0 ss3 with
+                                     | Some (fe, ss4) =>
+                                         match expect "}" ss4 with
+                                         | Some ss5 =>
+                                             match expect "," ss5 with
+                                             | Some ss6 =>
+                                                 match parse_fields fuel'0 ss6 with
+                                                 | Some (rest, ss7) => Some ((k, fe) :: rest, ss7)
+                                                 | None => None
+                                                 end
+                                             | None => Some ([(k, fe)], ss5)
+                                             end
+                                         | None => None
+                                         end
+                                     | None => None
+                                     end
+                                 | None => None
+                                 end
+                             | None => None
+                             end
+                         | None => None
+                         end
+                     end) fuel' s1
+            with
+            | Some (fields, s2) =>
+                match expect "]}" s2 with
+                | Some s3 => Some (ERecordN fields, s3)
+                | None => None
+                end
+            | None => None
+            end
+        end
+    | None =>
+    match expect "{""tag"":""fieldn"",""name"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (name, s2) =>
+            match expect ",""value"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e1, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFieldN name e1, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1555,6 +1639,136 @@ Definition parse_expr_top (s : string) : option (expr * string) :=
     proof already uses to get past [EApp]'s non-structural recursion into
     a closure, just applied here to get past a different non-structural
     shape (a list field) instead. *)
+
+(** [ERecordN]/[EFieldN]'s own helper, mirroring [Translate.v]'s
+    [eval_fields_translate_correct]: the array-of-fields structure is
+    reasoned about by plain [induction] on the (non-empty) field list
+    itself, *not* by [parse_print_roundtrip]'s own strong induction on
+    [expr_fuel] -- the two inductions are independent, this one needs
+    nothing from [n]/[IHn] beyond a per-field roundtrip fact handed in
+    as a hypothesis. Validated first in an isolated prototype (see
+    docs/roadmap.md) before being applied here verbatim. *)
+Fixpoint fields_fuel (fields : list (var * expr)) : nat :=
+  match fields with
+  | [] => O
+  | (_, fe) :: rest => S (Nat.max (expr_fuel fe) (fields_fuel rest))
+  end.
+
+(** [fields_fuel]'s own recursion charges one extra unit of fuel per
+    field (it is the parser's own recursion-depth bound), while
+    [expr_fuel]'s [ERecordN] case charges a flat [length + max]
+    instead -- the two formulas are not equal (e.g. at [a = 5],
+    [L = 3], [F = 1]: [max a (L + F) = 5] but [L + max a F = 8]), only
+    [fields_fuel]-is-no-bigger, which is all a fuel *bound* ever needs. *)
+Lemma fields_fuel_le_len_fold :
+  forall fs, (fields_fuel fs <=
+    length fs + fold_right (fun kf acc => Nat.max (expr_fuel (snd kf)) acc) O fs)%nat.
+Proof.
+  induction fs as [| [k fe] fs' IH]; simpl.
+  - lia.
+  - apply le_n_S.
+    rewrite <- Nat.add_max_distr_l.
+    apply Nat.max_le_compat; [lia | exact IH].
+Qed.
+
+Lemma print_parse_fieldsN_roundtrip :
+  forall k fe fields'
+    (Hvk : is_valid_ident k = true)
+    (Hvfe : expr_idents_valid is_valid_ident fe = true)
+    (Hbody : forall fuel, (expr_fuel fe <= fuel)%nat ->
+               forall rest, parse_expr fuel (print_expr fe ++ rest) = Some (fe, rest))
+    (Hall : Forall (fun kf => is_valid_ident (fst kf) = true /\
+                     expr_idents_valid is_valid_ident (snd kf) = true /\
+                     forall fuel, (expr_fuel (snd kf) <= fuel)%nat ->
+                       forall rest, parse_expr fuel (print_expr (snd kf) ++ rest) = Some (snd kf, rest))
+                   fields')
+    fuel,
+    (fields_fuel ((k, fe) :: fields') <= fuel)%nat ->
+    forall rest,
+      (fix parse_fields (fuel0 : nat) (ss : string) : option (list (var * expr) * string) :=
+         match fuel0 with
+         | O => None
+         | S fuel0' =>
+             match expect "{""key"":" ss with
+             | Some ss1 =>
+                 match parse_qstring ss1 with
+                 | Some (k0, ss2) =>
+                     match expect ",""value"":" ss2 with
+                     | Some ss3 =>
+                         match parse_expr fuel0' ss3 with
+                         | Some (fe0, ss4) =>
+                             match expect "}" ss4 with
+                             | Some ss5 =>
+                                 match expect "," ss5 with
+                                 | Some ss6 =>
+                                     match parse_fields fuel0' ss6 with
+                                     | Some (rest0, ss7) => Some ((k0, fe0) :: rest0, ss7)
+                                     | None => None
+                                     end
+                                 | None => Some ([(k0, fe0)], ss5)
+                                 end
+                             | None => None
+                             end
+                         | None => None
+                         end
+                     | None => None
+                     end
+                 | None => None
+                 end
+             | None => None
+             end
+         end) fuel
+        ((fix print_fields (fs : list (var * expr)) : string :=
+            match fs with
+            | [] => ""
+            | [(k0, fe0)] =>
+                "{""key"":" ++ quote_string k0 ++ ",""value"":" ++ print_expr fe0 ++ "}"
+            | (k0, fe0) :: rest0 =>
+                "{""key"":" ++ quote_string k0 ++ ",""value"":" ++ print_expr fe0 ++ "},"
+                  ++ print_fields rest0
+            end) ((k, fe) :: fields') ++ "]" ++ rest)
+      = Some ((k, fe) :: fields', "]" ++ rest).
+Proof.
+  intros k fe fields'. revert k fe.
+  induction fields' as [| [k2 fe2] fields'' IH]; intros k fe Hvk Hvfe Hbody Hall fuel Hfuel rest.
+  - (* singleton: [(k, fe)] *)
+    simpl in Hfuel. destruct fuel as [|fuel']; [lia|]. simpl in Hfuel.
+    assert (Hone : (expr_fuel fe <= fuel')%nat) by lia.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print k Hvk). simpl.
+    repeat rewrite string_append_assoc.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (Hbody fuel' Hone).
+    simpl.
+    destruct (expect "," ("]" ++ rest)) eqn:Hcomma.
+    + unfold expect in Hcomma. simpl in Hcomma. discriminate.
+    + reflexivity.
+  - (* cons: [(k, fe) :: (k2, fe2) :: fields'']; the tail is itself a
+       non-empty list, so [IH] (specialized to [k2]/[fe2]/[fields'']
+       directly) applies unchanged. *)
+    simpl in Hfuel. destruct fuel as [|fuel']; [lia|]. simpl in Hfuel.
+    assert (Hone : (expr_fuel fe <= fuel')%nat) by lia.
+    pose proof (Nat.le_max_r (expr_fuel fe) (S (Nat.max (expr_fuel fe2) (fields_fuel fields'')))) as Hmax.
+    assert (Hfuel' : (fields_fuel ((k2, fe2) :: fields'') <= fuel')%nat) by (simpl; lia).
+    inversion Hall as [| x l Hx Hl]; subst.
+    destruct Hx as [Hvk2 [Hvfe2 Hbody2]].
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print k Hvk). simpl.
+    repeat rewrite string_append_assoc.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (Hbody fuel' Hone).
+    simpl.
+    repeat rewrite string_append_assoc.
+    pose proof (IH k2 fe2 Hvk2 Hvfe2 Hbody2 Hl fuel' Hfuel' rest) as IH'.
+    simpl in IH'.
+    rewrite IH'.
+    reflexivity.
+Qed.
+
 Theorem parse_print_roundtrip :
   forall e,
     expr_idents_valid is_valid_ident e = true ->
@@ -1612,7 +1826,9 @@ Proof.
       | scrutinee x1 case1 x2 case2 (* ECase *)
       | s                     (* EStrConst *)
       | e1 e2                 (* EStrConcat *)
-      | e1 e2 ];              (* EStrEq *)
+      | e1 e2                 (* EStrEq *)
+      | fields                (* ERecordN *)
+      | name e1 ];            (* EFieldN *)
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
   - (* EConst *)
@@ -2076,6 +2292,57 @@ reflexivity.
     rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
     rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* ERecordN *)
+    simpl in Hn.
+    destruct fields as [| [k fe] fields'].
+    + simpl. reflexivity.
+    + simpl in Hn.
+      simpl in Hfuel.
+      simpl in Hvalid.
+      apply andb_true_iff in Hvalid as [Hvk0 Hvrest].
+      apply andb_true_iff in Hvk0 as [Hvk Hvfe].
+      assert (Hone : (expr_fuel fe < n)%nat).
+      { pose proof (Nat.le_max_l (expr_fuel fe)
+                      (fold_right (fun kf acc => Nat.max (expr_fuel (snd kf)) acc) O fields')) as Hmax.
+        lia. }
+      assert (Hall : Forall (fun kf => is_valid_ident (fst kf) = true /\
+                       expr_idents_valid is_valid_ident (snd kf) = true /\
+                       forall fuel0, (expr_fuel (snd kf) <= fuel0)%nat ->
+                         forall rest0, parse_expr fuel0 (print_expr (snd kf) ++ rest0) = Some (snd kf, rest0))
+                     fields').
+      { apply Forall_forall. intros [k0 fe0] Hin.
+        pose proof Hvrest as Hvrest0.
+        apply forallb_forall with (x := (k0, fe0)) in Hvrest0; [| exact Hin].
+        apply andb_true_iff in Hvrest0 as [Hvk0 Hvfe0].
+        assert (Hlt0 : (expr_fuel fe0 < n)%nat).
+        { assert (Hle : (expr_fuel fe0 <= fold_right (fun kf acc => Nat.max (expr_fuel (snd kf)) acc) O fields')%nat).
+          { clear -Hin. induction fields' as [| f' fields'' IHf]; simpl in *.
+            - inversion Hin.
+            - destruct Hin as [Heq | Hin'].
+              + subst. apply Nat.le_max_l.
+              + eapply Nat.le_trans; [apply IHf, Hin' | apply Nat.le_max_r]. }
+          simpl in Hn. lia. }
+        repeat split; try assumption.
+        intros fuel0 Hf0 rest0.
+        exact ((IHn (expr_fuel fe0) Hlt0 fe0 (le_n _)) Hvfe0 fuel0 Hf0 rest0). }
+      assert (Hfone : (fields_fuel ((k, fe) :: fields') <= fuel')%nat).
+      { pose proof (fields_fuel_le_len_fold ((k, fe) :: fields')) as Hle.
+        simpl in Hle. simpl. lia. }
+      pose proof (print_parse_fieldsN_roundtrip k fe fields' Hvk Hvfe
+                    (fun fuel0 Hf0 rest0 => (IHn (expr_fuel fe) Hone fe (le_n _)) Hvfe fuel0 Hf0 rest0)
+                    Hall fuel' Hfone) as Hpf.
+      destruct fields' as [| [k2 fe2] fields''];
+        repeat rewrite string_append_assoc; simpl; simpl in Hpf;
+        rewrite (Hpf (String "}"%char rest)); reflexivity.
+  - (* EFieldN *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hname Hv1].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print name Hname). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). reflexivity.
 
   }
   intros e Hvalid fuel Hfuel rest.

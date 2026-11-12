@@ -77,7 +77,9 @@ Inductive pyexpr : Type :=
   | PCase (scrutinee : pyexpr) (x1 : var) (case1 : pyexpr) (x2 : var) (case2 : pyexpr)
   | PStrConst (s : var)
   | PStrConcat (e1 e2 : pyexpr)
-  | PStrEq (e1 e2 : pyexpr).
+  | PStrEq (e1 e2 : pyexpr)
+  | PRecordN (fields : list (var * pyexpr))
+  | PFieldN (name : var) (e : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -91,7 +93,8 @@ Inductive pyvalue : Type :=
       (cenv : list (var * pyvalue)) (which : bool)
   | PVInl (v : pyvalue)
   | PVInr (v : pyvalue)
-  | PVStr (s : var).
+  | PVStr (s : var)
+  | PVRecordN (fields : list (var * pyvalue)).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -318,6 +321,30 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
       match peval fuel' rho e1, peval fuel' rho e2 with
       | Some (PVStr s1), Some (PVStr s2) => Some (PVBool (String.eqb s1 s2))
       | _, _ => None
+      end
+  | PRecordN fields =>
+      match (fix peval_fields (fs : list (var * pyexpr)) : option (list (var * pyvalue)) :=
+               match fs with
+               | [] => Some []
+               | (k, fe) :: rest =>
+                   match peval fuel' rho fe, peval_fields rest with
+                   | Some v, Some vs => Some ((k, v) :: vs)
+                   | _, _ => None
+                   end
+               end) fields
+      with
+      | Some vs => Some (PVRecordN vs)
+      | None => None
+      end
+  | PFieldN name e1 =>
+      match peval fuel' rho e1 with
+      | Some (PVRecordN fields) =>
+          (fix lookup_field (fs : list (var * pyvalue)) : option pyvalue :=
+             match fs with
+             | [] => None
+             | (k, v) :: rest => if String.eqb k name then Some v else lookup_field rest
+             end) fields
+      | _ => None
       end
   end
   end.

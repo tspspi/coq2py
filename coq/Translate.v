@@ -81,6 +81,8 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EStrConst s => PStrConst s
   | EStrConcat e1 e2 => PStrConcat (translate e1) (translate e2)
   | EStrEq e1 e2 => PStrEq (translate e1) (translate e2)
+  | ERecordN fields => PRecordN (map (fun kf => (fst kf, translate (snd kf))) fields)
+  | EFieldN name e1 => PFieldN name (translate e1)
   end.
 
 (** [VClosure] embeds a captured [env], so translating a closure needs to
@@ -106,6 +108,7 @@ Fixpoint value_to_pyvalue (v : value) : pyvalue :=
   | VInl v1 => PVInl (value_to_pyvalue v1)
   | VInr v1 => PVInr (value_to_pyvalue v1)
   | VStr s => PVStr s
+  | VRecordN fields => PVRecordN (map (fun kf => (fst kf, value_to_pyvalue (snd kf))) fields)
   end.
 
 (** The same translation, lifted pointwise to a whole environment --
@@ -150,6 +153,78 @@ Proof.
     destruct (eval fuel ((x, v) :: rho) body) as [v'|].
     + simpl. apply IH, Hbody.
     + reflexivity.
+Qed.
+
+(** Two reusable helpers for [ERecordN]/[EFieldN]'s proof cases below,
+    each relating the *anonymous* nested [fix] [eval]/[peval] use for
+    this constructor (see Lang.v's header for why it has to be
+    anonymous and nested, not a named top-level mutually-recursive
+    [Fixpoint]) by plain [induction] on the field list itself -- an
+    ordinary list, not an [expr], so none of [Json.v]'s
+    structural-induction-on-[expr] obstacle applies here at all; this
+    file's proof was never blocked by it, since it already inducts on
+    *fuel*, with [IHfuel] already a blanket fact usable for any
+    sub-[expr], list-buried or not. *)
+Lemma eval_fields_translate_correct :
+  forall fuel' rho
+    (Hbody : forall e, peval fuel' (env_to_pyenv rho) (translate e) = option_map value_to_pyvalue (eval fuel' rho e))
+    (fields : list (var * expr)),
+    (fix peval_fields (fs : list (var * pyexpr)) : option (list (var * pyvalue)) :=
+       match fs with
+       | [] => Some []
+       | (k, fe) :: rest =>
+           match peval fuel' (env_to_pyenv rho) fe, peval_fields rest with
+           | Some v, Some vs => Some ((k, v) :: vs)
+           | _, _ => None
+           end
+       end) (map (fun kf => (fst kf, translate (snd kf))) fields)
+    = option_map (fun vs => map (fun kf => (fst kf, value_to_pyvalue (snd kf))) vs)
+        ((fix eval_fields (fs : list (var * expr)) : option (list (var * value)) :=
+            match fs with
+            | [] => Some []
+            | (k, fe) :: rest =>
+                match eval fuel' rho fe, eval_fields rest with
+                | Some v, Some vs => Some ((k, v) :: vs)
+                | _, _ => None
+                end
+            end) fields).
+Proof.
+  intros fuel' rho Hbody fields.
+  induction fields as [| [k fe] fields' IHfields].
+  - reflexivity.
+  - simpl.
+    rewrite (Hbody fe).
+    destruct (eval fuel' rho fe) as [v|]; simpl; [| reflexivity].
+    rewrite IHfields.
+    destruct ((fix eval_fields (fs : list (var * expr)) : option (list (var * value)) :=
+                 match fs with
+                 | [] => Some []
+                 | (k0, fe0) :: rest =>
+                     match eval fuel' rho fe0, eval_fields rest with
+                     | Some v0, Some vs => Some ((k0, v0) :: vs)
+                     | _, _ => None
+                     end
+                 end) fields') as [vs|]; reflexivity.
+Qed.
+
+Lemma lookup_fieldN_translate_correct :
+  forall name (fields : list (var * value)),
+    (fix lookup_field (fs : list (var * pyvalue)) : option pyvalue :=
+       match fs with
+       | [] => None
+       | (k, v) :: rest => if String.eqb k name then Some v else lookup_field rest
+       end) (map (fun kf => (fst kf, value_to_pyvalue (snd kf))) fields)
+    = option_map value_to_pyvalue
+        ((fix lookup_field (fs : list (var * value)) : option value :=
+            match fs with
+            | [] => None
+            | (k, v) :: rest => if String.eqb k name then Some v else lookup_field rest
+            end) fields).
+Proof.
+  intros name fields.
+  induction fields as [| [k v] fields' IH].
+  - reflexivity.
+  - simpl. destruct (String.eqb k name); [reflexivity | exact IH].
 Qed.
 
 (** The correctness theorem: for every source term, environment, and
@@ -212,41 +287,44 @@ Proof.
       | scrutinee x1 case1 x2 case2 (* ECase *)
       | s                           (* EStrConst *)
       | e1 e2                       (* EStrConcat *)
-      | e1 e2 ];                    (* EStrEq *)
+      | e1 e2                       (* EStrEq *)
+      | fields                      (* ERecordN *)
+      | name e1 ];                  (* EFieldN *)
     simpl.
     + (* EConst *) reflexivity.
     + (* EBool *) reflexivity.
     + (* EVar *) apply lookup_pyenv.
     + (* EAdd *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* ESub *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EMul *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EEq *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* ELt *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* ELe *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EAnd *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EOr *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* ENot *) rewrite (IHfuel e1 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|]; reflexivity.
     + (* EIf *) rewrite (IHfuel c rho).
-      destruct (eval fuel' rho c) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|].
+      destruct (eval fuel' rho c) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|].
       * reflexivity.
       * destruct b; [apply (IHfuel e1 rho) | apply (IHfuel e2 rho)].
+      * reflexivity.
       * reflexivity.
       * reflexivity.
       * reflexivity.
@@ -260,52 +338,52 @@ Proof.
     + (* EPair *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
       destruct (eval fuel' rho e1); destruct (eval fuel' rho e2); reflexivity.
     + (* EFst *) rewrite (IHfuel e1 rho).
-      destruct (eval fuel' rho e1) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|]; reflexivity.
     + (* ESnd *) rewrite (IHfuel e1 rho).
-      destruct (eval fuel' rho e1) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|]; reflexivity.
     + (* ELet *) rewrite (IHfuel e1 rho).
       destruct (eval fuel' rho e1) as [v1|].
       * exact (IHfuel e2 ((x, v1) :: rho)).
       * reflexivity.
     + (* EFConst *) reflexivity.
     + (* EFAdd *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EFSub *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EFMul *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EFDiv *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EFEq *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EFLt *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* EFLe *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
     + (* ERepeat *) rewrite (IHfuel init rho).
       destruct (eval fuel' rho init) as [v0|].
       * apply (iterate_translate_correct fuel' n x body rho (fun rho' => IHfuel body rho') v0).
       * reflexivity.
     + (* EDiv *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|];
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|];
         try reflexivity; simpl; destruct (Z.eqb z2 0); reflexivity.
     + (* EMod *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|];
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|];
         try reflexivity; simpl; destruct (Z.eqb z2 0); reflexivity.
     + (* ELam *) reflexivity.
     + (* ERec *) reflexivity.
     + (* ERecMut *) reflexivity.
     + (* EApp *) rewrite (IHfuel func rho), (IHfuel arg rho).
-      destruct (eval fuel' rho func) as [[z|b|v1 v2|f|self param body cenv|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|];
+      destruct (eval fuel' rho func) as [[z|b|v1 v2|f|self param body cenv|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|];
         destruct (eval fuel' rho arg) as [argv|]; try reflexivity.
       * simpl.
         destruct self as [fname|]; simpl.
@@ -326,30 +404,44 @@ Proof.
     + (* ENil *) reflexivity.
     + (* ECons *) rewrite (IHfuel hd rho), (IHfuel tl rho).
       destruct (eval fuel' rho hd) as [hv|];
-        destruct (eval fuel' rho tl) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; reflexivity.
+        destruct (eval fuel' rho tl) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|]; reflexivity.
     + (* EListMatch *) rewrite (IHfuel scrutinee rho).
-      destruct (eval fuel' rho scrutinee) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; try reflexivity.
+      destruct (eval fuel' rho scrutinee) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|]; try reflexivity.
       destruct vs as [| hv tvs]; simpl.
       * apply (IHfuel nilcase rho).
       * exact (IHfuel conscase ((hd, hv) :: (tl, VList tvs) :: rho)).
     + (* ERecord *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
       destruct (eval fuel' rho e1); destruct (eval fuel' rho e2); reflexivity.
     + (* EField *) rewrite (IHfuel e1 rho).
-      destruct (eval fuel' rho e1) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; try reflexivity.
+      destruct (eval fuel' rho e1) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|]; try reflexivity.
       simpl. destruct (String.eqb name rk1), (String.eqb name rk2); reflexivity.
     + (* EInl *) rewrite (IHfuel e1 rho).
       destruct (eval fuel' rho e1); reflexivity.
     + (* EInr *) rewrite (IHfuel e1 rho).
       destruct (eval fuel' rho e1); reflexivity.
     + (* ECase *) rewrite (IHfuel scrutinee rho).
-      destruct (eval fuel' rho scrutinee) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; try reflexivity.
+      destruct (eval fuel' rho scrutinee) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|]; try reflexivity.
       * exact (IHfuel case1 ((x1, iv1) :: rho)).
       * exact (IHfuel case2 ((x2, iv2) :: rho)).
     + (* EStrConst *) reflexivity.
     + (* EStrConcat *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
-    + (* EStrEq *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
-      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1]|];
-        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2]|]; reflexivity.
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
+        + (* EStrEq *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2]|]; reflexivity.
+    + (* ERecordN *) simpl.
+      rewrite (eval_fields_translate_correct fuel' rho (fun e => IHfuel e rho) fields).
+      destruct ((fix eval_fields (fs : list (var * expr)) : option (list (var * value)) :=
+                   match fs with
+                   | [] => Some []
+                   | (k, fe) :: rest =>
+                       match eval fuel' rho fe, eval_fields rest with
+                       | Some v, Some vs => Some ((k, v) :: vs)
+                       | _, _ => None
+                       end
+                   end) fields) as [vs|]; reflexivity.
+    + (* EFieldN *) rewrite (IHfuel e1 rho).
+      destruct (eval fuel' rho e1) as [[z|b|v1 v2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|rn]|]; try reflexivity.
+      simpl. apply (lookup_fieldN_translate_correct name rn).
 Qed.

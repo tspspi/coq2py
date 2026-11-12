@@ -79,7 +79,13 @@
     non-empty one, printing [scrutinee] three times over; since this
     subset is purely functional (nothing to evaluate it for side effects
     would even mean), re-evaluating it those extra times changes no
-    answer, only (unverified, acceptable here) generated-code size. *)
+    answer, only (unverified, acceptable here) generated-code size.
+
+    [PRecordN]/[PFieldN] (genuinely-N-ary records, see Lang.v) render
+    the same way the fixed-arity [PRecord]/[PField] already do -- a
+    [dict] literal keyed by field name, looked up by name -- just built
+    from a nested anonymous [fix] walking the field list instead of a
+    fixed two-field literal. *)
 
 From Coq Require Import String List ZArith.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
@@ -179,6 +185,16 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PStrConst s => py_qstring s
   | PStrConcat e1 e2 => "(" ++ py_expr e1 ++ " + " ++ py_expr e2 ++ ")"
   | PStrEq e1 e2 => "(" ++ py_expr e1 ++ " == " ++ py_expr e2 ++ ")"
+  | PRecordN fields =>
+      "{" ++
+      (fix py_fields (fs : list (var * pyexpr)) : string :=
+         match fs with
+         | [] => ""
+         | [(k, fe)] => py_qstring k ++ ": " ++ py_expr fe
+         | (k, fe) :: rest => py_qstring k ++ ": " ++ py_expr fe ++ ", " ++ py_fields rest
+         end) fields
+      ++ "}"
+  | PFieldN name e1 => "(" ++ py_expr e1 ++ ")[" ++ py_qstring name ++ "]"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

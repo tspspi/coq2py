@@ -164,6 +164,10 @@
     building a second, general-purpose JSON string-escaping codec
     (quotes, backslashes, control characters) as a separate effort. *)
 
+(** [ERecordN fields]/[EFieldN name e] generalize [ERecord]/[EField] to
+    an arbitrary number of named fields -- see this file's [eval] cases
+    and docs/roadmap.md for the design rationale. *)
+
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
@@ -215,7 +219,9 @@ Inductive expr : Type :=
   | ECase (scrutinee : expr) (x1 : var) (case1 : expr) (x2 : var) (case2 : expr)
   | EStrConst (s : var)
   | EStrConcat (e1 e2 : expr)
-  | EStrEq (e1 e2 : expr).
+  | EStrEq (e1 e2 : expr)
+  | ERecordN (fields : list (var * expr))
+  | EFieldN (name : var) (e : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -237,7 +243,8 @@ Inductive value : Type :=
       (cenv : list (var * value)) (which : bool)
   | VInl (v : value)
   | VInr (v : value)
-  | VStr (s : var).
+  | VStr (s : var)
+  | VRecordN (fields : list (var * value)).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -479,6 +486,30 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       | Some (VStr s1), Some (VStr s2) => Some (VBool (String.eqb s1 s2))
       | _, _ => None
       end
+  | ERecordN fields =>
+      match (fix eval_fields (fs : list (var * expr)) : option (list (var * value)) :=
+               match fs with
+               | [] => Some []
+               | (k, fe) :: rest =>
+                   match eval fuel' rho fe, eval_fields rest with
+                   | Some v, Some vs => Some ((k, v) :: vs)
+                   | _, _ => None
+                   end
+               end) fields
+      with
+      | Some vs => Some (VRecordN vs)
+      | None => None
+      end
+  | EFieldN name e1 =>
+      match eval fuel' rho e1 with
+      | Some (VRecordN fields) =>
+          (fix lookup_field (fs : list (var * value)) : option value :=
+             match fs with
+             | [] => None
+             | (k, v) :: rest => if String.eqb k name then Some v else lookup_field rest
+             end) fields
+      | _ => None
+      end
   end
   end.
 
@@ -589,4 +620,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EStrConst s => is_valid_ident s
   | EStrConcat e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EStrEq e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | ERecordN fields =>
+      forallb (fun kf => andb (is_valid_ident (fst kf)) (expr_idents_valid is_valid_ident (snd kf))) fields
+  | EFieldN name e1 => andb (is_valid_ident name) (expr_idents_valid is_valid_ident e1)
   end.
