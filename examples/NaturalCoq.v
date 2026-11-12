@@ -15,10 +15,12 @@
     [flip_point] (a real two-field [Record], recognized as a plain
     pair), [landed_natural] -- this project's own [landed_expr]
     (Kinematics.v), written the natural way with [&&] instead of
-    built directly as [EAnd] -- and a sixth, [any_true]: a genuinely
+    built directly as [EAnd] -- a sixth, [any_true]: a genuinely
     self-recursive [Fixpoint], recognized via [RealIR.v]'s [RSelf]/
     [real_fix_decl], the first real recursion this file reaches (the
-    first five examples are all non-recursive).
+    first five examples are all non-recursive) -- and a seventh,
+    [classify]: a real 2-case sum ([Z + Z]), recognized via
+    [RealIR.v]'s [RCase].
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -734,5 +736,126 @@ Compute py_function "any_true" ["l"] (translate (EApp any_true_expr (EVar "l")))
     [[
     >>> any_true((False, (False, (True, ()))))
     True
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * A seventh example: a real 2-case sum *)
+
+(** A seventh, genuine definition over [Z + Z] -- Coq's own 2-case
+    sum type, [Datatypes.sum] -- also run through [coqc]/[Extraction
+    Language JSON] during this session. *)
+Definition classify (s : Z + Z) : Z :=
+  match s with
+  | inl a => a
+  | inr b => 0 - b
+  end.
+
+(** What Coq's real extraction emitted for it, captured verbatim: a
+    2-case [expr:case] on [s], each [pat:constructor] ([Inl]/[Inr])
+    carrying exactly one payload argument -- the same shape
+    [RListMatch]'s own [Nil]/[Cons] match already has, and lines up
+    directly with [Lang.v]'s own [EInl]/[EInr]/[ECase] (see RealIR.v's
+    header on [RCase] for why [option]'s [None]/[Some] would *not*
+    line up the same way):
+
+    [[
+    { "what": "decl:term", "name": "classify",
+      "type": { ... z + z -> z ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["s"],
+        "body": {
+          "what": "expr:case",
+          "expr": {"what":"expr:rel","name":"s"},
+          "cases": [
+            { "pat": {"what":"pat:constructor","name":"Inl","argnames":["a"]},
+              "body": {"what":"expr:rel","name":"a"} },
+            { "pat": {"what":"pat:constructor","name":"Inr","argnames":["b"]},
+              "body": {
+                "what": "expr:apply",
+                "func": {"what":"expr:global","name":"sub"},
+                "args": [{"what":"expr:constructor","name":"Z0","args":[]},
+                         {"what":"expr:rel","name":"b"}]
+              } }
+          ]
+        }
+      } }
+    ]]
+
+    [classify_ir] is that JSON tree, written by hand: the [expr:case]
+    becomes [RCase], and [0 - b] (plain [Z.sub], extracted cleanly as
+    ["sub"] this time -- no "add"/"add0"-style disambiguation here)
+    becomes [RApp2 "sub" (RZLit 0) (RRel "b")], unchanged from how
+    [RApp2] already recognizes it. *)
+Definition classify_ir : real_expr :=
+  RCase (RRel "s") "a" (RRel "a") "b" (RApp2 "sub" (RZLit 0) (RRel "b")).
+
+(** [real_eval] calls Coq's own [Z.sub] directly (RealIR.v's header),
+    so this is already a check against the real [classify] definition
+    -- [s] quoted into a [value] the same way every other example's
+    arguments already are, [VInl]/[VInr] standing in for [inl]/[inr]. *)
+Example classify_ir_matches_real_definition :
+  forall s : Z + Z,
+    real_eval [("s", match s with inl a => VInl (VZ a) | inr b => VInr (VZ b) end)] classify_ir
+      = Some (VZ (classify s)).
+Proof. intros [a | b]; reflexivity. Qed.
+
+Definition classify_expr : expr :=
+  match real_to_expr classify_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: classify_ir is in the recognized fragment *)
+  end.
+
+Example classify_ir_translates :
+  real_to_expr classify_ir = Some classify_expr.
+Proof. reflexivity. Qed.
+
+Example classify_expr_matches_real_definition :
+  forall s : Z + Z,
+    eval 10 [("s", match s with inl a => VInl (VZ a) | inr b => VInr (VZ b) end)] classify_expr
+      = Some (VZ (classify s)).
+Proof.
+  intros s.
+  rewrite (real_to_expr_preserves_semantics classify_ir classify_expr
+             classify_ir_translates 10
+             [("s", match s with inl a => VInl (VZ a) | inr b => VInr (VZ b) end)]
+             ltac:(simpl; lia)).
+  apply classify_ir_matches_real_definition.
+Qed.
+
+Theorem classify_idents_valid :
+  expr_idents_valid is_valid_ident classify_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr classify_expr.
+
+Corollary classify_json_roundtrip :
+  parse_expr_top (print_expr classify_expr) = Some (classify_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip classify_expr classify_idents_valid
+                (String.length (print_expr classify_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H. exact H.
+Qed.
+
+Corollary classify_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate classify_expr)
+      = option_map value_to_pyvalue (eval fuel rho classify_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: [s] is a tagged 2-tuple, [("inl", v)] or
+    [("inr", v)] ([PyPrint.v]'s comment on [PInl]/[PInr]/[PCase]), the
+    same encoding [Kinematics.v]'s own Example 11 already uses. *)
+Compute py_function "classify" ["s"] (translate classify_expr).
+
+(** Run for real:
+
+    [[
+    >>> classify(("inl", 5))
+    5
+    >>> classify(("inr", 5))
+    -5
     ]]
 *)

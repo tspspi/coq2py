@@ -151,6 +151,17 @@ an open guess.
   real Python) is the worked instance. General *mutually*-recursive
   fixgroups, and recursive functions of more than one argument, are
   still not modeled.
+- A real 2-case sum (`Datatypes.sum`, Coq's own `inl`/`inr`) is
+  recognized too, via `RealIR.v`'s `RCase`: a 2-case `expr:case` with
+  each `pat:constructor` carrying exactly one payload argument
+  (confirmed directly) -- the same shape `RListMatch`'s own `Nil`/
+  `Cons` match already has, and lines up directly with `Lang.v`'s own
+  `EInl`/`EInr`/`ECase` (both payload-carrying), unlike `Record` field
+  access, which needed `RProj1`/`RProj2`'s own encoding trick.
+  `option`'s `None`/`Some` is *not* covered the same way: `None`
+  carries no payload, so it doesn't fit this shape without a second,
+  separate encoding. `examples/NaturalCoq.v`'s `classify` (over
+  `Z + Z`) is the worked instance, run all the way to real Python.
 
 What `RealIR.v` deliberately does *not* yet do, in roughly the order
 they'd be needed next:
@@ -169,9 +180,9 @@ they'd be needed next:
   JSON number. `real_expr`'s own `RZLit` already stores a plain `Z` (no
   new type invented for this), so folding the nested constructors into
   that `Z` is purely a job for the future JSON-text parser above.
-- Broaden the recognized intrinsic set further (sums, and general
-  N-field `Record`s/mutual recursion once the ingestion side's own
-  arity caps are lifted -- see below).
+- Broaden the recognized intrinsic set further (general N-field
+  `Record`s/mutual recursion once the ingestion side's own arity caps
+  are lifted -- see below; `option`, per `RCase`'s own note above).
 - Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
   disambiguation above -- e.g. by controlling the extraction unit so
   only the intrinsics themselves are ever extracted (no competing

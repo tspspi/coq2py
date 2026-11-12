@@ -76,6 +76,20 @@
     keyed by field name for what is, underneath, the same value shape
     [RPair] already covers. *)
 
+(** [RCase scrutinee x1 case1 x2 case2]: a real, human-written 2-case
+    sum ([Datatypes.sum], Coq's own [inl]/[inr], not [option] -- see
+    below). Confirmed directly against a real extracted [Definition
+    classify (s : Z + Z) : Z := match s with inl a => a | inr b => 0 -
+    b end.]: a 2-case [expr:case] on the scrutinee, each
+    [pat:constructor] ([Inl]/[Inr]) carrying exactly one payload
+    argument -- the *same* shape [RListMatch]'s own [Nil]/[Cons]
+    match already has, and lines up exactly with [Lang.v]'s own
+    [EInl]/[EInr]/[ECase] (both payload-carrying), needing no encoding
+    trick the way [RProj1]/[RProj2] needed one for [Record] field
+    access. [option]'s [None]/[Some] is deliberately not covered the
+    same way: [None] carries *no* payload, so it doesn't fit
+    [EInl]/[EInr]'s both-sides-have-a-payload shape without a second,
+    separate encoding -- not attempted here. *)
 (** [RSelf arg]: a self-recursive call, inside the body of a real,
     human-written [Fixpoint]. Confirmed directly against a real
     extracted [Fixpoint any_true (l : list bool) : bool := match l
@@ -130,6 +144,7 @@ Inductive real_expr : Type :=
   | RPair (e1 e2 : real_expr)
   | RProj1 (scrutinee : real_expr)
   | RProj2 (scrutinee : real_expr)
+  | RCase (scrutinee : real_expr) (x1 : var) (case1 : real_expr) (x2 : var) (case2 : real_expr)
   | RSelf (arg : real_expr).
 
 (** The reference semantics: not a reimplementation of [Z.add]/
@@ -201,6 +216,12 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VPair _ v2) => Some v2
       | _ => None
       end
+  | RCase scrutinee x1 case1 x2 case2 =>
+      match real_eval rho scrutinee with
+      | Some (VInl v) => real_eval ((x1, v) :: rho) case1
+      | Some (VInr v) => real_eval ((x2, v) :: rho) case2
+      | _ => None
+      end
   | RSelf _ => None
   end.
 
@@ -266,6 +287,11 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | Some e => Some (ESnd e)
       | None => None
       end
+  | RCase scrutinee x1 case1 x2 case2 =>
+      match real_to_expr scrutinee, real_to_expr case1, real_to_expr case2 with
+      | Some es, Some ec1, Some ec2 => Some (ECase es x1 ec1 x2 ec2)
+      | _, _, _ => None
+      end
   | RSelf _ => None
   end.
 
@@ -288,6 +314,8 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RPair e1 e2 => S (Nat.max (real_expr_depth e1) (real_expr_depth e2))
   | RProj1 scrutinee => S (real_expr_depth scrutinee)
   | RProj2 scrutinee => S (real_expr_depth scrutinee)
+  | RCase scrutinee _ case1 _ case2 =>
+      S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth case1) (real_expr_depth case2)))
   | RSelf arg => S (real_expr_depth arg)
   end.
 
@@ -446,6 +474,21 @@ Proof.
     assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
     destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv]|]; reflexivity.
+  - (* RCase *)
+    destruct (real_to_expr re1) as [es|] eqn:Hres; [|discriminate].
+    destruct (real_to_expr re2) as [ec1|] eqn:Hrec1; [|discriminate].
+    destruct (real_to_expr re3) as [ec2|] eqn:Hrec2; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    assert (Hds' : (real_expr_depth re1 < fuel')%nat) by lia.
+    assert (Hdc1' : (real_expr_depth re2 < fuel')%nat) by lia.
+    assert (Hdc2' : (real_expr_depth re3 < fuel')%nat) by lia.
+    simpl.
+    rewrite (IHre1 es eq_refl fuel' rho Hds').
+    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs]|]; try reflexivity.
+    + apply (IHre2 ec1 eq_refl fuel' ((x1, iv1s) :: rho) Hdc1').
+    + apply (IHre3 ec2 eq_refl fuel' ((x2, iv2s) :: rho) Hdc2').
   - (* RSelf: [real_to_expr] gives it [None] unconditionally (see this
        file's header), so the hypothesis [Htrans] is vacuous here. *)
     discriminate Htrans.
@@ -520,6 +563,11 @@ Fixpoint real_to_expr_ctx (self : option var) (re : real_expr) : option expr :=
       match real_to_expr_ctx self scrutinee with
       | Some e => Some (ESnd e)
       | None => None
+      end
+  | RCase scrutinee x1 case1 x2 case2 =>
+      match real_to_expr_ctx self scrutinee, real_to_expr_ctx self case1, real_to_expr_ctx self case2 with
+      | Some es, Some ec1, Some ec2 => Some (ECase es x1 ec1 x2 ec2)
+      | _, _, _ => None
       end
   | RSelf arg =>
       match self, real_to_expr_ctx self arg with
