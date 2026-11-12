@@ -100,16 +100,16 @@ own documented trust base):**
 
 ## Target environments
 
-| | Local dev machine | TEM instrument control host (`jem2100ai01`, 10.0.3.31) |
+| | Local dev machine | Remote deployment host |
 |---|---|---|
 | Role | Development: writing/proving the translator | Deployment: a theory-evaluating agent authors its own Coq proofs there at runtime, and needs `coq2py` to extract Python programs from them |
 | Coq | 8.18.0 (coq-core/coq-stdlib) | 8.20.1 (coq-core/coq-stdlib) |
 | OCaml | 4.14.1 | 4.14.2 |
 | dune | 3.11.1 | 3.24.2 |
 | Needs `coqc` installed? | Yes — building/proving the translator happens here | **Yes** — the agent's freshly-written `.v` files still need `coqc` on that host to type-check and emit the JSON IR (input-dependent, can't be pre-baked) |
-| Needs to *rebuild* `coq2py` itself? | Yes (that's the point) | **No** — the proven translator is built and proved once here, extracted to OCaml, compiled, and the resulting binary is copied over; the TEM host never re-proves or re-extracts it, so the Coq version skew (8.18.0 vs 8.20.1) only matters for the JSON IR shape `coqc` emits on each side, not for rebuilding the tool |
+| Needs to *rebuild* `coq2py` itself? | Yes (that's the point) | **No** — the proven translator is built and proved once here, extracted to OCaml, compiled, and the resulting binary is copied over; the remote host never re-proves or re-extracts it, so the Coq version skew (8.18.0 vs 8.20.1) only matters for the JSON IR shape `coqc` emits on each side, not for rebuilding the tool |
 
-Work for now stays on the local machine. The TEM host runs `coqc` (already
+Work for now stays on the local machine. The remote host runs `coqc` (already
 installed there) on the agent's own proofs to get JSON IR, then feeds that
 IR to the already-built `coq2py` binary — it is a deployment target for the
 tool, not a second build environment for it.
@@ -117,8 +117,8 @@ tool, not a second build environment for it.
 ## Dependency policy
 
 Minimize dependencies, especially since whatever we depend on to *build* the
-tool should not need to be replicated on the TEM host at all (deployment there
-is binary-only).
+tool should not need to be replicated on the remote host at all (deployment
+there is binary-only).
 
 - `coq-core` + `coq-stdlib` — already present on both machines, nothing to add.
 - OCaml + `dune` + `ocamlfind` — already present on both machines.
@@ -152,7 +152,7 @@ where they overlap):
   semantics-affecting — see `docs/duality.md`'s trust-boundary section).
 - Invocation is a standalone CLI reading JSON on stdin, not a Coq
   vernacular command — simplest to get working first; revisit if the
-  TEM-host integration wants something tighter.
+  remote-host integration wants something tighter.
 
 ## Open questions
 
@@ -163,6 +163,6 @@ where they overlap):
   `Extraction Language JSON` output (currently `expr` values are
   constructed directly rather than ingested from real `.v` sources — see
   `docs/roadmap.md`).
-- What exactly the "theory-evaluating agent" on the TEM host needs from
+- What exactly the "theory-evaluating agent" on the remote host needs from
   `coq2py` at the interface level (input format, invocation, how generated
   Python gets executed) — needed to scope the deployment packaging.

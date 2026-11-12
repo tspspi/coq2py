@@ -79,11 +79,11 @@ minimum:
   question (same array semantics, plus autodiff — a further, separate
   formalization question about what the generated code's gradients mean).
 
-## Deployment target: the TEM instrument host
+## Deployment target: the remote host
 
-Per GOAL.md, the TEM instrument control host (`jem2100ai01`) is meant to
-run `coqc` (already installed there) against proofs a theory-evaluating
-agent writes at runtime, feeding the resulting JSON IR to an already-built
+Per GOAL.md, the remote deployment host is meant to run `coqc` (already
+installed there) against proofs a theory-evaluating agent writes at
+runtime, feeding the resulting JSON IR to an already-built
 `coq2py` binary copied over from the dev machine — not to rebuild
 `coq2py` itself. That deployment packaging (what exactly ships to that
 host, how the agent invokes it, how results come back) isn't built yet;
