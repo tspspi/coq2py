@@ -326,7 +326,7 @@ ZeroDivisionError: integer division or modulo by zero
 
 Python's own `//` already raises on a zero divisor — the same
 undefined case `eval` already refuses to answer, enforced by the target
-language for free. (Compare Example 10's wave simulator: there, the CFL
+language for free. (Compare Example 11's wave simulator: there, the CFL
 precondition *isn't* automatically enforced by anything, so
 `wave1d.py` has to check it explicitly — the two examples are opposite
 ends of the same idea.)
@@ -432,7 +432,58 @@ def euler_step_record(x, v, a, dt):
 {'x': 2, 'v': 2}
 ```
 
-## Example 10: a wave simulator, from Maxwell's equations to a running plot
+## Example 10: an elastic bounce, via mutual recursion
+
+`ERecMut f1 param1 body1 f2 param2 body2` is `ERec`'s mutual-recursion
+cousin — two functions defined *together*, so each may call either of
+themselves, not just `ERec`'s single self-call. `bounce_expr` reuses
+Example 7's step function: `"fall"` runs Euler steps until the
+projectile would go below ground, then hands off to `"rise"`, which
+reflects the velocity (a perfectly elastic bounce) and returns:
+
+```coq
+Definition bounce_fall_body : expr :=
+  EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+      (EApp (EVar "rise") (EVar "state"))
+      (EApp (EVar "fall") euler_multi_step_body).
+
+Definition bounce_rise_body : expr :=
+  EPair (EFst (EVar "state")) (ESub (EConst 0) (ESnd (EVar "state"))).
+
+Definition bounce_expr : expr :=
+  ERecMut "fall" "state" bounce_fall_body "rise" "state" bounce_rise_body.
+```
+
+`ERecMut` evaluates to a pair of the two closures (`EFst`/`ESnd` pick
+out whichever is wanted — here, `"fall"`, the entry point). Dropped
+from the same height as Example 7 (45, "gravity" `a = -10`, `dt = 1`):
+three steps land at `(-15, -30)`, at which point `"fall"` hands off to
+`"rise"`, which reflects the velocity to `30`:
+
+```coq
+Example bounce_concrete :
+  eval 100 [("a", VZ (-10)); ("dt", VZ 1)]
+    (EApp (EFst bounce_expr) (EPair (EConst 45) (EConst 0)))
+    = Some (VPair (VZ (-15)) (VZ 30)).
+Proof. reflexivity. Qed.
+```
+
+Both python renders both closures together via two chained walrus
+assignments — the same self-reference trick `PRec` already uses for a
+single function, extended to two names — then returns them as a pair:
+
+```
+def bounce(a, dt):
+    return ((fall := (lambda state: ((rise(state)) if (((state)[0] <= 0) and ((state)[1] < 0)) else (fall(((x := (state)[0]), ((v := (state)[1]), ((v2 := (v + (a * dt))), ((x + (v2 * dt)), v2))[1])[1])[1]))))), (rise := (lambda state: ((state)[0], (0 - (state)[1])))), (fall, rise))[-1]
+```
+
+```
+>>> fall, rise = bounce(-10, 1)
+>>> fall((45, 0))
+(-15, 30)
+```
+
+## Example 11: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -573,5 +624,5 @@ something a proof catches for you)
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 10 wave simulator, plots it
+make wave_sim  # generates + runs the Example 11 wave simulator, plots it
 ```

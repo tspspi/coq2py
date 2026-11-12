@@ -589,6 +589,11 @@ Fixpoint print_expr (e : expr) : string :=
   | ERec f param body =>
       "{""tag"":""rec"",""name"":" ++ quote_string f
         ++ ",""param"":" ++ quote_string param ++ ",""body"":" ++ print_expr body ++ "}"
+  | ERecMut f1 param1 body1 f2 param2 body2 =>
+      "{""tag"":""recmut"",""name1"":" ++ quote_string f1
+        ++ ",""param1"":" ++ quote_string param1 ++ ",""body1"":" ++ print_expr body1
+        ++ ",""name2"":" ++ quote_string f2
+        ++ ",""param2"":" ++ quote_string param2 ++ ",""body2"":" ++ print_expr body2 ++ "}"
   | EApp func arg =>
       "{""tag"":""app"",""func"":" ++ print_expr func ++ ",""arg"":" ++ print_expr arg ++ "}"
   | ENil => "{""tag"":""nil""}"
@@ -628,6 +633,7 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | ERepeat _ _ body init => S (Nat.max (expr_fuel body) (expr_fuel init))
   | ELam _ body => S (expr_fuel body)
   | ERec _ _ body => S (expr_fuel body)
+  | ERecMut _ _ body1 _ _ body2 => S (Nat.max (expr_fuel body1) (expr_fuel body2))
   | ENil => 1
   | ECons hd tl => S (Nat.max (expr_fuel hd) (expr_fuel tl))
   | EListMatch scrutinee nilcase _ _ conscase =>
@@ -1194,6 +1200,57 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
         | None => None
         end
     | None =>
+    match expect "{""tag"":""recmut"",""name1"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (f1, s2) =>
+            match expect ",""param1"":" s2 with
+            | Some s3 =>
+                match parse_qstring s3 with
+                | Some (param1, s4) =>
+                    match expect ",""body1"":" s4 with
+                    | Some s5 =>
+                        match parse_expr fuel' s5 with
+                        | Some (body1, s6) =>
+                            match expect ",""name2"":" s6 with
+                            | Some s7 =>
+                                match parse_qstring s7 with
+                                | Some (f2, s8) =>
+                                    match expect ",""param2"":" s8 with
+                                    | Some s9 =>
+                                        match parse_qstring s9 with
+                                        | Some (param2, s10) =>
+                                            match expect ",""body2"":" s10 with
+                                            | Some s11 =>
+                                                match parse_expr fuel' s11 with
+                                                | Some (body2, s12) =>
+                                                    match expect "}" s12 with
+                                                    | Some s13 => Some (ERecMut f1 param1 body1 f2 param2 body2, s13)
+                                                    | None => None
+                                                    end
+                                                | None => None
+                                                end
+                                            | None => None
+                                            end
+                                        | None => None
+                                        end
+                                    | None => None
+                                    end
+                                | None => None
+                                end
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
     match expect "{""tag"":""app"",""func"":" s with
     | Some s1 =>
         match parse_expr fuel' s1 with
@@ -1332,7 +1389,7 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
         | None => None
         end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1381,6 +1438,7 @@ Proof.
     | e1 IH1 e2 IH2              (* EMod *)
     | param body IH1             (* ELam *)
     | f param body IH1           (* ERec *)
+    | f1 param1 body1 IH1 f2 param2 body2 IH2 (* ERecMut *)
     | func IH1 arg IH2           (* EApp *)
     |                            (* ENil *)
     | hd IH1 tl IH2              (* ECons *)
@@ -1592,6 +1650,25 @@ Proof.
     rewrite (parse_qstring_print param Hvp). simpl.
     repeat rewrite string_append_assoc.
     rewrite (IH1 Hv1 fuel' Hf1). reflexivity.
+  - (* ERecMut *) apply andb_true_iff in Hvalid as [Hvf1 Hrest1].
+    apply andb_true_iff in Hrest1 as [Hvp1 Hrest2].
+    apply andb_true_iff in Hrest2 as [Hv1 Hrest3].
+    apply andb_true_iff in Hrest3 as [Hvf2 Hrest4].
+    apply andb_true_iff in Hrest4 as [Hvp2 Hv2].
+    assert (Hf1 : (expr_fuel body1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel body2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print f1 Hvf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print param1 Hvp1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print f2 Hvf2). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print param2 Hvp2). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
   - (* EApp *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel func <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel arg <= fuel')%nat) by lia.

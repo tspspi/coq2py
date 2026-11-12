@@ -143,12 +143,31 @@ record as a `dict` literal keyed by the field names (`{"x": ...,
 see `examples/Kinematics.v`'s `euler_step_record_expr`, Example 1's
 step again with named instead of positional output.
 
+Mutual recursion is now in too, also capped — at exactly two
+functions: `ERecMut f1 param1 body1 f2 param2 body2` (a `VClosureMut`),
+`ERec`'s cousin for a pair of functions that may each call *either* of
+themselves, not just `ERec`'s single self-call. The cap here reflects
+a real representation limit, not just proof convenience: Coq values
+can't be cyclic, so "two closures that capture each other" is only
+representable by bundling *both* bodies into one value (tagged with a
+`which : bool` saying which of the two it currently stands for) —
+`EApp` reconstructs *both* siblings' bindings into the callee's
+environment on every call, generalizing the single self-binding
+`ERec`'s `EApp` case already reconstructs. `ERecMut` evaluates to
+`VPair clo1 clo2`, so the usual `EFst`/`ESnd` picks out and calls
+either one. See `examples/Kinematics.v`'s `bounce_expr`, Example 10: an
+elastic bounce where `"fall"` (running Euler steps) hands off to
+`"rise"` (reflecting the velocity) — a genuine cross-call between two
+functions defined together, generated as two chained walrus
+assignments in Python (the same self-reference trick `PRec` already
+uses, extended to two names).
+
 Not yet covered, in roughly the order they'd likely be needed:
 
-- Mutual recursion (two or more `ERec`-like functions calling each
-  other) — `ERec` only supports a function calling *itself*.
 - General N-field records / non-trivial inductive types beyond pairs,
   lists, and 2-field records.
+- General mutually-recursive *groups* (more than two functions) —
+  `ERecMut` only supports exactly two.
 - Numpy-shaped arrays specifically (fixed-rank, fixed-dtype, with
   broadcasting and view-vs-copy aliasing rules) — a cons-list isn't
   that; it's the general-recursion building block arrays would need

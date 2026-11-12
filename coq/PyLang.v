@@ -65,6 +65,7 @@ Inductive pyexpr : Type :=
   | PMod (e1 e2 : pyexpr)
   | PLam (param : var) (body : pyexpr)
   | PRec (f param : var) (body : pyexpr)
+  | PRecMut (f1 param1 : var) (body1 : pyexpr) (f2 param2 : var) (body2 : pyexpr)
   | PApp (func arg : pyexpr)
   | PNil
   | PCons (hd tl : pyexpr)
@@ -79,7 +80,9 @@ Inductive pyvalue : Type :=
   | PVFloat (f : float)
   | PVClosure (self : option var) (param : var) (body : pyexpr) (cenv : list (var * pyvalue))
   | PVList (vs : list pyvalue)
-  | PVRecord (k1 : var) (v1 : pyvalue) (k2 : var) (v2 : pyvalue).
+  | PVRecord (k1 : var) (v1 : pyvalue) (k2 : var) (v2 : pyvalue)
+  | PVClosureMut (f1 param1 : var) (body1 : pyexpr) (f2 param2 : var) (body2 : pyexpr)
+      (cenv : list (var * pyvalue)) (which : bool).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -233,6 +236,9 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
       end
   | PLam param body => Some (PVClosure None param body rho)
   | PRec f param body => Some (PVClosure (Some f) param body rho)
+  | PRecMut f1 param1 body1 f2 param2 body2 =>
+      Some (PVPair (PVClosureMut f1 param1 body1 f2 param2 body2 rho false)
+                   (PVClosureMut f1 param1 body1 f2 param2 body2 rho true))
   | PApp func arg =>
       match peval fuel' rho func, peval fuel' rho arg with
       | Some (PVClosure self param body cenv), Some argv =>
@@ -242,6 +248,14 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
             | Some fname => (fname, PVClosure self param body cenv) :: cenv
             end in
           peval fuel' ((param, argv) :: cenv') body
+      | Some (PVClosureMut f1 param1 body1 f2 param2 body2 cenv which), Some argv =>
+          let cenv' :=
+            (f1, PVClosureMut f1 param1 body1 f2 param2 body2 cenv false)
+            :: (f2, PVClosureMut f1 param1 body1 f2 param2 body2 cenv true)
+            :: cenv in
+          if which
+          then peval fuel' ((param2, argv) :: cenv') body2
+          else peval fuel' ((param1, argv) :: cenv') body1
       | _, _ => None
       end
   | PNil => Some (PVList [])

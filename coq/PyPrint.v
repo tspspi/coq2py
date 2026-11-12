@@ -155,6 +155,10 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PLam param body => "(lambda " ++ param ++ ": " ++ py_expr body ++ ")"
   | PRec f param body =>
       "((" ++ f ++ " := (lambda " ++ param ++ ": " ++ py_expr body ++ ")), " ++ f ++ ")[-1]"
+  | PRecMut f1 param1 body1 f2 param2 body2 =>
+      "((" ++ f1 ++ " := (lambda " ++ param1 ++ ": " ++ py_expr body1 ++ ")), ("
+        ++ f2 ++ " := (lambda " ++ param2 ++ ": " ++ py_expr body2 ++ ")), ("
+        ++ f1 ++ ", " ++ f2 ++ "))[-1]"
   | PApp func arg => "(" ++ py_expr func ++ "(" ++ py_expr arg ++ "))"
   | PNil => "()"
   | PCons hd tl => "(" ++ py_expr hd ++ ", " ++ py_expr tl ++ ")"

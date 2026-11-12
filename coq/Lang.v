@@ -113,7 +113,28 @@
     sub-expressions buried inside a list field -- fixing the arity at
     two sidesteps that entirely, with no loss of expressiveness (nest,
     the same way three-or-more-tuples already nest pairs: [ERecord "a"
-    e1 "rest" (ERecord "b" e2 "c" e3)] is a genuine 3-field record). *)
+    e1 "rest" (ERecord "b" e2 "c" e3)] is a genuine 3-field record).
+
+    [ERecMut f1 param1 body1 f2 param2 body2] is [ERec]'s mutual-
+    recursion cousin -- two functions that may each call *both* of
+    themselves, returned together as [VPair clo1 clo2] (so the usual
+    [EFst]/[EApp] or [ESnd]/[EApp] picks out and calls either one). As
+    with records, this is deliberately capped at exactly two functions
+    rather than an arbitrary mutually-recursive group, for the same
+    underlying reason: a general group needs [expr] to embed a *list*
+    of (name, param, body) triples, which [Json.v]'s structural
+    induction on [expr] can't hand back a usable hypothesis for. Unlike
+    [ERecord], the cap here isn't just a proof-engineering convenience
+    -- it reflects a real representation choice: [VClosureMut] bundles
+    *both* bodies into a single value (tagged with a [which : bool]
+    saying which of the two it currently stands for), rather than two
+    separate [VClosure]s each somehow pointing at the other -- Coq
+    values have no cycles, so "two closures that capture each other" is
+    only representable by each one carrying *all* the information
+    needed to reconstruct either side, which is exactly what bundling
+    both bodies together does. [EApp] reconstructs *both* siblings'
+    bindings into the callee's environment on every call, the same way
+    it already reconstructs [ERec]'s single self-binding. *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -154,6 +175,7 @@ Inductive expr : Type :=
   | EMod (e1 e2 : expr)
   | ELam (param : var) (body : expr)
   | ERec (f param : var) (body : expr)
+  | ERecMut (f1 param1 : var) (body1 : expr) (f2 param2 : var) (body2 : expr)
   | EApp (func arg : expr)
   | ENil
   | ECons (hd tl : expr)
@@ -176,7 +198,9 @@ Inductive value : Type :=
   | VFloat (f : float)
   | VClosure (self : option var) (param : var) (body : expr) (cenv : list (var * value))
   | VList (vs : list value)
-  | VRecord (k1 : var) (v1 : value) (k2 : var) (v2 : value).
+  | VRecord (k1 : var) (v1 : value) (k2 : var) (v2 : value)
+  | VClosureMut (f1 param1 : var) (body1 : expr) (f2 param2 : var) (body2 : expr)
+      (cenv : list (var * value)) (which : bool).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -344,6 +368,9 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       end
   | ELam param body => Some (VClosure None param body rho)
   | ERec f param body => Some (VClosure (Some f) param body rho)
+  | ERecMut f1 param1 body1 f2 param2 body2 =>
+      Some (VPair (VClosureMut f1 param1 body1 f2 param2 body2 rho false)
+                  (VClosureMut f1 param1 body1 f2 param2 body2 rho true))
   | EApp func arg =>
       match eval fuel' rho func, eval fuel' rho arg with
       | Some (VClosure self param body cenv), Some argv =>
@@ -353,6 +380,14 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
             | Some fname => (fname, VClosure self param body cenv) :: cenv
             end in
           eval fuel' ((param, argv) :: cenv') body
+      | Some (VClosureMut f1 param1 body1 f2 param2 body2 cenv which), Some argv =>
+          let cenv' :=
+            (f1, VClosureMut f1 param1 body1 f2 param2 body2 cenv false)
+            :: (f2, VClosureMut f1 param1 body1 f2 param2 body2 cenv true)
+            :: cenv in
+          if which
+          then eval fuel' ((param2, argv) :: cenv') body2
+          else eval fuel' ((param1, argv) :: cenv') body1
       | _, _ => None
       end
   | ENil => Some (VList [])
@@ -461,6 +496,12 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | ELam param body => andb (is_valid_ident param) (expr_idents_valid is_valid_ident body)
   | ERec f param body =>
       andb (is_valid_ident f) (andb (is_valid_ident param) (expr_idents_valid is_valid_ident body))
+  | ERecMut f1 param1 body1 f2 param2 body2 =>
+      andb (is_valid_ident f1)
+        (andb (is_valid_ident param1)
+          (andb (expr_idents_valid is_valid_ident body1)
+            (andb (is_valid_ident f2)
+              (andb (is_valid_ident param2) (expr_idents_valid is_valid_ident body2)))))
   | EApp func arg => andb (expr_idents_valid is_valid_ident func) (expr_idents_valid is_valid_ident arg)
   | ENil => true
   | ECons hd tl => andb (expr_idents_valid is_valid_ident hd) (expr_idents_valid is_valid_ident tl)

@@ -61,7 +61,7 @@ GOAL.md's dependency policy: deliberately no MetaCoq/coq-equations/bignum
 libraries). `make wave_sim` additionally needs `numpy` (required) and
 `matplotlib` (optional — skipped with a message if absent) to run
 `runtime/wave1d.py`, the hand-written, unproven external runtime
-described in [docs/examples.md](docs/examples.md)'s Example 10 and
+described in [docs/examples.md](docs/examples.md)'s Example 11 and
 [docs/roadmap.md](docs/roadmap.md)'s electromagnetism entry.
 
 If your system's default `make` is BSD make (as on FreeBSD), use `gmake`

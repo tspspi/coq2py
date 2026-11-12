@@ -28,9 +28,12 @@
     a ninth, [euler_step_record_expr], Example 1's step again but
     returning a 2-field named record ([ERecord]/[EField]) instead of a
     positional pair, so the generated Python looks state up by name
-    ([state["x"]]) instead of by position ([state[0]]).
+    ([state["x"]]) instead of by position ([state[0]]) -- and a tenth,
+    [bounce_expr], an elastic bounce via [ERecMut]: two functions,
+    ["fall"] and ["rise"], defined together so each can call the
+    other, not just [ERec]'s single self-call.
 
-    All nine are expressed as terms of our supported [expr] subset
+    All ten are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -511,3 +514,73 @@ Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
     looked up by name ([state["x"]]) rather than by position
     ([state[0]]) -- see PyPrint.v's [PRecord]/[PField] cases. *)
 Compute py_function "euler_step_record" ["x"; "v"; "a"; "dt"] (translate euler_step_record_expr).
+
+(* ----------------------------------------------------------------- *)
+(** * Example 10: an elastic bounce, via mutual recursion *)
+
+(** [ERec] (Example 7) only lets a function call *itself*. [ERecMut]
+    lifts that to two functions that may each call either of
+    themselves: ["fall"] runs Euler steps (reusing
+    [euler_multi_step_body], Example 5) until the projectile would go
+    through the ground, then hands off to ["rise"], which reflects the
+    velocity (a perfectly elastic bounce, no energy lost) and returns
+    -- a genuine cross-call between the two functions defined together,
+    not just [ERec]'s single self-call. [ERecMut] evaluates to a pair
+    of the two closures, [EFst]/[ESnd] picking out whichever one is
+    wanted (here, ["fall"], the entry point). *)
+Definition bounce_fall_body : expr :=
+  EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+      (EApp (EVar "rise") (EVar "state"))
+      (EApp (EVar "fall") euler_multi_step_body).
+
+Definition bounce_rise_body : expr :=
+  EPair (EFst (EVar "state")) (ESub (EConst 0) (ESnd (EVar "state"))).
+
+Definition bounce_expr : expr :=
+  ERecMut "fall" "state" bounce_fall_body "rise" "state" bounce_rise_body.
+
+Theorem bounce_idents_valid :
+  expr_idents_valid is_valid_ident bounce_expr = true.
+Proof. reflexivity. Qed.
+
+(** Same drop as Example 7 (height 45, "gravity" [a = -10], [dt = 1]):
+    three Euler steps land at [(-15, -30)], at which point ["fall"]
+    hands off to ["rise"], which reflects the velocity to [30] -- the
+    projectile bounces back upward at the same speed it landed with. *)
+Example bounce_concrete :
+  eval 100 [("a", VZ (-10)); ("dt", VZ 1)]
+    (EApp (EFst bounce_expr) (EPair (EConst 45) (EConst 0)))
+    = Some (VPair (VZ (-15)) (VZ 30)).
+Proof. reflexivity. Qed.
+
+Compute print_expr (EApp (EFst bounce_expr) (EPair (EConst 45) (EConst 0))).
+
+Corollary bounce_json_roundtrip :
+  parse_expr_top (print_expr (EApp (EFst bounce_expr) (EPair (EConst 45) (EConst 0))))
+    = Some (EApp (EFst bounce_expr) (EPair (EConst 45) (EConst 0)), "").
+Proof.
+  json_roundtrip_corollary
+    (EApp (EFst bounce_expr) (EPair (EConst 45) (EConst 0)))
+    bounce_idents_valid.
+Qed.
+
+Corollary bounce_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate bounce_expr)
+      = option_map value_to_pyvalue (eval fuel rho bounce_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: both closures are built together, via two
+    chained walrus assignments (the same self-reference trick [PRec]
+    already uses, extended to two names instead of one -- see
+    PyPrint.v's comment on [PRecMut]), then returned as a pair. *)
+Compute py_function "bounce" ["a"; "dt"] (translate bounce_expr).
+
+(** Run for real:
+
+    [[
+    >>> fall, rise = bounce(-10, 1)
+    >>> fall((45, 0))
+    (-15, 30)
+    ]]
+*)
