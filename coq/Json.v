@@ -615,6 +615,11 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""case"",""scrutinee"":" ++ print_expr scrutinee
         ++ ",""x1"":" ++ quote_string x1 ++ ",""case1"":" ++ print_expr case1
         ++ ",""x2"":" ++ quote_string x2 ++ ",""case2"":" ++ print_expr case2 ++ "}"
+  | EStrConst s => "{""tag"":""strconst"",""value"":" ++ quote_string s ++ "}"
+  | EStrConcat e1 e2 =>
+      "{""tag"":""strconcat"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EStrEq e1 e2 =>
+      "{""tag"":""streq"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -650,6 +655,8 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | EInr e1 => S (expr_fuel e1)
   | ECase scrutinee _ case1 _ case2 =>
       S (Nat.max (expr_fuel scrutinee) (Nat.max (expr_fuel case1) (expr_fuel case2)))
+  | EStrConst _ => 1
+  | EStrConcat e1 e2 | EStrEq e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1463,8 +1470,57 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""strconst"",""value"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (sval, s2) =>
+            match expect "}" s2 with
+            | Some s3 => Some (EStrConst sval, s3)
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""strconcat"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EStrConcat e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""streq"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EStrEq e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1522,7 +1578,10 @@ Proof.
     | name e1 IH1                (* EField *)
     | e1 IH1                     (* EInl *)
     | e1 IH1                     (* EInr *)
-    | scrutinee IH1 x1 case1 IH2 x2 case2 IH3 ]; (* ECase *)
+    | scrutinee IH1 x1 case1 IH2 x2 case2 IH3 (* ECase *)
+    | s                           (* EStrConst *)
+    | e1 IH1 e2 IH2               (* EStrConcat *)
+    | e1 IH1 e2 IH2 ];            (* EStrEq *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -1823,4 +1882,23 @@ Proof.
     rewrite (parse_qstring_print x2 Hvx2). simpl.
     repeat rewrite string_append_assoc.
     rewrite (IH3 Hv3 fuel' Hf3). reflexivity.
+  - (* EStrConst *)
+    simpl in Hvalid.
+    rewrite string_append_assoc. simpl.
+    rewrite (parse_qstring_print s Hvalid (String "}"%char rest)).
+    reflexivity.
+  - (* EStrConcat *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EStrEq *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
 Qed.

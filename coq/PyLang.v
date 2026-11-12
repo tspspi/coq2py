@@ -74,7 +74,10 @@ Inductive pyexpr : Type :=
   | PField (name : var) (e : pyexpr)
   | PInl (e : pyexpr)
   | PInr (e : pyexpr)
-  | PCase (scrutinee : pyexpr) (x1 : var) (case1 : pyexpr) (x2 : var) (case2 : pyexpr).
+  | PCase (scrutinee : pyexpr) (x1 : var) (case1 : pyexpr) (x2 : var) (case2 : pyexpr)
+  | PStrConst (s : var)
+  | PStrConcat (e1 e2 : pyexpr)
+  | PStrEq (e1 e2 : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -87,7 +90,8 @@ Inductive pyvalue : Type :=
   | PVClosureMut (f1 param1 : var) (body1 : pyexpr) (f2 param2 : var) (body2 : pyexpr)
       (cenv : list (var * pyvalue)) (which : bool)
   | PVInl (v : pyvalue)
-  | PVInr (v : pyvalue).
+  | PVInr (v : pyvalue)
+  | PVStr (s : var).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -303,6 +307,17 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
       | Some (PVInl v1) => peval fuel' ((x1, v1) :: rho) case1
       | Some (PVInr v2) => peval fuel' ((x2, v2) :: rho) case2
       | _ => None
+      end
+  | PStrConst s => Some (PVStr s)
+  | PStrConcat e1 e2 =>
+      match peval fuel' rho e1, peval fuel' rho e2 with
+      | Some (PVStr s1), Some (PVStr s2) => Some (PVStr (s1 ++ s2))
+      | _, _ => None
+      end
+  | PStrEq e1 e2 =>
+      match peval fuel' rho e1, peval fuel' rho e2 with
+      | Some (PVStr s1), Some (PVStr s2) => Some (PVBool (String.eqb s1 s2))
+      | _, _ => None
       end
   end
   end.

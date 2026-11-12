@@ -326,7 +326,7 @@ ZeroDivisionError: integer division or modulo by zero
 
 Python's own `//` already raises on a zero divisor — the same
 undefined case `eval` already refuses to answer, enforced by the target
-language for free. (Compare Example 12's wave simulator: there, the CFL
+language for free. (Compare Example 13's wave simulator: there, the CFL
 precondition *isn't* automatically enforced by anything, so
 `wave1d.py` has to check it explicitly — the two examples are opposite
 ends of the same idea.)
@@ -535,7 +535,52 @@ def stop_time_or_minus_one(v, d):
 -1
 ```
 
-## Example 12: a wave simulator, from Maxwell's equations to a running plot
+## Example 12: a genuine string value, labelling a motion phase
+
+`EStrConst`/`EStrConcat`/`EStrEq` add a fifth scalar value, `VStr` —
+real strings, not just the identifiers `var` was already used for
+everywhere else. `motion_phase_expr` reuses `landed_expr`'s condition
+(Example 2) to label a state `(x, v)` with a word instead of just a
+bool:
+
+```coq
+Definition motion_phase_expr : expr :=
+  EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+      (EStrConst "landed")
+      (EStrConst "falling").
+
+Definition is_landed_label_expr : expr :=
+  EStrEq motion_phase_expr (EStrConst "landed").
+```
+
+The same two states Example 10's bounce distinguishes by position —
+`(-15, -30)` (landed) and `(35, -10)` (still falling) — are now
+distinguished by a real string, compared with `EStrEq`:
+
+```coq
+Example motion_phase_landed :
+  eval 10 [("state", VPair (VZ (-15)) (VZ (-30)))] motion_phase_expr = Some (VStr "landed").
+Proof. reflexivity. Qed.
+```
+
+A string value renders as a plain Python string literal, and
+`EStrConcat`/`EStrEq` as `+`/`==` — nothing exotic, the same honest
+restriction to identifier-shaped text `quote_string`/`parse_qstring`
+already have:
+
+```
+def is_landed_label(state):
+    return (("landed" if ((state)[0] <= 0) and ((state)[1] < 0) else "falling") == "landed")
+```
+
+```
+>>> is_landed_label((-15, -30))
+True
+>>> is_landed_label((35, -10))
+False
+```
+
+## Example 13: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -676,5 +721,5 @@ something a proof catches for you)
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 12 wave simulator, plots it
+make wave_sim  # generates + runs the Example 13 wave simulator, plots it
 ```

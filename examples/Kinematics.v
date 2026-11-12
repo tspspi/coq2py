@@ -31,12 +31,14 @@
     ([state["x"]]) instead of by position ([state[0]]) -- a tenth,
     [bounce_expr], an elastic bounce via [ERecMut]: two functions,
     ["fall"] and ["rise"], defined together so each can call the
-    other, not just [ERec]'s single self-call -- and an eleventh,
+    other, not just [ERec]'s single self-call -- an eleventh,
     [safe_time_to_stop_expr]/[stop_time_or_minus_one_expr], Example 6's
     division precondition reflected as a genuine value ([EInl]/[EInr]/
-    [ECase]) instead of [eval] simply getting stuck.
+    [ECase]) instead of [eval] simply getting stuck -- and a twelfth,
+    [motion_phase_expr], a real string value ([EStrConst]/[EStrEq])
+    labelling the same state Example 2's [landed_expr] already tests.
 
-    All eleven are expressed as terms of our supported [expr] subset
+    All twelve are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -663,5 +665,69 @@ Compute py_function "stop_time_or_minus_one" ["v"; "d"] (translate stop_time_or_
     5
     >>> stop_time_or_minus_one(20, 0)
     -1
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * Example 12: a genuine string value, labelling a motion phase *)
+
+(** [EStrConst]/[EStrConcat]/[EStrEq] add a fifth scalar value, [VStr]
+    -- real strings, not just the identifiers [var] was already used
+    for everywhere else. [motion_phase_expr] reuses [landed_expr]'s
+    condition (Example 2) to label a state [(x, v)] with a word
+    instead of just a bool -- the same state tested, but communicated
+    as text: *)
+Definition motion_phase_expr : expr :=
+  EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+      (EStrConst "landed")
+      (EStrConst "falling").
+
+Definition is_landed_label_expr : expr :=
+  EStrEq motion_phase_expr (EStrConst "landed").
+
+Theorem is_landed_label_idents_valid :
+  expr_idents_valid is_valid_ident is_landed_label_expr = true.
+Proof. reflexivity. Qed.
+
+(** The same two states Example 10's bounce distinguishes by position
+    -- [(-15, -30)] (landed) and [(35, -10)] (still falling, partway
+    through Example 7's trajectory) -- now distinguished by a real
+    string, compared with [EStrEq]: *)
+Example motion_phase_landed :
+  eval 10 [("state", VPair (VZ (-15)) (VZ (-30)))] motion_phase_expr = Some (VStr "landed").
+Proof. reflexivity. Qed.
+
+Example motion_phase_falling :
+  eval 10 [("state", VPair (VZ 35) (VZ (-10)))] motion_phase_expr = Some (VStr "falling").
+Proof. reflexivity. Qed.
+
+Example is_landed_label_concrete :
+  eval 10 [("state", VPair (VZ (-15)) (VZ (-30)))] is_landed_label_expr = Some (VBool true).
+Proof. reflexivity. Qed.
+
+Compute print_expr is_landed_label_expr.
+
+Corollary is_landed_label_json_roundtrip :
+  parse_expr_top (print_expr is_landed_label_expr) = Some (is_landed_label_expr, "").
+Proof. json_roundtrip_corollary is_landed_label_expr is_landed_label_idents_valid. Qed.
+
+Corollary is_landed_label_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate is_landed_label_expr)
+      = option_map value_to_pyvalue (eval fuel rho is_landed_label_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: a plain string literal and [==], nothing
+    exotic -- see PyPrint.v's comment on [PStrConst]'s honest
+    restriction to identifier-shaped text. *)
+Compute py_function "is_landed_label" ["state"] (translate is_landed_label_expr).
+
+(** Run for real:
+
+    [[
+    >>> is_landed_label((-15, -30))
+    True
+    >>> is_landed_label((35, -10))
+    False
     ]]
 *)

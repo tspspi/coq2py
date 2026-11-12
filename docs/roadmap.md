@@ -180,8 +180,28 @@ value as a tagged 2-tuple (`("inl", v)`/`("inr", v)`) and `ECase` as a
 tag check with the same walrus-binding trick `EListMatch` already
 uses.
 
+A fifth scalar value shape is in too: `EStrConst s`/`EStrConcat e1
+e2`/`EStrEq e1 e2` (`VStr`), genuine first-class strings alongside
+`VZ`/`VBool`/`VFloat` — not just the identifiers `var` was already
+used for everywhere else in this file. The honest restriction: a
+string *value* here is deliberately still exactly as restricted as an
+identifier (`EStrConst`'s payload is checked by `is_valid_ident`, the
+same predicate `EVar`'s name already is), not an arbitrary Unicode
+string — this reuses `Json.v`'s already-proven `quote_string`/
+`parse_qstring` identifier codec as-is, rather than a second,
+general-purpose JSON string-escaping codec (quotes, backslashes,
+control characters) as its own separate effort. `examples/Kinematics.v`'s
+Example 12 reuses Example 2's `landed_expr` condition to label a
+state with a word (`"landed"`/`"falling"`) instead of just a bool.
+Generated Python renders a string value as a plain Python string
+literal, and `EStrConcat`/`EStrEq` as `+`/`==` — nothing exotic, since
+Python's own strings already are what this models.
+
 Not yet covered, in roughly the order they'd likely be needed:
 
+- General Unicode/escaped string literals, not just identifier-shaped
+  text — needs a real JSON string-escaping codec, not just the
+  existing identifier quoting.
 - General N-field records / non-trivial inductive types beyond pairs,
   lists, 2-field records, and 2-case sums.
 - General mutually-recursive *groups* (more than two functions) —

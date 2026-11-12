@@ -150,7 +150,19 @@
     [EPair], there is deliberately no fixed arity limit to work around
     here: a sum of more than two alternatives already nests, the same
     way a 3-tuple nests two [EPair]s ([EInr (EInl e)] is "the third of
-    three cases"). *)
+    three cases").
+
+    [EStrConst s]/[EStrConcat e1 e2]/[EStrEq e1 e2] add a fifth scalar
+    value shape, [VStr], alongside [VZ]/[VBool]/[VFloat] -- genuine
+    first-class strings, not just the identifiers [var] was already
+    used for everywhere else in this file. The honest restriction: a
+    string *value* here is deliberately still exactly as restricted as
+    an identifier ([EStrConst]'s payload has type [var], checked by
+    [is_valid_ident] in [expr_idents_valid] the same way [EVar]'s is),
+    not an arbitrary Unicode string -- reusing [Json.v]'s already-proven
+    [quote_string]/[parse_qstring] identifier codec as-is, rather than
+    building a second, general-purpose JSON string-escaping codec
+    (quotes, backslashes, control characters) as a separate effort. *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -200,7 +212,10 @@ Inductive expr : Type :=
   | EField (name : var) (e : expr)
   | EInl (e : expr)
   | EInr (e : expr)
-  | ECase (scrutinee : expr) (x1 : var) (case1 : expr) (x2 : var) (case2 : expr).
+  | ECase (scrutinee : expr) (x1 : var) (case1 : expr) (x2 : var) (case2 : expr)
+  | EStrConst (s : var)
+  | EStrConcat (e1 e2 : expr)
+  | EStrEq (e1 e2 : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -221,7 +236,8 @@ Inductive value : Type :=
   | VClosureMut (f1 param1 : var) (body1 : expr) (f2 param2 : var) (body2 : expr)
       (cenv : list (var * value)) (which : bool)
   | VInl (v : value)
-  | VInr (v : value).
+  | VInr (v : value)
+  | VStr (s : var).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -452,6 +468,17 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       | Some (VInr v2) => eval fuel' ((x2, v2) :: rho) case2
       | _ => None
       end
+  | EStrConst s => Some (VStr s)
+  | EStrConcat e1 e2 =>
+      match eval fuel' rho e1, eval fuel' rho e2 with
+      | Some (VStr s1), Some (VStr s2) => Some (VStr (s1 ++ s2))
+      | _, _ => None
+      end
+  | EStrEq e1 e2 =>
+      match eval fuel' rho e1, eval fuel' rho e2 with
+      | Some (VStr s1), Some (VStr s2) => Some (VBool (String.eqb s1 s2))
+      | _, _ => None
+      end
   end
   end.
 
@@ -559,4 +586,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
         (andb (is_valid_ident x1)
           (andb (expr_idents_valid is_valid_ident case1)
             (andb (is_valid_ident x2) (expr_idents_valid is_valid_ident case2))))
+  | EStrConst s => is_valid_ident s
+  | EStrConcat e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EStrEq e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   end.

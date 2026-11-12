@@ -176,6 +176,9 @@ Fixpoint py_expr (e : pyexpr) : string :=
       "(((" ++ x1 ++ " := (" ++ py_expr scrutinee ++ ")[1]), " ++ py_expr case1 ++ ")[-1] if ("
         ++ py_expr scrutinee ++ ")[0] == ""inl"" else ((" ++ x2 ++ " := ("
         ++ py_expr scrutinee ++ ")[1]), " ++ py_expr case2 ++ ")[-1])"
+  | PStrConst s => py_qstring s
+  | PStrConcat e1 e2 => "(" ++ py_expr e1 ++ " + " ++ py_expr e2 ++ ")"
+  | PStrEq e1 e2 => "(" ++ py_expr e1 ++ " == " ++ py_expr e2 ++ ")"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=
