@@ -139,12 +139,17 @@ already installed on both machines today.
 ## Status
 
 A first vertical slice is implemented and proven (see `coq/`, `examples/`,
-`docs/`): a small arithmetic/let-binding `expr` subset, translated to a
-Python-subset AST with a proven preservation theorem, round-tripped
-through a restricted JSON codec with its own proven round-trip theorem,
-extracted to OCaml, and wrapped in a working CLI that produces real,
-executing Python. `docs/examples.md` walks through all of it with real
-captured output; `docs/roadmap.md` tracks what's intentionally deferred.
+`docs/`): an `expr` subset covering integer/boolean arithmetic,
+comparisons, boolean connectives, a general `if`, pairs/tuples, and
+non-recursive `let`, translated to a Python-subset AST with a proven
+preservation theorem, round-tripped through a restricted JSON codec with
+its own proven round-trip theorem, extracted to OCaml, and wrapped in a
+working CLI that produces real, executing Python. `docs/examples.md`
+walks through two worked examples (a pair-returning Euler integration
+step, and a boolean/comparison-based landing check) with real captured
+output; `docs/roadmap.md` tracks what's intentionally deferred (including
+an honest scoping of the much larger "derive Maxwell's equations from a
+symmetry group" request).
 
 Decisions made along the way (superseding the "Open questions" below
 where they overlap):

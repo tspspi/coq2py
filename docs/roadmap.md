@@ -38,12 +38,23 @@ right kind of bug to be able to have at this layer.
 
 ## Narrow source and target subsets
 
-`expr`/`pyexpr` currently cover: integer constants, variables, `+`/`-`/`*`,
-an `if`-zero conditional, and a single non-recursive `let`. Not yet
-covered, in roughly the order they'd likely be needed:
+`expr`/`pyexpr` currently cover: integer and boolean constants,
+variables, `+`/`-`/`*`, general comparisons (`=`/`<`/`<=`) and boolean
+connectives (`and`/`or`/`not`), a general `if` (on a genuine boolean
+condition, not the earlier "equals zero" hack), pairs/tuples
+(construction and projection), and a single non-recursive `let`. Values
+are now a real three-way sum (`VZ`/`VBool`/`VPair`), not bare integers —
+operations applied to a value of the wrong shape get stuck (`None`), the
+same way an unbound variable already did; there is no separate static
+type system layered on top. Not yet covered, in roughly the order they'd
+likely be needed:
 
-- Mutual and recursive `let`/`fix` (structural recursion in general).
-- Records and non-trivial inductive types (currently only bare integers).
+- Bounded iteration (a fixed, statically-known number of repetitions of a
+  state-transforming expression) as a cheaper first step toward real
+  recursion — see the next section.
+- Mutual and recursive `let`/`fix` (general structural recursion).
+- Records and non-trivial inductive types beyond pairs.
+- Lists/arrays (needed before numpy-shaped state makes sense).
 - Modules and typeclasses.
 - Coinductives.
 
@@ -78,6 +89,59 @@ minimum:
 - Only after those exist does a "PyTorch backend" become a sensible
   question (same array semantics, plus autodiff — a further, separate
   formalization question about what the generated code's gradients mean).
+
+## Requested next example: symmetry → Maxwell's equations → wave equation
+
+This was asked for directly, so it's worth being precise about scope
+rather than quietly downgrading it. Taken literally — derive Maxwell's
+equations from a symmetry group, get to the electromagnetic wave
+equation, extract a numerical evaluation to Python, and plot it with
+matplotlib (matplotlib/numpy as the only new *Python*-side dependencies,
+consistent with the project's zero-new-Coq-dependency policy) — this is
+several independent, substantial formalization efforts stacked on top of
+each other, not a feature addition to `expr`:
+
+1. **The physics derivation itself** (symmetry group → Maxwell's
+   equations, e.g. via gauge invariance of a Lagrangian and the
+   Euler–Lagrange equations, or via Lorentz-covariance of the
+   electromagnetic field tensor) is genuine graduate-level theoretical
+   physics, independent of Coq entirely. It would need to be pinned down
+   mathematically before any formalization question even arises.
+2. **Formalizing continuous mathematics in Coq**: real/vector/tensor
+   calculus (gradient, divergence, curl, or the 4-tensor formalism),
+   partial differential equations, and a chosen formalization of Lie
+   groups/symmetry — none of which exist in this repository, and each of
+   which is itself a significant formalization undertaking (there is no
+   small shortcut here; this is comparable to or larger than existing
+   standalone Coq analysis libraries).
+3. **A numerical scheme for extraction**: the wave equation is a PDE;
+   "evaluate it in Python" in practice means a discretization (e.g.
+   finite-difference time-domain) over an array/grid, which needs the
+   array/loop features already flagged as missing above (`expr` has no
+   arrays, no loops, no mutable grid state) — plus a proof that the
+   *discretization* itself is a faithful (consistent, stable) numerical
+   method for the continuous equation, which is a numerical-analysis
+   question layered on top of everything else.
+4. Only the last mile — rendering a numpy array to a plot — is small, and
+   is explicitly the "unverified utility function" category this project
+   already has a place for (like `PyPrint.v`): a `matplotlib`-based
+   plotting call sitting outside the trust boundary, consuming the
+   (verified) simulator's output.
+
+None of this is implemented, and shouldn't be faked with a hand-wavy
+"proof" that doesn't actually establish what it claims to — that would
+undermine the one thing this project has been careful about so far: that
+"proved" here always means `coqc` checked it, not that it reads
+plausibly.
+
+**A tractable, honest first step in this direction**, if wanted: skip
+the symmetry-group derivation and start directly from the 1D scalar wave
+equation $\partial_t^2 u = c^2 \partial_x^2 u$ in its standard explicit
+finite-difference form — a genuinely real instance of "a PDE simulator
+extracted from Coq," just without claiming a from-first-principles
+physics derivation that isn't built yet. Even that needs arrays/bounded
+iteration first (the item at the top of the previous section), so it's
+naturally the next rung on the ladder rather than a parallel track.
 
 ## Deployment target: the remote host
 

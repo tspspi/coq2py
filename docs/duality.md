@@ -90,18 +90,22 @@ project *does* accept the same unverified status Coq's own backends have
 To even ask whether a translation preserves meaning, both sides need a
 formal semantics to be measured against. This project gives the source
 subset (`Lang.v`) and the Python-subset target (`PyLang.v`) each a
-big-step evaluator,
+big-step evaluator over their own (mirrored) notion of value —
+`value` (`VZ`/`VBool`/`VPair`, recursively) on the source side,
+`pyvalue` on the target side:
 
 $$
-\mathrm{eval} : \mathrm{env} \to \mathrm{expr} \to \mathbb{Z}\ \mathrm{option},
+\mathrm{eval} : \mathrm{env} \to \mathrm{expr} \to \mathrm{value}\ \mathrm{option},
 \qquad
-\mathrm{peval} : \mathrm{env} \to \mathrm{pyexpr} \to \mathbb{Z}\ \mathrm{option},
+\mathrm{peval} : \mathrm{pyenv} \to \mathrm{pyexpr} \to \mathrm{pyvalue}\ \mathrm{option},
 $$
 
-and then `Translate.v` proves, for the function `translate : expr -> pyexpr`:
+with a structural correspondence `value\_to\_pyvalue` lifted pointwise to
+environments (`env\_to\_pyenv`). `Translate.v` then proves, for
+`translate : expr -> pyexpr`:
 
 $$
-\forall\, \rho,\, e.\quad \mathrm{peval}\,(\rho)\,(\mathrm{translate}\,(e)) \;=\; \mathrm{eval}\,(\rho)\,(e)
+\forall\, \rho,\, e.\quad \mathrm{peval}\,(\mathrm{env\_to\_pyenv}(\rho))\,(\mathrm{translate}\,(e)) \;=\; \mathrm{option\_map}\,(\mathrm{value\_to\_pyvalue})\,(\mathrm{eval}\,(\rho)\,(e))
 $$
 
 unconditionally — no side conditions, no restriction to closed or

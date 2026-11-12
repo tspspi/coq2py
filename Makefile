@@ -23,9 +23,12 @@ examples:
 	cd coq && coqc -Q . "" -Q ../examples "" ../examples/Kinematics.v
 
 test: ocaml
-	@echo "--- running ocaml/driver smoke test against examples/Kinematics.v's term ---"
-	echo -n '{"tag":"let","name":"v2","value":{"tag":"add","lhs":{"tag":"var","name":"v"},"rhs":{"tag":"mul","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"dt"}}},"body":{"tag":"add","lhs":{"tag":"var","name":"x"},"rhs":{"tag":"mul","lhs":{"tag":"var","name":"v2"},"rhs":{"tag":"var","name":"dt"}}}}' \
+	@echo "--- euler_step (pairs/tuples): examples/Kinematics.v's euler_step_expr ---"
+	echo -n '{"tag":"let","name":"v2","value":{"tag":"add","lhs":{"tag":"var","name":"v"},"rhs":{"tag":"mul","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"dt"}}},"body":{"tag":"pair","fst":{"tag":"add","lhs":{"tag":"var","name":"x"},"rhs":{"tag":"mul","lhs":{"tag":"var","name":"v2"},"rhs":{"tag":"var","name":"dt"}}},"snd":{"tag":"var","name":"v2"}}}' \
 	  | (cd ocaml && dune exec driver/main.exe -- euler_step x,v,a,dt)
+	@echo "--- landed (comparisons/booleans): examples/Kinematics.v's landed_expr ---"
+	echo -n '{"tag":"and","lhs":{"tag":"le","lhs":{"tag":"var","name":"x"},"rhs":{"tag":"const","value":0}},"rhs":{"tag":"lt","lhs":{"tag":"var","name":"v"},"rhs":{"tag":"const","value":0}}}' \
+	  | (cd ocaml && dune exec driver/main.exe -- landed x,v)
 
 clean:
 	$(MAKE) -C coq clean

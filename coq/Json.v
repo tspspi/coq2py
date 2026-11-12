@@ -310,12 +310,54 @@ Proof.
 Qed.
 
 (* ----------------------------------------------------------------- *)
+(** * Booleans *)
+
+(** Printed as bare [true]/[false] tokens, matching real JSON's boolean
+    literal syntax (unlike identifiers, which we quote, and numbers,
+    which real JSON also leaves bare). *)
+Definition bool_to_string (b : bool) : string := if b then "true" else "false".
+
+Definition parse_bool (s : string) : option (bool * string) :=
+  match expect "true" s with
+  | Some rest => Some (true, rest)
+  | None =>
+      match expect "false" s with
+      | Some rest => Some (false, rest)
+      | None => None
+      end
+  end.
+
+Lemma expect_true_false_mismatch :
+  forall rest, expect "true" ("false" ++ rest) = None.
+Proof. intro rest. reflexivity. Qed.
+
+Lemma parse_bool_print :
+  forall b rest, parse_bool (bool_to_string b ++ rest) = Some (b, rest).
+Proof.
+  intros b rest. destruct b; unfold parse_bool, bool_to_string.
+  - rewrite expect_app. reflexivity.
+  - rewrite expect_true_false_mismatch. rewrite expect_app. reflexivity.
+Qed.
+
+(** Keep [simpl]/[cbn] from peeking inside these during the round-trip
+    proof below: we only ever want to reason about them through the
+    already-proven [parse_number_print]/[parse_qstring_print]/
+    [parse_bool_print] equations, uniformly across every constructor case,
+    rather than have [simpl] eagerly (and inconsistently) inline some but
+    not others depending on whether their first character happens to be
+    syntactically concrete. *)
+Opaque parse_number parse_qstring quote_string parse_bool.
+
+(* ----------------------------------------------------------------- *)
 (** * The [expr] codec itself *)
+
 
 Fixpoint print_expr (e : expr) : string :=
   match e with
   | EConst z =>
       "{""tag"":""const"",""value"":" ++ z_to_string z ++ "}"
+  | EBool b =>
+      "{""tag"":""bool"",""value"":" ++ bool_to_string b ++ "}"
   | EVar x =>
       "{""tag"":""var"",""name"":" ++ quote_string x ++ "}"
   | EAdd e1 e2 =>
@@ -324,9 +366,27 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""sub"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   | EMul e1 e2 =>
       "{""tag"":""mul"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
-  | EIf0 c e1 e2 =>
-      "{""tag"":""if0"",""cond"":" ++ print_expr c
+  | EEq e1 e2 =>
+      "{""tag"":""eq"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | ELt e1 e2 =>
+      "{""tag"":""lt"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | ELe e1 e2 =>
+      "{""tag"":""le"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EAnd e1 e2 =>
+      "{""tag"":""and"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EOr e1 e2 =>
+      "{""tag"":""or"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | ENot e1 =>
+      "{""tag"":""not"",""value"":" ++ print_expr e1 ++ "}"
+  | EIf c e1 e2 =>
+      "{""tag"":""if"",""cond"":" ++ print_expr c
         ++ ",""then"":" ++ print_expr e1 ++ ",""else"":" ++ print_expr e2 ++ "}"
+  | EPair e1 e2 =>
+      "{""tag"":""pair"",""fst"":" ++ print_expr e1 ++ ",""snd"":" ++ print_expr e2 ++ "}"
+  | EFst e1 =>
+      "{""tag"":""fst"",""value"":" ++ print_expr e1 ++ "}"
+  | ESnd e1 =>
+      "{""tag"":""snd"",""value"":" ++ print_expr e1 ++ "}"
   | ELet x e1 e2 =>
       "{""tag"":""let"",""name"":" ++ quote_string x
         ++ ",""value"":" ++ print_expr e1 ++ ",""body"":" ++ print_expr e2 ++ "}"
@@ -334,24 +394,19 @@ Fixpoint print_expr (e : expr) : string :=
 
 Fixpoint expr_fuel (e : expr) : nat :=
   match e with
-  | EConst _ | EVar _ => 1
-  | EAdd e1 e2 | ESub e1 e2 | EMul e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
-  | EIf0 c e1 e2 => S (Nat.max (expr_fuel c) (Nat.max (expr_fuel e1) (expr_fuel e2)))
+  | EConst _ | EBool _ | EVar _ => 1
+  | EAdd e1 e2 | ESub e1 e2 | EMul e1 e2
+  | EEq e1 e2 | ELt e1 e2 | ELe e1 e2
+  | EAnd e1 e2 | EOr e1 e2 | EPair e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
+  | ENot e1 | EFst e1 | ESnd e1 => S (expr_fuel e1)
+  | EIf c e1 e2 => S (Nat.max (expr_fuel c) (Nat.max (expr_fuel e1) (expr_fuel e2)))
   | ELet _ e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
     printed form directly, trying each in turn, rather than reading the
-    "tag" field generically and comparing strings. This is what makes the
-    round-trip proof tractable: every literal [expect] call here matches
-    a literal chunk [print_expr] produces byte-for-byte, so the proof is
-    just [expect_app] (plus the recursive hypothesis / [parse_number_print]
-    / [parse_qstring_print] for the dynamic parts) all the way down -- no
-    separate reasoning about tag extraction or string comparison is
-    needed. A non-matching candidate's [expect] call fails purely by
-    comparing concrete characters (it never needs to inspect what follows),
-    so trying one candidate costs nothing when the input is shaped like a
-    different constructor. *)
+    "tag" field generically and comparing strings -- see the comment on
+    the original (smaller) version of this function for why. *)
 Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
   match fuel with
   | O => None
@@ -362,6 +417,17 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
         | Some (z, s2) =>
             match expect "}" s2 with
             | Some s3 => Some (EConst z, s3)
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""bool"",""value"":" s with
+    | Some s1 =>
+        match parse_bool s1 with
+        | Some (b, s2) =>
+            match expect "}" s2 with
+            | Some s3 => Some (EBool b, s3)
             | None => None
             end
         | None => None
@@ -435,7 +501,113 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
         | None => None
         end
     | None =>
-    match expect "{""tag"":""if0"",""cond"":" s with
+    match expect "{""tag"":""eq"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EEq e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""lt"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (ELt e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""le"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (ELe e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""and"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EAnd e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""or"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EOr e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""not"",""value"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect "}" s2 with
+            | Some s3 => Some (ENot e1, s3)
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""if"",""cond"":" s with
     | Some s1 =>
         match parse_expr fuel' s1 with
         | Some (c, s2) =>
@@ -448,7 +620,7 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
                         match parse_expr fuel' s5 with
                         | Some (e2, s6) =>
                             match expect "}" s6 with
-                            | Some s7 => Some (EIf0 c e1 e2, s7)
+                            | Some s7 => Some (EIf c e1 e2, s7)
                             | None => None
                             end
                         | None => None
@@ -457,6 +629,47 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
                     end
                 | None => None
                 end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""pair"",""fst"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""snd"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EPair e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""fst"",""value"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect "}" s2 with
+            | Some s3 => Some (EFst e1, s3)
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""snd"",""value"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect "}" s2 with
+            | Some s3 => Some (ESnd e1, s3)
             | None => None
             end
         | None => None
@@ -489,25 +702,11 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
         | None => None
         end
     | None => None
-    end end end end end end end
+    end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
   parse_expr (String.length s + 1) s.
-
-(** The headline theorem: for every [expr] with valid identifiers, printing
-    it and parsing the result back (with enough fuel, any amount at least
-    [expr_fuel e]) recovers exactly the original term and consumes exactly
-    the printed text, leaving [rest] untouched. This is the "parser is a
-    proven inverse of our own grammar" correctness statement discussed in
-    GOAL.md. *)
-(** Keep [simpl]/[cbn] from peeking inside these during the round-trip
-    proof below: we only ever want to reason about them through the
-    already-proven [parse_number_print]/[parse_qstring_print] equations,
-    uniformly across every constructor case, rather than have [simpl]
-    eagerly (and inconsistently) inline one but not the other depending on
-    whether its first character happens to be syntactically concrete. *)
-Opaque parse_number parse_qstring quote_string.
 
 Lemma not_digit_rbrace : is_digit "}"%char = false.
 Proof. reflexivity. Qed.
@@ -515,6 +714,12 @@ Proof. reflexivity. Qed.
 Lemma not_minus_rbrace : "}"%char <> minus_char.
 Proof. discriminate. Qed.
 
+(** The headline theorem: for every [expr] with valid identifiers, printing
+    it and parsing the result back (with enough fuel, any amount at least
+    [expr_fuel e]) recovers exactly the original term and consumes exactly
+    the printed text, leaving [rest] untouched. This is the "parser is a
+    proven inverse of our own grammar" correctness statement discussed in
+    GOAL.md. *)
 Theorem parse_print_roundtrip :
   forall e,
     expr_idents_valid is_valid_ident e = true ->
@@ -522,13 +727,23 @@ Theorem parse_print_roundtrip :
     forall rest, parse_expr fuel (print_expr e ++ rest) = Some (e, rest).
 Proof.
   induction e as
-    [ z
-    | x
-    | e1 IH1 e2 IH2
-    | e1 IH1 e2 IH2
-    | e1 IH1 e2 IH2
-    | c IHc e1 IH1 e2 IH2
-    | x e1 IH1 e2 IH2 ];
+    [ z                          (* EConst *)
+    | b                          (* EBool *)
+    | x                          (* EVar *)
+    | e1 IH1 e2 IH2              (* EAdd *)
+    | e1 IH1 e2 IH2              (* ESub *)
+    | e1 IH1 e2 IH2              (* EMul *)
+    | e1 IH1 e2 IH2              (* EEq *)
+    | e1 IH1 e2 IH2              (* ELt *)
+    | e1 IH1 e2 IH2              (* ELe *)
+    | e1 IH1 e2 IH2              (* EAnd *)
+    | e1 IH1 e2 IH2              (* EOr *)
+    | e1 IH1                     (* ENot *)
+    | c IHc e1 IH1 e2 IH2        (* EIf *)
+    | e1 IH1 e2 IH2              (* EPair *)
+    | e1 IH1                     (* EFst *)
+    | e1 IH1                     (* ESnd *)
+    | x e1 IH1 e2 IH2 ];         (* ELet *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -536,61 +751,109 @@ Proof.
     rewrite string_append_assoc. simpl.
     rewrite (parse_number_print z "}"%char rest not_digit_rbrace not_minus_rbrace).
     reflexivity.
+  - (* EBool *)
+    rewrite string_append_assoc. simpl.
+    rewrite (parse_bool_print b (String "}"%char rest)).
+    reflexivity.
   - (* EVar *)
     simpl in Hvalid.
     rewrite string_append_assoc. simpl.
     rewrite (parse_qstring_print x Hvalid (String "}"%char rest)).
     reflexivity.
-  - (* EAdd *)
-    apply andb_true_iff in Hvalid as [Hv1 Hv2].
+  - (* EAdd *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
-    rewrite string_append_assoc. simpl. rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1).
-    simpl.
-    rewrite (IH2 Hv2 fuel' Hf2).
-    reflexivity.
-  - (* ESub *)
-    apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* ESub *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
-    rewrite string_append_assoc. simpl. rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1).
-    simpl.
-    rewrite (IH2 Hv2 fuel' Hf2).
-    reflexivity.
-  - (* EMul *)
-    apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EMul *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
-    rewrite string_append_assoc. simpl. rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1).
-    simpl.
-    rewrite (IH2 Hv2 fuel' Hf2).
-    reflexivity.
-  - (* EIf0 *)
-    apply andb_true_iff in Hvalid as [Hvc Hv12].
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EEq *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* ELt *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* ELe *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EAnd *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EOr *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* ENot *)
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
+  - (* EIf *) apply andb_true_iff in Hvalid as [Hvc Hv12].
     apply andb_true_iff in Hv12 as [Hv1 Hv2].
     assert (Hfc : (expr_fuel c <= fuel')%nat) by lia.
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
-    rewrite string_append_assoc. simpl. rewrite string_append_assoc.
-    rewrite (IHc Hvc fuel' Hfc).
-    simpl. rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1).
-    simpl.
-    rewrite (IH2 Hv2 fuel' Hf2).
-    reflexivity.
-  - (* ELet *)
-    apply andb_true_iff in Hvalid as [Hvx Hv12].
+    repeat rewrite string_append_assoc.
+    rewrite (IHc Hvc fuel' Hfc). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EPair *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFst *)
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
+  - (* ESnd *)
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
+  - (* ELet *) apply andb_true_iff in Hvalid as [Hvx Hv12].
     apply andb_true_iff in Hv12 as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
-    rewrite string_append_assoc. simpl. rewrite string_append_assoc.
-    rewrite (parse_qstring_print x Hvx).
-    simpl. rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1).
-    simpl.
-    rewrite (IH2 Hv2 fuel' Hf2).
-    reflexivity.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print x Hvx). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
 Qed.

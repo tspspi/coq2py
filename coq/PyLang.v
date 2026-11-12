@@ -10,53 +10,124 @@
     not proved, here -- exactly the role real hardware/assembly semantics
     play in CompCert's own trusted computing base.
 
-    [pyexpr] mirrors [expr] (Lang.v) constructor-for-constructor in this
-    first version. That is not an accident of laziness: it reflects that
-    this initial subset of Python (int-valued expressions, conditionals,
-    local let-bindings) really is semantically identical to the source
-    subset. Divergence between source and target shape is expected once
-    the supported subset grows (e.g. numpy array operations with no direct
-    Gallina counterpart) -- at that point [pyexpr] grows new constructors
-    that [translate] (Translate.v) maps multiple source constructs onto. *)
+    [pyexpr]/[pyvalue] mirror [expr]/[value] (Lang.v) constructor-for-
+    constructor in this version. That is not an accident of laziness: it
+    reflects that this subset of Python (int/bool/tuple-valued
+    expressions, conditionals, local let-bindings) really is semantically
+    identical to the source subset. Divergence between source and target
+    shape is expected once the supported subset grows (e.g. numpy array
+    operations with no direct Gallina counterpart) -- at that point
+    [pyexpr] grows new constructors that [translate] (Translate.v) maps
+    multiple source constructs onto. *)
 
-From Coq Require Import ZArith String List.
+From Coq Require Import ZArith String List Bool.
 Import ListNotations.
 Require Import Lang.
 Open Scope Z_scope.
 Open Scope string_scope.
 
+Inductive pyvalue : Type :=
+  | PVZ (z : Z)
+  | PVBool (b : bool)
+  | PVPair (v1 v2 : pyvalue).
+
 Inductive pyexpr : Type :=
   | PConst (z : Z)
+  | PBool (b : bool)
   | PVar (x : var)
   | PAdd (e1 e2 : pyexpr)
   | PSub (e1 e2 : pyexpr)
   | PMul (e1 e2 : pyexpr)
-  | PIf0 (c e1 e2 : pyexpr)
+  | PEq (e1 e2 : pyexpr)
+  | PLt (e1 e2 : pyexpr)
+  | PLe (e1 e2 : pyexpr)
+  | PAnd (e1 e2 : pyexpr)
+  | POr (e1 e2 : pyexpr)
+  | PNot (e : pyexpr)
+  | PIf (c e1 e2 : pyexpr)
+  | PPair (e1 e2 : pyexpr)
+  | PFst (e : pyexpr)
+  | PSnd (e : pyexpr)
   | PLet (x : var) (e1 e2 : pyexpr).
 
-Fixpoint peval (rho : env) (e : pyexpr) : option Z :=
+Definition pyenv := list (var * pyvalue).
+
+Fixpoint plookup (rho : pyenv) (x : var) : option pyvalue :=
+  match rho with
+  | [] => None
+  | (y, v) :: rest => if string_dec x y then Some v else plookup rest x
+  end.
+
+Fixpoint peval (rho : pyenv) (e : pyexpr) : option pyvalue :=
   match e with
-  | PConst z => Some z
-  | PVar x => lookup rho x
+  | PConst z => Some (PVZ z)
+  | PBool b => Some (PVBool b)
+  | PVar x => plookup rho x
   | PAdd e1 e2 =>
       match peval rho e1, peval rho e2 with
-      | Some v1, Some v2 => Some (v1 + v2)
+      | Some (PVZ v1), Some (PVZ v2) => Some (PVZ (v1 + v2))
       | _, _ => None
       end
   | PSub e1 e2 =>
       match peval rho e1, peval rho e2 with
-      | Some v1, Some v2 => Some (v1 - v2)
+      | Some (PVZ v1), Some (PVZ v2) => Some (PVZ (v1 - v2))
       | _, _ => None
       end
   | PMul e1 e2 =>
       match peval rho e1, peval rho e2 with
-      | Some v1, Some v2 => Some (v1 * v2)
+      | Some (PVZ v1), Some (PVZ v2) => Some (PVZ (v1 * v2))
       | _, _ => None
       end
-  | PIf0 c e1 e2 =>
+  | PEq e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVZ v1), Some (PVZ v2) => Some (PVBool (Z.eqb v1 v2))
+      | _, _ => None
+      end
+  | PLt e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVZ v1), Some (PVZ v2) => Some (PVBool (Z.ltb v1 v2))
+      | _, _ => None
+      end
+  | PLe e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVZ v1), Some (PVZ v2) => Some (PVBool (Z.leb v1 v2))
+      | _, _ => None
+      end
+  | PAnd e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVBool b1), Some (PVBool b2) => Some (PVBool (andb b1 b2))
+      | _, _ => None
+      end
+  | POr e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVBool b1), Some (PVBool b2) => Some (PVBool (orb b1 b2))
+      | _, _ => None
+      end
+  | PNot e1 =>
+      match peval rho e1 with
+      | Some (PVBool b) => Some (PVBool (negb b))
+      | _ => None
+      end
+  | PIf c e1 e2 =>
       match peval rho c with
-      | Some v => if Z.eqb v 0 then peval rho e1 else peval rho e2
-      | None => None
+      | Some (PVBool true) => peval rho e1
+      | Some (PVBool false) => peval rho e2
+      | _ => None
+      end
+  | PPair e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some v1, Some v2 => Some (PVPair v1 v2)
+      | _, _ => None
+      end
+  | PFst e1 =>
+      match peval rho e1 with
+      | Some (PVPair v1 _) => Some v1
+      | _ => None
+      end
+  | PSnd e1 =>
+      match peval rho e1 with
+      | Some (PVPair _ v2) => Some v2
+      | _ => None
       end
   | PLet x e1 e2 =>
       match peval rho e1 with

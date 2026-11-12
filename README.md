@@ -23,7 +23,8 @@ yet.
 ## What's actually proved here
 
 - **`Translate.translate_preserves_semantics`** — the translation from the
-  supported Gallina subset (`Lang.v`) to the Python-subset AST (`PyLang.v`)
+  supported Gallina subset (`Lang.v`: integers, booleans, pairs,
+  comparisons, `if`, `let`) to the Python-subset AST (`PyLang.v`)
   preserves semantics, for every term and environment, unconditionally.
 - **`Json.parse_print_roundtrip`** — the JSON-flavoured parser
   (`Json.v`) is a proven inverse of its own printer, over every term with
@@ -38,7 +39,7 @@ real CPython's actual behaviour — is explained and justified in
 
 ```
 make all    # builds the Coq proofs, extracts to OCaml, builds the CLI
-make test   # runs the CLI end-to-end against examples/Kinematics.v's term
+make test   # runs the CLI end-to-end against examples/Kinematics.v's terms
 ```
 
 Requires `coqc`/`coq-stdlib`, OCaml, and `dune` — nothing beyond what's

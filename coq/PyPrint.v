@@ -14,7 +14,10 @@
     [(x := e1), e2)[1]] assigns [x] and then evaluates/returns [e2]. It is
     not the prettiest Python a human would write, but it is correct, and
     "pretty" is exactly the kind of concern this file is allowed to not
-    prove. *)
+    prove.
+
+    Pairs render as real Python tuples ([(a, b)], [e[0]], [e[1]]), and
+    booleans as Python's capitalized [True]/[False] literals. *)
 
 From Coq Require Import String List.
 Import ListNotations.
@@ -22,15 +25,27 @@ Require Import PyLang.
 Require Import Json. (* reuses z_to_string *)
 Open Scope string_scope.
 
+Definition bool_to_py (b : bool) : string := if b then "True" else "False".
+
 Fixpoint py_expr (e : pyexpr) : string :=
   match e with
   | PConst z => z_to_string z
+  | PBool b => bool_to_py b
   | PVar x => x
   | PAdd e1 e2 => "(" ++ py_expr e1 ++ " + " ++ py_expr e2 ++ ")"
   | PSub e1 e2 => "(" ++ py_expr e1 ++ " - " ++ py_expr e2 ++ ")"
   | PMul e1 e2 => "(" ++ py_expr e1 ++ " * " ++ py_expr e2 ++ ")"
-  | PIf0 c e1 e2 =>
-      "(" ++ py_expr e1 ++ " if (" ++ py_expr c ++ " == 0) else " ++ py_expr e2 ++ ")"
+  | PEq e1 e2 => "(" ++ py_expr e1 ++ " == " ++ py_expr e2 ++ ")"
+  | PLt e1 e2 => "(" ++ py_expr e1 ++ " < " ++ py_expr e2 ++ ")"
+  | PLe e1 e2 => "(" ++ py_expr e1 ++ " <= " ++ py_expr e2 ++ ")"
+  | PAnd e1 e2 => "(" ++ py_expr e1 ++ " and " ++ py_expr e2 ++ ")"
+  | POr e1 e2 => "(" ++ py_expr e1 ++ " or " ++ py_expr e2 ++ ")"
+  | PNot e1 => "(not " ++ py_expr e1 ++ ")"
+  | PIf c e1 e2 =>
+      "(" ++ py_expr e1 ++ " if " ++ py_expr c ++ " else " ++ py_expr e2 ++ ")"
+  | PPair e1 e2 => "(" ++ py_expr e1 ++ ", " ++ py_expr e2 ++ ")"
+  | PFst e1 => "(" ++ py_expr e1 ++ ")[0]"
+  | PSnd e1 => "(" ++ py_expr e1 ++ ")[1]"
   | PLet x e1 e2 =>
       "((" ++ x ++ " := " ++ py_expr e1 ++ "), " ++ py_expr e2 ++ ")[1]"
   end.
