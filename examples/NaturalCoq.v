@@ -13,9 +13,12 @@
     instead of supplying them by hand), [head_or_zero] (a real list
     pattern match), [swap_pair] (real pair construction/projection),
     [flip_point] (a real two-field [Record], recognized as a plain
-    pair), and [landed_natural] -- this project's own [landed_expr]
+    pair), [landed_natural] -- this project's own [landed_expr]
     (Kinematics.v), written the natural way with [&&] instead of
-    built directly as [EAnd].
+    built directly as [EAnd] -- and a sixth, [any_true]: a genuinely
+    self-recursive [Fixpoint], recognized via [RealIR.v]'s [RSelf]/
+    [real_fix_decl], the first real recursion this file reaches (the
+    first five examples are all non-recursive).
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -599,5 +602,137 @@ Compute py_function "landed_natural" ["x"; "v"] (translate landed_natural_expr).
     False
     >>> landed_natural(-1, 3)
     False
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * A sixth example: a real self-recursive Fixpoint *)
+
+(** A sixth, genuinely recursive definition -- "does this list of
+    booleans contain a [true] anywhere?" -- also run through [coqc]/
+    [Extraction Language JSON] during this session. *)
+Fixpoint any_true (l : list bool) : bool :=
+  match l with
+  | nil => false
+  | b :: rest => orb b (any_true rest)
+  end.
+
+(** What Coq's real extraction emitted for it, captured verbatim: one
+    [decl:fixgroup] wrapping a single [fixgroup:item] named
+    ["any_true"], whose own [value] is the familiar [expr:lambda]/
+    [argnames] wrapper. [orb]'s own definition inlines on the spot the
+    same way [andb]'s already does (this file's fifth example), so the
+    [Cons] case is a 2-case [expr:case] on [b], not a named [orb]
+    call -- and the recursive call in its [False] branch is an
+    ordinary [expr:apply] of [expr:global "any_true"], the function's
+    *own* name, indistinguishable by shape alone from an unrelated
+    named call (see RealIR.v's header on [RSelf] for why):
+
+    [[
+    { "what": "decl:fixgroup", "fixlist": [
+      { "what": "fixgroup:item", "name": "any_true",
+        "type": { ... list bool -> bool ... },
+        "value": {
+          "what": "expr:lambda", "argnames": ["l"],
+          "body": {
+            "what": "expr:case",
+            "expr": {"what":"expr:rel","name":"l"},
+            "cases": [
+              { "pat": {"what":"pat:constructor","name":"Nil","argnames":[]},
+                "body": {"what":"expr:constructor","name":"False","args":[]} },
+              { "pat": {"what":"pat:constructor","name":"Cons","argnames":["b","rest"]},
+                "body": {
+                  "what": "expr:case",
+                  "expr": {"what":"expr:rel","name":"b"},
+                  "cases": [
+                    { "pat": {"what":"pat:constructor","name":"True","argnames":[]},
+                      "body": {"what":"expr:constructor","name":"True","args":[]} },
+                    { "pat": {"what":"pat:constructor","name":"False","argnames":[]},
+                      "body": {
+                        "what": "expr:apply",
+                        "func": {"what":"expr:global","name":"any_true"},
+                        "args": [{"what":"expr:rel","name":"rest"}]
+                      } }
+                  ]
+                } }
+            ]
+          }
+        } } ] }
+    ]]
+
+    [any_true_ir] is that [fixgroup:item]'s body, written by hand: the
+    outer [expr:case] on [l] becomes [RListMatch]; the inner one on
+    [b], inlined [orb], becomes [RIfBool] exactly the way [andb]'s own
+    inlining already does (the fifth example's [RIfBool c1 c2
+    (RBoolLit false)] pattern, mirrored here as [RIfBool c1 (RBoolLit
+    true) c2]); and the recursive [expr:apply]/[expr:global
+    "any_true"] becomes [RSelf] -- it calls the fixgroup's own
+    declared name, not an unrelated intrinsic. *)
+Definition any_true_ir : real_expr :=
+  RListMatch (RRel "l") (RBoolLit false) "b" "rest"
+    (RIfBool (RRel "b") (RBoolLit true) (RSelf (RRel "rest"))).
+
+Definition any_true_decl : real_fix_decl := mk_real_fix_decl "any_true" "l" any_true_ir.
+
+Definition any_true_expr : expr :=
+  match real_fix_decl_to_expr any_true_decl with
+  | Some e => e
+  | None => EConst 0 (* unreachable: any_true_decl is in the recognized fragment *)
+  end.
+
+Example any_true_decl_translates :
+  real_fix_decl_to_expr any_true_decl = Some any_true_expr.
+Proof. reflexivity. Qed.
+
+Theorem any_true_idents_valid :
+  expr_idents_valid is_valid_ident any_true_expr = true.
+Proof. reflexivity. Qed.
+
+(** Checked against the real [any_true] the same way Kinematics.v's
+    own [ERec] example (Example 7, [fall_until_landed_concrete]) is:
+    a concrete run, with fuel comfortably more than this particular
+    list's length needs -- not a universally-quantified theorem, for
+    the reason RealIR.v's header on [real_fix_decl] explains. *)
+Example any_true_expr_matches_real_definition :
+  eval 10 [] (EApp any_true_expr (ECons (EBool false) (ECons (EBool false) (ECons (EBool true) ENil))))
+    = Some (VBool (any_true [false; false; true])).
+Proof. reflexivity. Qed.
+
+Compute print_expr (EApp any_true_expr (ECons (EBool false) (ECons (EBool false) (ECons (EBool true) ENil)))).
+
+Corollary any_true_json_roundtrip :
+  parse_expr_top (print_expr (EApp any_true_expr (ECons (EBool false) (ECons (EBool false) (ECons (EBool true) ENil)))))
+    = Some (EApp any_true_expr (ECons (EBool false) (ECons (EBool false) (ECons (EBool true) ENil))), "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip
+                (EApp any_true_expr (ECons (EBool false) (ECons (EBool false) (ECons (EBool true) ENil))))
+                any_true_idents_valid
+                (String.length (print_expr (EApp any_true_expr
+                  (ECons (EBool false) (ECons (EBool false) (ECons (EBool true) ENil))))) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H. exact H.
+Qed.
+
+Corollary any_true_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate any_true_expr)
+      = option_map value_to_pyvalue (eval fuel rho any_true_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: the same walrus-self-reference recursive
+    closure [fall_until_landed]'s own generated Python already uses
+    (PyPrint.v's [PRec] comment), now reached from a real, captured
+    [Fixpoint] instead of a hand-built [ERec] -- applied immediately to
+    a fresh parameter [l], unlike [fall_until_landed] (which still
+    needs ["a"]/["dt"] closed over *before* it can be called on a
+    state), so this one is callable directly, in a single step. *)
+Compute py_function "any_true" ["l"] (translate (EApp any_true_expr (EVar "l"))).
+
+(** Run for real:
+
+    [[
+    >>> any_true((False, (False, (True, ()))))
+    True
     ]]
 *)

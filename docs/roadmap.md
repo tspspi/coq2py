@@ -133,16 +133,28 @@ an open guess.
   "b"]`) to show the whole declaration recognized, with
   `py_function`'s parameter list now read off `rd_argnames` instead
   of retyped by hand at the call site.
+- A real, self-recursive `Fixpoint` of one argument is recognized now
+  too (`ERec`'s ingestion-side cousin), via `RealIR.v`'s `RSelf`/
+  `real_fix_decl`: a self-call extracts as an ordinary named call to
+  the fixgroup's *own* declared name (confirmed directly), so `RSelf`
+  only needs to know that name at translation time, not a new
+  evaluation rule -- `real_eval`/`real_to_expr` both still give it
+  `None` unconditionally, and `real_to_expr_ctx` (a case-for-case
+  near-duplicate, not a generalization) is what actually threads the
+  enclosing name through. Checked the same concrete-instance way
+  *every* `ERec` example in this project already is (Kinematics.v's
+  `fall_until_landed_expr`), not a new universally-quantified theorem
+  -- a recursive term's step count depends on its argument, not its
+  static size, the same reason that theorem doesn't exist for
+  non-recursive `ERec` either. `examples/NaturalCoq.v`'s `any_true`
+  (its real captured JSON, encoded by hand, translated, and run as
+  real Python) is the worked instance. General *mutually*-recursive
+  fixgroups, and recursive functions of more than one argument, are
+  still not modeled.
 
 What `RealIR.v` deliberately does *not* yet do, in roughly the order
 they'd be needed next:
 
-- Real recursive `decl:fixgroup`s (`ERec`'s cousin on the *ingestion*
-  side) -- `real_decl` above covers a non-recursive `Definition`'s
-  wrapper only; a `Fixpoint` additionally needs the function's own
-  name bound to itself while evaluating its body, which needs a new
-  `real_expr`-level notion of a self-referential declaration, not
-  just a names-plus-body record.
 - Parse the actual JSON *text* `Extraction Language JSON` emits into a
   `real_expr` -- today, `real_expr` terms are built directly as Gallina
   values (the same way `examples/Kinematics.v` already builds `expr`

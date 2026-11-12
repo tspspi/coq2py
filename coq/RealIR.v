@@ -76,6 +76,41 @@
     keyed by field name for what is, underneath, the same value shape
     [RPair] already covers. *)
 
+(** [RSelf arg]: a self-recursive call, inside the body of a real,
+    human-written [Fixpoint]. Confirmed directly against a real
+    extracted [Fixpoint any_true (l : list bool) : bool := match l
+    with nil => false | b :: rest => orb b (any_true rest) end.]: the
+    whole declaration is one [decl:fixgroup] wrapping a single
+    [fixgroup:item] (the group has exactly one member here -- general
+    *mutually*-recursive fixgroups are not yet modeled), whose own
+    [value] is the familiar [expr:lambda]/[argnames] wrapper. Two
+    things line up with already-documented findings, not new
+    surprises: [orb]'s own definition inlines on the spot exactly the
+    way [andb]'s already does (this file's header), so the [Cons] case
+    is a 2-case [expr:case] on [b], not a named [orb] call; and the
+    recursive call in its [False] branch is an ordinary [expr:apply]
+    of [expr:global "any_true"] -- the function's *own* declared name,
+    exactly the same JSON shape an unrelated intrinsic call would
+    have, distinguishable only by knowing which name the enclosing
+    fixgroup itself declared (a genuine new finding, specific to
+    [RSelf]).
+    [RSelf] is therefore deliberately *not* interpreted by [real_eval]
+    or [real_to_expr] (both give it [None], the same honest partiality
+    every other unrecognized shape already gets) -- translating it
+    needs to know the enclosing function's own name, which only
+    [real_to_expr_ctx]/[real_fix_decl] below (not a bare [real_expr])
+    carry. Checking the translated [ERec] against the real Gallina
+    [Fixpoint] then follows the same concrete-instance style already
+    established for *any* [ERec]-based recursion in this project
+    (Kinematics.v's [fall_until_landed_expr], Example 7): a genuinely
+    recursive [expr]'s step count depends on its argument, not on
+    [rfd_body]'s static size, so there is no fixed fuel bound to quote
+    in a universally-quantified theorem the way the non-recursive
+    fragment's [real_to_expr_preserves_semantics] has one -- "enough
+    fuel for this particular run" is the right (and already-precedented)
+    standard, not a gap specific to [RSelf]. See examples/NaturalCoq.v's
+    [any_true_expr_matches_real_definition]. *)
+
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
 Require Import Lang.
@@ -94,7 +129,8 @@ Inductive real_expr : Type :=
   | RListMatch (scrutinee nilcase : real_expr) (hd tl : var) (conscase : real_expr)
   | RPair (e1 e2 : real_expr)
   | RProj1 (scrutinee : real_expr)
-  | RProj2 (scrutinee : real_expr).
+  | RProj2 (scrutinee : real_expr)
+  | RSelf (arg : real_expr).
 
 (** The reference semantics: not a reimplementation of [Z.add]/
     [Z.ltb]/etc, but a direct call to Coq's own, so this file's trust
@@ -165,6 +201,7 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VPair _ v2) => Some v2
       | _ => None
       end
+  | RSelf _ => None
   end.
 
 (** The translator: recognize each intrinsic by the exact unqualified
@@ -229,6 +266,7 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | Some e => Some (ESnd e)
       | None => None
       end
+  | RSelf _ => None
   end.
 
 (** [real_expr] has no closures/recursion at all (that is exactly what
@@ -250,6 +288,7 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RPair e1 e2 => S (Nat.max (real_expr_depth e1) (real_expr_depth e2))
   | RProj1 scrutinee => S (real_expr_depth scrutinee)
   | RProj2 scrutinee => S (real_expr_depth scrutinee)
+  | RSelf arg => S (real_expr_depth arg)
   end.
 
 Theorem real_to_expr_preserves_semantics :
@@ -407,7 +446,113 @@ Proof.
     assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
     destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv]|]; reflexivity.
+  - (* RSelf: [real_to_expr] gives it [None] unconditionally (see this
+       file's header), so the hypothesis [Htrans] is vacuous here. *)
+    discriminate Htrans.
 Qed.
+
+(** [real_to_expr_ctx]: [real_to_expr] again, case for case, but
+    carrying one extra piece of context -- the name of the [Fixpoint]
+    currently being translated, if any -- so an [RSelf arg] can
+    translate to a real self-call, [EApp (EVar f) arg'], the same
+    shape [eval]'s own [ERec]/[EApp] case already expects for a
+    self-referencing closure (Lang.v). A deliberate near-duplicate of
+    [real_to_expr] rather than a generalization of it: every other
+    case is untouched (just threads [self] through unchanged), and
+    keeping [real_to_expr] itself exactly as proved above means
+    nothing above this line needed re-proving to add this. *)
+Fixpoint real_to_expr_ctx (self : option var) (re : real_expr) : option expr :=
+  match re with
+  | RRel name => Some (EVar name)
+  | RZLit z => Some (EConst z)
+  | RBoolLit b => Some (EBool b)
+  | RApp1 fn arg =>
+      match real_to_expr_ctx self arg with
+      | Some e1 =>
+          if string_dec fn "negb" then Some (ENot e1)
+          else if string_dec fn "fst" then Some (EFst e1)
+          else if string_dec fn "snd" then Some (ESnd e1)
+          else None
+      | None => None
+      end
+  | RApp2 fn a1 a2 =>
+      match real_to_expr_ctx self a1, real_to_expr_ctx self a2 with
+      | Some e1, Some e2 =>
+          if string_dec fn "add" then Some (EAdd e1 e2)
+          else if string_dec fn "sub" then Some (ESub e1 e2)
+          else if string_dec fn "mul" then Some (EMul e1 e2)
+          else if string_dec fn "eqb" then Some (EEq e1 e2)
+          else if string_dec fn "ltb" then Some (ELt e1 e2)
+          else if string_dec fn "leb" then Some (ELe e1 e2)
+          else if string_dec fn "andb" then Some (EAnd e1 e2)
+          else if string_dec fn "orb" then Some (EOr e1 e2)
+          else None
+      | _, _ => None
+      end
+  | RIfBool c t e =>
+      match real_to_expr_ctx self c, real_to_expr_ctx self t, real_to_expr_ctx self e with
+      | Some ec, Some et, Some ee => Some (EIf ec et ee)
+      | _, _, _ => None
+      end
+  | RNil => Some ENil
+  | RCons hd tl =>
+      match real_to_expr_ctx self hd, real_to_expr_ctx self tl with
+      | Some eh, Some et => Some (ECons eh et)
+      | _, _ => None
+      end
+  | RListMatch scrutinee nilcase hd tl conscase =>
+      match real_to_expr_ctx self scrutinee, real_to_expr_ctx self nilcase,
+            real_to_expr_ctx self conscase with
+      | Some es, Some en, Some ec => Some (EListMatch es en hd tl ec)
+      | _, _, _ => None
+      end
+  | RPair e1 e2 =>
+      match real_to_expr_ctx self e1, real_to_expr_ctx self e2 with
+      | Some e1', Some e2' => Some (EPair e1' e2')
+      | _, _ => None
+      end
+  | RProj1 scrutinee =>
+      match real_to_expr_ctx self scrutinee with
+      | Some e => Some (EFst e)
+      | None => None
+      end
+  | RProj2 scrutinee =>
+      match real_to_expr_ctx self scrutinee with
+      | Some e => Some (ESnd e)
+      | None => None
+      end
+  | RSelf arg =>
+      match self, real_to_expr_ctx self arg with
+      | Some f, Some arg' => Some (EApp (EVar f) arg')
+      | _, _ => None
+      end
+  end.
+
+(** [real_fix_decl]: [real_decl]'s cousin for a single self-recursive
+    [Fixpoint] of exactly one argument -- general mutually-recursive
+    fixgroups, and recursive functions of more than one argument, are
+    not yet modeled (see this file's header). *)
+Record real_fix_decl : Type := mk_real_fix_decl {
+  rfd_name : var;
+  rfd_param : var;
+  rfd_body : real_expr
+}.
+
+Definition real_fix_decl_to_expr (rfd : real_fix_decl) : option expr :=
+  match real_to_expr_ctx (Some rfd.(rfd_name)) rfd.(rfd_body) with
+  | Some body => Some (ERec rfd.(rfd_name) rfd.(rfd_param) body)
+  | None => None
+  end.
+
+(** [real_fix_decl] deliberately has no generic preservation theorem
+    of its own, the way [real_decl_to_expr_preserves_semantics] does:
+    a [Fixpoint]'s recursion depth depends on its *argument* (e.g. a
+    list's length), not on [rfd_body]'s own static size, the same
+    reason [eval]'s own [fuel] for [EApp] can't be derived from
+    [expr_fuel] either (Lang.v's header). The right proof shape is a
+    direct induction on the argument against the real Gallina
+    [Fixpoint], per declaration -- see examples/NaturalCoq.v's
+    [any_true_expr_matches_real_definition] for a worked instance. *)
 
 (** [real_decl]: models the [decl:term]/[expr:lambda] wrapper around a
     whole real, human-written multi-argument [Definition] -- not just
