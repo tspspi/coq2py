@@ -1,0 +1,21 @@
+# Coq build artifacts
+*.vo
+*.vos
+*.vok
+*.glob
+.*.aux
+.lia.cache
+.nia.cache
+Makefile.coq
+Makefile.coq.conf
+Makefile.conf
+Makefile.conf.d
+.coq-native/
+
+# Dune / OCaml
+_build/
+*.install
+.merlin
+
+# Generated Python output used for manual smoke testing
+/scratch/
