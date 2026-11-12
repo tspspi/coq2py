@@ -21,9 +21,12 @@
     run the same step function (via genuine recursion, [ERec], not
     [ERepeat]) until [landed_expr] actually holds, however many steps
     that takes -- not knowable at "compile time" the way Example 5's
-    fixed [n] was.
+    fixed [n] was -- and an eighth, [total_distance_expr], summing
+    [v * dt] over a genuine list of velocity samples ([ENil]/[ECons]/
+    [EListMatch]): a Riemann sum over data of whatever length it
+    happens to have, not a single step or a fixed count of them.
 
-    All seven are expressed as terms of our supported [expr] subset
+    All eight are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -412,5 +415,52 @@ Compute py_function "fall_until_landed" ["a"; "dt"] (translate fall_until_landed
     >>> f = fall_until_landed(-10, 1)
     >>> f((45, 0))
     (-15, -30)
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * Example 8: a Riemann sum over a genuine list *)
+
+(** Total distance travelled, given a list of velocity samples taken
+    every [dt]: [sum (v_i * dt)] over the whole list, via [ERec] (the
+    recursion) walking an [EListMatch] (the list). Unlike every earlier
+    example, the input isn't a fixed-shape value at all -- a list can be
+    any length, known only at run time, exactly the point of adding
+    [ENil]/[ECons]/[EListMatch] to this subset. *)
+Definition total_distance_expr : expr :=
+  ERec "total" "vs"
+    (EListMatch (EVar "vs") (EConst 0) "v" "rest"
+       (EAdd (EMul (EVar "v") (EVar "dt")) (EApp (EVar "total") (EVar "rest")))).
+
+Theorem total_distance_idents_valid :
+  expr_idents_valid is_valid_ident total_distance_expr = true.
+Proof. reflexivity. Qed.
+
+(** Three velocity samples 2, 4, 6 over unit time steps: total distance
+    2*1 + 4*1 + 6*1 = 12. *)
+Example total_distance_concrete :
+  eval 100 [("dt", VZ 1)]
+    (EApp total_distance_expr (ECons (EConst 2) (ECons (EConst 4) (ECons (EConst 6) ENil))))
+    = Some (VZ 12).
+Proof. reflexivity. Qed.
+
+Corollary total_distance_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate total_distance_expr)
+      = option_map value_to_pyvalue (eval fuel rho total_distance_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: lists render as nested tuples ([Nil] as [()],
+    [Cons h t] as [(h, t)]) -- see PyPrint.v's comment on [PListMatch]
+    for why that, not Python's native mutable [list], is the right
+    match for this subset's cons-list values. *)
+Compute py_function "total_distance" ["dt"] (translate total_distance_expr).
+
+(** Run for real:
+
+    [[
+    >>> f = total_distance(1)
+    >>> f((2, (4, (6, ()))))
+    12
     ]]
 *)

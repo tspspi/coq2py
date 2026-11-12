@@ -591,6 +591,14 @@ Fixpoint print_expr (e : expr) : string :=
         ++ ",""param"":" ++ quote_string param ++ ",""body"":" ++ print_expr body ++ "}"
   | EApp func arg =>
       "{""tag"":""app"",""func"":" ++ print_expr func ++ ",""arg"":" ++ print_expr arg ++ "}"
+  | ENil => "{""tag"":""nil""}"
+  | ECons hd tl =>
+      "{""tag"":""cons"",""hd"":" ++ print_expr hd ++ ",""tl"":" ++ print_expr tl ++ "}"
+  | EListMatch scrutinee nilcase hd tl conscase =>
+      "{""tag"":""listmatch"",""scrutinee"":" ++ print_expr scrutinee
+        ++ ",""nilcase"":" ++ print_expr nilcase
+        ++ ",""hd"":" ++ quote_string hd ++ ",""tl"":" ++ quote_string tl
+        ++ ",""conscase"":" ++ print_expr conscase ++ "}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -615,6 +623,10 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | ERepeat _ _ body init => S (Nat.max (expr_fuel body) (expr_fuel init))
   | ELam _ body => S (expr_fuel body)
   | ERec _ _ body => S (expr_fuel body)
+  | ENil => 1
+  | ECons hd tl => S (Nat.max (expr_fuel hd) (expr_fuel tl))
+  | EListMatch scrutinee nilcase _ _ conscase =>
+      S (Nat.max (expr_fuel scrutinee) (Nat.max (expr_fuel nilcase) (expr_fuel conscase)))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1193,8 +1205,73 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""nil""}" s with
+    | Some s1 => Some (ENil, s1)
+    | None =>
+    match expect "{""tag"":""cons"",""hd"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (hd, s2) =>
+            match expect ",""tl"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (tl, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (ECons hd tl, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""listmatch"",""scrutinee"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (scrutinee, s2) =>
+            match expect ",""nilcase"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (nilcase, s4) =>
+                    match expect ",""hd"":" s4 with
+                    | Some s5 =>
+                        match parse_qstring s5 with
+                        | Some (hd, s6) =>
+                            match expect ",""tl"":" s6 with
+                            | Some s7 =>
+                                match parse_qstring s7 with
+                                | Some (tl, s8) =>
+                                    match expect ",""conscase"":" s8 with
+                                    | Some s9 =>
+                                        match parse_expr fuel' s9 with
+                                        | Some (conscase, s10) =>
+                                            match expect "}" s10 with
+                                            | Some s11 => Some (EListMatch scrutinee nilcase hd tl conscase, s11)
+                                            | None => None
+                                            end
+                                        | None => None
+                                        end
+                                    | None => None
+                                    end
+                                | None => None
+                                end
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1243,7 +1320,10 @@ Proof.
     | e1 IH1 e2 IH2              (* EMod *)
     | param body IH1             (* ELam *)
     | f param body IH1           (* ERec *)
-    | func IH1 arg IH2 ];        (* EApp *)
+    | func IH1 arg IH2           (* EApp *)
+    |                            (* ENil *)
+    | hd IH1 tl IH2              (* ECons *)
+    | scrutinee IH1 nilcase IH2 hd tl conscase IH3 ]; (* EListMatch *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -1456,4 +1536,29 @@ Proof.
     rewrite (IH1 Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
     rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* ENil *) reflexivity.
+  - (* ECons *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel hd <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel tl <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EListMatch *) apply andb_true_iff in Hvalid as [Hv1 Hrest1].
+    apply andb_true_iff in Hrest1 as [Hv2 Hrest2].
+    apply andb_true_iff in Hrest2 as [Hvhd Hrest3].
+    apply andb_true_iff in Hrest3 as [Hvtl Hv3].
+    assert (Hf1 : (expr_fuel scrutinee <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel nilcase <= fuel')%nat) by lia.
+    assert (Hf3 : (expr_fuel conscase <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print hd Hvhd). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print tl Hvtl). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH3 Hv3 fuel' Hf3). reflexivity.
 Qed.

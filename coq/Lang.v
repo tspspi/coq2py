@@ -88,7 +88,17 @@
     "ran out of fuel" exception to match against, so this is one place
     the source and target semantics only agree on *terminating* runs,
     stated as a hypothesis rather than silently assumed -- see
-    [Translate.v]'s correctness theorem). *)
+    [Translate.v]'s correctness theorem).
+
+    [ENil]/[ECons]/[EListMatch] add lists -- a genuine new *inductive*
+    value shape, not another scalar operator, and (together with
+    [ERec]) this subset's first real "recurse over the structure of a
+    value" pattern: [EListMatch scrutinee nilcase hd tl conscase]
+    evaluates [scrutinee] and either runs [nilcase] (empty list) or
+    binds [hd]/[tl] to the head and tail and runs [conscase] (non-empty)
+    -- the same two-case shape [Coq.Lists.List.list]'s own [match] has.
+    A list of the wrong shape (or a scrutinee that isn't a list at all)
+    gets stuck, same as everywhere else. *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -129,7 +139,10 @@ Inductive expr : Type :=
   | EMod (e1 e2 : expr)
   | ELam (param : var) (body : expr)
   | ERec (f param : var) (body : expr)
-  | EApp (func arg : expr).
+  | EApp (func arg : expr)
+  | ENil
+  | ECons (hd tl : expr)
+  | EListMatch (scrutinee nilcase : expr) (hd tl : var) (conscase : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -144,7 +157,8 @@ Inductive value : Type :=
   | VBool (b : bool)
   | VPair (v1 v2 : value)
   | VFloat (f : float)
-  | VClosure (self : option var) (param : var) (body : expr) (cenv : list (var * value)).
+  | VClosure (self : option var) (param : var) (body : expr) (cenv : list (var * value))
+  | VList (vs : list value).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -323,6 +337,18 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
           eval fuel' ((param, argv) :: cenv') body
       | _, _ => None
       end
+  | ENil => Some (VList [])
+  | ECons hd tl =>
+      match eval fuel' rho hd, eval fuel' rho tl with
+      | Some hv, Some (VList tvs) => Some (VList (hv :: tvs))
+      | _, _ => None
+      end
+  | EListMatch scrutinee nilcase hd tl conscase =>
+      match eval fuel' rho scrutinee with
+      | Some (VList []) => eval fuel' rho nilcase
+      | Some (VList (hv :: tvs)) => eval fuel' ((hd, hv) :: (tl, VList tvs) :: rho) conscase
+      | _ => None
+      end
   end
   end.
 
@@ -405,4 +431,11 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | ERec f param body =>
       andb (is_valid_ident f) (andb (is_valid_ident param) (expr_idents_valid is_valid_ident body))
   | EApp func arg => andb (expr_idents_valid is_valid_ident func) (expr_idents_valid is_valid_ident arg)
+  | ENil => true
+  | ECons hd tl => andb (expr_idents_valid is_valid_ident hd) (expr_idents_valid is_valid_ident tl)
+  | EListMatch scrutinee nilcase hd tl conscase =>
+      andb (expr_idents_valid is_valid_ident scrutinee)
+        (andb (expr_idents_valid is_valid_ident nilcase)
+          (andb (is_valid_ident hd)
+            (andb (is_valid_ident tl) (expr_idents_valid is_valid_ident conscase))))
   end.

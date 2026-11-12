@@ -117,12 +117,24 @@ wrong-shape-value and unbound-variable cases that already existed;
 both sides and needs no new axioms (`Print Assumptions` still reports
 only the same `PrimFloat` primitives as before).
 
+Lists are now in too: `ENil`/`ECons`/`EListMatch` (a `VList`, and the
+first "recurse over a value's own structure" pattern this subset has —
+see `examples/Kinematics.v`'s `total_distance_expr`, a Riemann sum over
+a list of velocity samples of whatever length it happens to have).
+Generated Python renders a list as nested tuples (`()` for `Nil`,
+`(hd, tl)` for `Cons` — the same shape as pairs already use, not
+Python's native mutable `list`; see `PyPrint.v`'s comment on
+`PListMatch`).
+
 Not yet covered, in roughly the order they'd likely be needed:
 
 - Mutual recursion (two or more `ERec`-like functions calling each
   other) — `ERec` only supports a function calling *itself*.
-- Records and non-trivial inductive types beyond pairs.
-- Lists/arrays (needed before numpy-shaped state makes sense).
+- Records and non-trivial inductive types beyond pairs and lists.
+- Numpy-shaped arrays specifically (fixed-rank, fixed-dtype, with
+  broadcasting and view-vs-copy aliasing rules) — a cons-list isn't
+  that; it's the general-recursion building block arrays would need
+  bounds/shape reasoning on top of, not a substitute for it.
 - Modules and typeclasses.
 - Coinductives.
 

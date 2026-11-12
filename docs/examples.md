@@ -326,7 +326,7 @@ ZeroDivisionError: integer division or modulo by zero
 
 Python's own `//` already raises on a zero divisor — the same
 undefined case `eval` already refuses to answer, enforced by the target
-language for free. (Compare Example 8's wave simulator: there, the CFL
+language for free. (Compare Example 9's wave simulator: there, the CFL
 precondition *isn't* automatically enforced by anything, so
 `wave1d.py` has to check it explicitly — the two examples are opposite
 ends of the same idea.)
@@ -365,7 +365,37 @@ def fall_until_landed(a, dt):
 (-15, -30)
 ```
 
-## Example 8: a wave simulator, from Maxwell's equations to a running plot
+## Example 8: a Riemann sum over a genuine list
+
+`ENil`/`ECons`/`EListMatch` add lists — the first value shape here whose
+size isn't fixed by the term's own syntax. `total_distance_expr` sums
+`v * dt` over a list of velocity samples of whatever length it has,
+via `ERec` walking an `EListMatch`:
+
+```coq
+Definition total_distance_expr : expr :=
+  ERec "total" "vs"
+    (EListMatch (EVar "vs") (EConst 0) "v" "rest"
+       (EAdd (EMul (EVar "v") (EVar "dt")) (EApp (EVar "total") (EVar "rest")))).
+```
+
+Samples `2, 4, 6` over unit time steps: `2*1 + 4*1 + 6*1 = 12`. Lists
+render as nested Python tuples (`()` is `Nil`, `(hd, tl)` is `Cons` —
+the same shape pairs already use, not Python's native `list`; see
+`PyPrint.v`'s comment on `PListMatch`):
+
+```
+def total_distance(dt):
+    return ((total := (lambda vs: (0 if (vs) == () else ((v := (vs)[0]), (rest := (vs)[1]), ((v * dt) + (total(rest))))[-1]))), total)[-1]
+```
+
+```
+>>> f = total_distance(1)
+>>> f((2, (4, (6, ()))))
+12
+```
+
+## Example 9: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -506,5 +536,5 @@ something a proof catches for you)
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 8 wave simulator, plots it
+make wave_sim  # generates + runs the Example 9 wave simulator, plots it
 ```

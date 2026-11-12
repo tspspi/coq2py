@@ -65,14 +65,18 @@ Inductive pyexpr : Type :=
   | PMod (e1 e2 : pyexpr)
   | PLam (param : var) (body : pyexpr)
   | PRec (f param : var) (body : pyexpr)
-  | PApp (func arg : pyexpr).
+  | PApp (func arg : pyexpr)
+  | PNil
+  | PCons (hd tl : pyexpr)
+  | PListMatch (scrutinee nilcase : pyexpr) (hd tl : var) (conscase : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
   | PVBool (b : bool)
   | PVPair (v1 v2 : pyvalue)
   | PVFloat (f : float)
-  | PVClosure (self : option var) (param : var) (body : pyexpr) (cenv : list (var * pyvalue)).
+  | PVClosure (self : option var) (param : var) (body : pyexpr) (cenv : list (var * pyvalue))
+  | PVList (vs : list pyvalue).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -236,6 +240,18 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
             end in
           peval fuel' ((param, argv) :: cenv') body
       | _, _ => None
+      end
+  | PNil => Some (PVList [])
+  | PCons hd tl =>
+      match peval fuel' rho hd, peval fuel' rho tl with
+      | Some hv, Some (PVList tvs) => Some (PVList (hv :: tvs))
+      | _, _ => None
+      end
+  | PListMatch scrutinee nilcase hd tl conscase =>
+      match peval fuel' rho scrutinee with
+      | Some (PVList []) => peval fuel' rho nilcase
+      | Some (PVList (hv :: tvs)) => peval fuel' ((hd, hv) :: (tl, PVList tvs) :: rho) conscase
+      | _ => None
       end
   end
   end.

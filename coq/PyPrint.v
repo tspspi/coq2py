@@ -69,7 +69,17 @@
     inside [BODY] already refers to the very closure being called. No
     textual substitution of [f] for anything else is needed anywhere in
     [BODY] (confirmed by actually running a generated recursive
-    [factorial] this way, not just reasoned about). *)
+    [factorial] this way, not just reasoned about).
+
+    [PNil]/[PCons] render as Python tuples, matching the choice already
+    made for pairs: [()] is [Nil], and [(hd, tl)] is [Cons hd tl] --
+    structurally the exact same shape as our own cons-list [value]s, not
+    Python's native (mutable, random-access) [list]. [PListMatch] checks
+    [scrutinee == ()] for the empty case and indexes [[0]]/[[1]] for the
+    non-empty one, printing [scrutinee] three times over; since this
+    subset is purely functional (nothing to evaluate it for side effects
+    would even mean), re-evaluating it those extra times changes no
+    answer, only (unverified, acceptable here) generated-code size. *)
 
 From Coq Require Import String List ZArith.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
@@ -140,6 +150,12 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PRec f param body =>
       "((" ++ f ++ " := (lambda " ++ param ++ ": " ++ py_expr body ++ ")), " ++ f ++ ")[-1]"
   | PApp func arg => "(" ++ py_expr func ++ "(" ++ py_expr arg ++ "))"
+  | PNil => "()"
+  | PCons hd tl => "(" ++ py_expr hd ++ ", " ++ py_expr tl ++ ")"
+  | PListMatch scrutinee nilcase hd tl conscase =>
+      "(" ++ py_expr nilcase ++ " if (" ++ py_expr scrutinee ++ ") == () else "
+        ++ "((" ++ hd ++ " := (" ++ py_expr scrutinee ++ ")[0]), ("
+        ++ tl ++ " := (" ++ py_expr scrutinee ++ ")[1]), " ++ py_expr conscase ++ ")[-1])"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=
