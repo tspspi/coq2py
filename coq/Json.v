@@ -1531,254 +1531,385 @@ Definition parse_expr_top (s : string) : option (expr * string) :=
     [expr_fuel e]) recovers exactly the original term and consumes exactly
     the printed text, leaving [rest] untouched. This is the "parser is a
     proven inverse of our own grammar" correctness statement discussed in
-    GOAL.md. *)
+    GOAL.md.
+
+    Proved by *strong induction on [expr_fuel e]* ([well_founded_induction
+    lt_wf], via the [Hstrong] helper below), not structural induction on
+    [e] -- this is new as of this proof (it used to be [induction e as
+    [...]]), and the reason for the switch is exactly the obstacle
+    docs/roadmap.md's N-field-record/mutual-recursion entries describe:
+    structural induction on [e] gives no usable hypothesis for a
+    sub-[expr] buried inside a [list expr]-shaped field, since Coq's
+    auto-derived scheme has no clause connecting a list field's elements
+    back to the goal. Strong induction on the *fuel*, not on [e]'s shape,
+    sidesteps this entirely: the hypothesis [IHn] becomes a blanket fact
+    over *any* [expr] with smaller fuel, usable for a list field's
+    elements exactly the same way it's used for an ordinary sub-[expr] --
+    confirmed directly in an isolated prototype before this file was
+    touched (see docs/roadmap.md), then applied here mechanically (every
+    former [IHk Hv fuel' Hf]-style call becomes [(IHn (expr_fuel ek) Hltk
+    ek (le_n _)) Hv fuel' Hf], with each [Hltk] asserted from [Hn] by
+    [lia]) across every existing case -- a refactor, not a new feature;
+    no case's own reasoning changed, only how its induction hypothesis is
+    obtained. This is the same fuel-not-shape trick [Translate.v]'s own
+    proof already uses to get past [EApp]'s non-structural recursion into
+    a closure, just applied here to get past a different non-structural
+    shape (a list field) instead. *)
 Theorem parse_print_roundtrip :
   forall e,
     expr_idents_valid is_valid_ident e = true ->
     forall fuel, (expr_fuel e <= fuel)%nat ->
     forall rest, parse_expr fuel (print_expr e ++ rest) = Some (e, rest).
 Proof.
-  induction e as
-    [ z                          (* EConst *)
-    | b                          (* EBool *)
-    | x                          (* EVar *)
-    | e1 IH1 e2 IH2              (* EAdd *)
-    | e1 IH1 e2 IH2              (* ESub *)
-    | e1 IH1 e2 IH2              (* EMul *)
-    | e1 IH1 e2 IH2              (* EEq *)
-    | e1 IH1 e2 IH2              (* ELt *)
-    | e1 IH1 e2 IH2              (* ELe *)
-    | e1 IH1 e2 IH2              (* EAnd *)
-    | e1 IH1 e2 IH2              (* EOr *)
-    | e1 IH1                     (* ENot *)
-    | c IHc e1 IH1 e2 IH2        (* EIf *)
-    | e1 IH1 e2 IH2              (* EPair *)
-    | e1 IH1                     (* EFst *)
-    | e1 IH1                     (* ESnd *)
-    | x e1 IH1 e2 IH2            (* ELet *)
-    | f                          (* EFConst *)
-    | e1 IH1 e2 IH2              (* EFAdd *)
-    | e1 IH1 e2 IH2              (* EFSub *)
-    | e1 IH1 e2 IH2              (* EFMul *)
-    | e1 IH1 e2 IH2              (* EFDiv *)
-    | e1 IH1 e2 IH2              (* EFEq *)
-    | e1 IH1 e2 IH2              (* EFLt *)
-    | e1 IH1 e2 IH2              (* EFLe *)
-    | n x body IH1 init IH2      (* ERepeat *)
-    | e1 IH1 e2 IH2              (* EDiv *)
-    | e1 IH1 e2 IH2              (* EMod *)
-    | param body IH1             (* ELam *)
-    | f param body IH1           (* ERec *)
-    | f1 param1 body1 IH1 f2 param2 body2 IH2 (* ERecMut *)
-    | func IH1 arg IH2           (* EApp *)
-    |                            (* ENil *)
-    | hd IH1 tl IH2              (* ECons *)
-    | scrutinee IH1 nilcase IH2 hd tl conscase IH3  (* EListMatch *)
-    | k1 e1 IH1 k2 e2 IH2        (* ERecord *)
-    | name e1 IH1                (* EField *)
-    | e1 IH1                     (* EInl *)
-    | e1 IH1                     (* EInr *)
-    | scrutinee IH1 x1 case1 IH2 x2 case2 IH3 (* ECase *)
-    | s                           (* EStrConst *)
-    | e1 IH1 e2 IH2               (* EStrConcat *)
-    | e1 IH1 e2 IH2 ];            (* EStrEq *)
-  intros Hvalid fuel Hfuel rest;
+  assert (Hstrong : forall n e,
+    (expr_fuel e <= n)%nat ->
+    expr_idents_valid is_valid_ident e = true ->
+    forall fuel, (expr_fuel e <= fuel)%nat ->
+    forall rest, parse_expr fuel (print_expr e ++ rest) = Some (e, rest)).
+  {
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros e Hn Hvalid fuel Hfuel rest.
+  destruct e as
+      [ z                     (* EConst *)
+      | b                     (* EBool *)
+      | x                     (* EVar *)
+      | e1 e2                 (* EAdd *)
+      | e1 e2                 (* ESub *)
+      | e1 e2                 (* EMul *)
+      | e1 e2                 (* EEq *)
+      | e1 e2                 (* ELt *)
+      | e1 e2                 (* ELe *)
+      | e1 e2                 (* EAnd *)
+      | e1 e2                 (* EOr *)
+      | e1                    (* ENot *)
+      | c e1 e2               (* EIf *)
+      | e1 e2                 (* EPair *)
+      | e1                    (* EFst *)
+      | e1                    (* ESnd *)
+      | x e1 e2               (* ELet *)
+      | f                     (* EFConst *)
+      | e1 e2                 (* EFAdd *)
+      | e1 e2                 (* EFSub *)
+      | e1 e2                 (* EFMul *)
+      | e1 e2                 (* EFDiv *)
+      | e1 e2                 (* EFEq *)
+      | e1 e2                 (* EFLt *)
+      | e1 e2                 (* EFLe *)
+      | rep_n x body init     (* ERepeat *)
+      | e1 e2                 (* EDiv *)
+      | e1 e2                 (* EMod *)
+      | param body            (* ELam *)
+      | f param body          (* ERec *)
+      | f1 param1 body1 f2 param2 body2 (* ERecMut *)
+      | func arg              (* EApp *)
+      |                       (* ENil *)
+      | hd tl                 (* ECons *)
+      | scrutinee nilcase hd tl conscase (* EListMatch *)
+      | k1 e1 k2 e2           (* ERecord *)
+      | name e1               (* EField *)
+      | e1                    (* EInl *)
+      | e1                    (* EInr *)
+      | scrutinee x1 case1 x2 case2 (* ECase *)
+      | s                     (* EStrConst *)
+      | e1 e2                 (* EStrConcat *)
+      | e1 e2 ];              (* EStrEq *)
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
   - (* EConst *)
+    simpl in Hn.
     rewrite string_append_assoc. simpl.
     rewrite (parse_number_print z "}"%char rest not_digit_rbrace not_minus_rbrace).
     reflexivity.
   - (* EBool *)
+    simpl in Hn.
     rewrite string_append_assoc. simpl.
     rewrite (parse_bool_print b (String "}"%char rest)).
     reflexivity.
   - (* EVar *)
+    simpl in Hn.
     simpl in Hvalid.
     rewrite string_append_assoc. simpl.
     rewrite (parse_qstring_print x Hvalid (String "}"%char rest)).
     reflexivity.
-  - (* EAdd *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+  - (* EAdd *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* ESub *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* ESub *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EMul *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EMul *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EEq *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EEq *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* ELt *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* ELt *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* ELe *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* ELe *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EAnd *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EAnd *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EOr *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EOr *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
   - (* ENot *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
-  - (* EIf *) apply andb_true_iff in Hvalid as [Hvc Hv12].
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hvalid fuel' Hf1). reflexivity.
+  - (* EIf *)
+    simpl in Hn.
+    assert (Hltc : (expr_fuel c < n)%nat) by lia.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hvc Hv12].
     apply andb_true_iff in Hv12 as [Hv1 Hv2].
     assert (Hfc : (expr_fuel c <= fuel')%nat) by lia.
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IHc Hvc fuel' Hfc). simpl.
+    rewrite ((IHn (expr_fuel c) Hltc c (le_n _)) Hvc fuel' Hfc). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EPair *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EPair *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
   - (* EFst *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hvalid fuel' Hf1). reflexivity.
   - (* ESnd *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
-  - (* ELet *) apply andb_true_iff in Hvalid as [Hvx Hv12].
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hvalid fuel' Hf1). reflexivity.
+  - (* ELet *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hvx Hv12].
     apply andb_true_iff in Hv12 as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print x Hvx). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
   - (* EFConst *)
+    simpl in Hn.
     rewrite (spec_float_round_trip (Prim2SF f) rest).
     rewrite SF2Prim_Prim2SF. reflexivity.
-  - (* EFAdd *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+  - (* EFAdd *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EFSub *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EFSub *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EFMul *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EFMul *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EFDiv *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EFDiv *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EFEq *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EFEq *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EFLt *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EFLt *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EFLe *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EFLe *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* ERepeat *) apply andb_true_iff in Hvalid as [Hvx Hv12].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* ERepeat *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel body < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel init < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hvx Hv12].
     apply andb_true_iff in Hv12 as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel body <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel init <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc. simpl.
-    rewrite (parse_nat_print n ","%char _ not_digit_comma not_minus_comma). simpl.
+    rewrite (parse_nat_print rep_n ","%char _ not_digit_comma not_minus_comma). simpl.
     repeat rewrite string_append_assoc. simpl.
     rewrite (parse_qstring_print x Hvx). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel body) Hlt1 body (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EDiv *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel init) Hlt2 init (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EDiv *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EMod *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EMod *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* ELam *) apply andb_true_iff in Hvalid as [Hvp Hv1].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* ELam *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel body < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hvp Hv1].
     assert (Hf1 : (expr_fuel body <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print param Hvp). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). reflexivity.
-  - (* ERec *) apply andb_true_iff in Hvalid as [Hvf Hv12].
+    rewrite ((IHn (expr_fuel body) Hlt1 body (le_n _)) Hv1 fuel' Hf1). reflexivity.
+  - (* ERec *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel body < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hvf Hv12].
     apply andb_true_iff in Hv12 as [Hvp Hv1].
     assert (Hf1 : (expr_fuel body <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
@@ -1786,8 +1917,12 @@ Proof.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print param Hvp). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). reflexivity.
-  - (* ERecMut *) apply andb_true_iff in Hvalid as [Hvf1 Hrest1].
+    rewrite ((IHn (expr_fuel body) Hlt1 body (le_n _)) Hv1 fuel' Hf1). reflexivity.
+  - (* ERecMut *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel body1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel body2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hvf1 Hrest1].
     apply andb_true_iff in Hrest1 as [Hvp1 Hrest2].
     apply andb_true_iff in Hrest2 as [Hv1 Hrest3].
     apply andb_true_iff in Hrest3 as [Hvf2 Hrest4].
@@ -1799,29 +1934,44 @@ Proof.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print param1 Hvp1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel body1) Hlt1 body1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print f2 Hvf2). simpl.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print param2 Hvp2). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EApp *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel body2) Hlt2 body2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EApp *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel func < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel arg < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel func <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel arg <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel func) Hlt1 func (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* ENil *) reflexivity.
-  - (* ECons *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel arg) Hlt2 arg (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* ENil *)
+    simpl in Hn.
+reflexivity.
+  - (* ECons *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel hd < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel tl < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel hd <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel tl <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel hd) Hlt1 hd (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EListMatch *) apply andb_true_iff in Hvalid as [Hv1 Hrest1].
+    rewrite ((IHn (expr_fuel tl) Hlt2 tl (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EListMatch *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel scrutinee < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel nilcase < n)%nat) by lia.
+    assert (Hlt3 : (expr_fuel conscase < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hrest1].
     apply andb_true_iff in Hrest1 as [Hv2 Hrest2].
     apply andb_true_iff in Hrest2 as [Hvhd Hrest3].
     apply andb_true_iff in Hrest3 as [Hvtl Hv3].
@@ -1829,16 +1979,20 @@ Proof.
     assert (Hf2 : (expr_fuel nilcase <= fuel')%nat) by lia.
     assert (Hf3 : (expr_fuel conscase <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel scrutinee) Hlt1 scrutinee (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). simpl.
+    rewrite ((IHn (expr_fuel nilcase) Hlt2 nilcase (le_n _)) Hv2 fuel' Hf2). simpl.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print hd Hvhd). simpl.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print tl Hvtl). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH3 Hv3 fuel' Hf3). reflexivity.
-  - (* ERecord *) apply andb_true_iff in Hvalid as [Hk1 Hrest1].
+    rewrite ((IHn (expr_fuel conscase) Hlt3 conscase (le_n _)) Hv3 fuel' Hf3). reflexivity.
+  - (* ERecord *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hk1 Hrest1].
     apply andb_true_iff in Hrest1 as [Hv1 Hrest2].
     apply andb_true_iff in Hrest2 as [Hk2 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
@@ -1846,26 +2000,38 @@ Proof.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print k1 Hk1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print k2 Hk2). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EField *) apply andb_true_iff in Hvalid as [Hname Hv1].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EField *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hname Hv1].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print name Hname). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). reflexivity.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). reflexivity.
   - (* EInl *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hvalid fuel' Hf1). reflexivity.
   - (* EInr *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hvalid fuel' Hf1). reflexivity.
-  - (* ECase *) apply andb_true_iff in Hvalid as [Hv1 Hrest1].
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hvalid fuel' Hf1). reflexivity.
+  - (* ECase *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel scrutinee < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel case1 < n)%nat) by lia.
+    assert (Hlt3 : (expr_fuel case2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hrest1].
     apply andb_true_iff in Hrest1 as [Hvx1 Hrest2].
     apply andb_true_iff in Hrest2 as [Hv2 Hrest3].
     apply andb_true_iff in Hrest3 as [Hvx2 Hv3].
@@ -1873,32 +2039,45 @@ Proof.
     assert (Hf2 : (expr_fuel case1 <= fuel')%nat) by lia.
     assert (Hf3 : (expr_fuel case2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel scrutinee) Hlt1 scrutinee (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print x1 Hvx1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). simpl.
+    rewrite ((IHn (expr_fuel case1) Hlt2 case1 (le_n _)) Hv2 fuel' Hf2). simpl.
     repeat rewrite string_append_assoc.
     rewrite (parse_qstring_print x2 Hvx2). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH3 Hv3 fuel' Hf3). reflexivity.
+    rewrite ((IHn (expr_fuel case2) Hlt3 case2 (le_n _)) Hv3 fuel' Hf3). reflexivity.
   - (* EStrConst *)
+    simpl in Hn.
     simpl in Hvalid.
     rewrite string_append_assoc. simpl.
     rewrite (parse_qstring_print s Hvalid (String "}"%char rest)).
     reflexivity.
-  - (* EStrConcat *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+  - (* EStrConcat *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
-  - (* EStrEq *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EStrEq *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel e2 < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
-    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
-    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+    rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+
+  }
+  intros e Hvalid fuel Hfuel rest.
+  exact (Hstrong (expr_fuel e) e (le_n _) Hvalid fuel Hfuel rest).
 Qed.
