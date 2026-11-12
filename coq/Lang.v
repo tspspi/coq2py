@@ -134,7 +134,23 @@
     needed to reconstruct either side, which is exactly what bundling
     both bodies together does. [EApp] reconstructs *both* siblings'
     bindings into the callee's environment on every call, the same way
-    it already reconstructs [ERec]'s single self-binding. *)
+    it already reconstructs [ERec]'s single self-binding.
+
+    [EInl e]/[EInr e]/[ECase scrutinee x1 case1 x2 case2] round out the
+    basic algebraic-data-type trio this subset now has: [EPair]/
+    [ERecord] are *products* (a value of each component, always both),
+    [EInl]/[EInr] are the dual *sum* (a value tagged as one of exactly
+    two alternatives, [VInl]/[VInr] -- the same shape as Coq's own
+    [sum]/[inl]/[inr]), and [ERec]/[ERecMut] give structural recursion
+    over either. [ECase] is the eliminator: it evaluates [scrutinee]
+    and runs [case1] with [x1] bound to the payload if it was [VInl],
+    or [case2] with [x2] bound if it was [VInr] -- the same two-case
+    shape [EListMatch] already has for [Nil]/[Cons], just for a sum
+    type general enough to tag *any* value, not only lists. Like
+    [EPair], there is deliberately no fixed arity limit to work around
+    here: a sum of more than two alternatives already nests, the same
+    way a 3-tuple nests two [EPair]s ([EInr (EInl e)] is "the third of
+    three cases"). *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -181,7 +197,10 @@ Inductive expr : Type :=
   | ECons (hd tl : expr)
   | EListMatch (scrutinee nilcase : expr) (hd tl : var) (conscase : expr)
   | ERecord (k1 : var) (e1 : expr) (k2 : var) (e2 : expr)
-  | EField (name : var) (e : expr).
+  | EField (name : var) (e : expr)
+  | EInl (e : expr)
+  | EInr (e : expr)
+  | ECase (scrutinee : expr) (x1 : var) (case1 : expr) (x2 : var) (case2 : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -200,7 +219,9 @@ Inductive value : Type :=
   | VList (vs : list value)
   | VRecord (k1 : var) (v1 : value) (k2 : var) (v2 : value)
   | VClosureMut (f1 param1 : var) (body1 : expr) (f2 param2 : var) (body2 : expr)
-      (cenv : list (var * value)) (which : bool).
+      (cenv : list (var * value)) (which : bool)
+  | VInl (v : value)
+  | VInr (v : value).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -415,6 +436,22 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
           else None
       | _ => None
       end
+  | EInl e1 =>
+      match eval fuel' rho e1 with
+      | Some v1 => Some (VInl v1)
+      | None => None
+      end
+  | EInr e1 =>
+      match eval fuel' rho e1 with
+      | Some v1 => Some (VInr v1)
+      | None => None
+      end
+  | ECase scrutinee x1 case1 x2 case2 =>
+      match eval fuel' rho scrutinee with
+      | Some (VInl v1) => eval fuel' ((x1, v1) :: rho) case1
+      | Some (VInr v2) => eval fuel' ((x2, v2) :: rho) case2
+      | _ => None
+      end
   end
   end.
 
@@ -515,4 +552,11 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
         (andb (expr_idents_valid is_valid_ident e1)
           (andb (is_valid_ident k2) (expr_idents_valid is_valid_ident e2)))
   | EField name e1 => andb (is_valid_ident name) (expr_idents_valid is_valid_ident e1)
+  | EInl e1 => expr_idents_valid is_valid_ident e1
+  | EInr e1 => expr_idents_valid is_valid_ident e1
+  | ECase scrutinee x1 case1 x2 case2 =>
+      andb (expr_idents_valid is_valid_ident scrutinee)
+        (andb (is_valid_ident x1)
+          (andb (expr_idents_valid is_valid_ident case1)
+            (andb (is_valid_ident x2) (expr_idents_valid is_valid_ident case2))))
   end.

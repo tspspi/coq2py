@@ -170,6 +170,12 @@ Fixpoint py_expr (e : pyexpr) : string :=
       "{" ++ py_qstring k1 ++ ": " ++ py_expr e1 ++ ", "
         ++ py_qstring k2 ++ ": " ++ py_expr e2 ++ "}"
   | PField name e1 => "(" ++ py_expr e1 ++ ")[" ++ py_qstring name ++ "]"
+  | PInl e1 => "(""inl"", " ++ py_expr e1 ++ ")"
+  | PInr e1 => "(""inr"", " ++ py_expr e1 ++ ")"
+  | PCase scrutinee x1 case1 x2 case2 =>
+      "(((" ++ x1 ++ " := (" ++ py_expr scrutinee ++ ")[1]), " ++ py_expr case1 ++ ")[-1] if ("
+        ++ py_expr scrutinee ++ ")[0] == ""inl"" else ((" ++ x2 ++ " := ("
+        ++ py_expr scrutinee ++ ")[1]), " ++ py_expr case2 ++ ")[-1])"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

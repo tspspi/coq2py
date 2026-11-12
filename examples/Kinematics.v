@@ -28,12 +28,15 @@
     a ninth, [euler_step_record_expr], Example 1's step again but
     returning a 2-field named record ([ERecord]/[EField]) instead of a
     positional pair, so the generated Python looks state up by name
-    ([state["x"]]) instead of by position ([state[0]]) -- and a tenth,
+    ([state["x"]]) instead of by position ([state[0]]) -- a tenth,
     [bounce_expr], an elastic bounce via [ERecMut]: two functions,
     ["fall"] and ["rise"], defined together so each can call the
-    other, not just [ERec]'s single self-call.
+    other, not just [ERec]'s single self-call -- and an eleventh,
+    [safe_time_to_stop_expr]/[stop_time_or_minus_one_expr], Example 6's
+    division precondition reflected as a genuine value ([EInl]/[EInr]/
+    [ECase]) instead of [eval] simply getting stuck.
 
-    All ten are expressed as terms of our supported [expr] subset
+    All eleven are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -582,5 +585,83 @@ Compute py_function "bounce" ["a"; "dt"] (translate bounce_expr).
     >>> fall, rise = bounce(-10, 1)
     >>> fall((45, 0))
     (-15, 30)
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * Example 11: a precondition reflected as a value, via a sum type *)
+
+(** Example 6's [time_to_stop_expr] reflects its precondition ([d <>
+    0]) by getting *stuck* ([None]) when it fails -- an honest, but
+    silent, way to be partial. [EInl]/[EInr]/[ECase] let the same
+    precondition be reflected as an ordinary *value* instead:
+    [safe_time_to_stop_expr] returns [EInl time] when [d <> 0], or
+    [EInr v] (the velocity, which will now never reach zero) when
+    [d = 0] -- a *total* function whose result says, at the type level,
+    which of the two cases happened, rather than a partial one that
+    simply fails to answer. [ECase] is the eliminator: given either
+    outcome, substitute a concrete reading (the real stopping time, or
+    [-1] standing for "never stops"). *)
+Definition safe_time_to_stop_expr : expr :=
+  EIf (EEq (EVar "d") (EConst 0))
+      (EInr (EVar "v"))
+      (EInl (EDiv (EVar "v") (EVar "d"))).
+
+Definition stop_time_or_minus_one_expr : expr :=
+  ECase safe_time_to_stop_expr "t" (EVar "t") "_" (ESub (EConst 0) (EConst 1)).
+
+Theorem stop_time_or_minus_one_idents_valid :
+  expr_idents_valid is_valid_ident stop_time_or_minus_one_expr = true.
+Proof. reflexivity. Qed.
+
+(** Same numbers as Example 6: decelerating by 4 per step from speed
+    20 takes 5 steps to stop -- now a genuine [VInl], not a [Some]
+    wrapping a bare number. *)
+Example safe_time_to_stop_concrete :
+  eval 10 [("v", VZ 20); ("d", VZ 4)] safe_time_to_stop_expr = Some (VInl (VZ 5)).
+Proof. reflexivity. Qed.
+
+(** And the zero-deceleration case Example 6 could only express as
+    "stuck" is now a real, distinguishable value: [VInr 20], not [None]. *)
+Example safe_time_to_stop_zero_deceleration :
+  eval 10 [("v", VZ 20); ("d", VZ 0)] safe_time_to_stop_expr = Some (VInr (VZ 20)).
+Proof. reflexivity. Qed.
+
+(** [ECase] then turns either outcome into one concrete number: *)
+Example stop_time_or_minus_one_concrete :
+  eval 10 [("v", VZ 20); ("d", VZ 4)] stop_time_or_minus_one_expr = Some (VZ 5).
+Proof. reflexivity. Qed.
+
+Example stop_time_or_minus_one_never_stops :
+  eval 10 [("v", VZ 20); ("d", VZ 0)] stop_time_or_minus_one_expr = Some (VZ (-1)).
+Proof. reflexivity. Qed.
+
+Compute print_expr stop_time_or_minus_one_expr.
+
+Corollary stop_time_or_minus_one_json_roundtrip :
+  parse_expr_top (print_expr stop_time_or_minus_one_expr) = Some (stop_time_or_minus_one_expr, "").
+Proof.
+  json_roundtrip_corollary stop_time_or_minus_one_expr stop_time_or_minus_one_idents_valid.
+Qed.
+
+Corollary stop_time_or_minus_one_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate stop_time_or_minus_one_expr)
+      = option_map value_to_pyvalue (eval fuel rho stop_time_or_minus_one_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: [EInl]/[EInr] render as a tagged 2-tuple
+    ([("inl", v)]/[("inr", v)] -- see PyPrint.v's comment on [PInl]/
+    [PInr]/[PCase]), and [ECase] as a conditional on that tag, binding
+    the payload with the same walrus trick [PListMatch] already uses. *)
+Compute py_function "stop_time_or_minus_one" ["v"; "d"] (translate stop_time_or_minus_one_expr).
+
+(** Run for real:
+
+    [[
+    >>> stop_time_or_minus_one(20, 4)
+    5
+    >>> stop_time_or_minus_one(20, 0)
+    -1
     ]]
 *)

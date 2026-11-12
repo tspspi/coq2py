@@ -326,7 +326,7 @@ ZeroDivisionError: integer division or modulo by zero
 
 Python's own `//` already raises on a zero divisor — the same
 undefined case `eval` already refuses to answer, enforced by the target
-language for free. (Compare Example 11's wave simulator: there, the CFL
+language for free. (Compare Example 12's wave simulator: there, the CFL
 precondition *isn't* automatically enforced by anything, so
 `wave1d.py` has to check it explicitly — the two examples are opposite
 ends of the same idea.)
@@ -483,7 +483,59 @@ def bounce(a, dt):
 (-15, 30)
 ```
 
-## Example 11: a wave simulator, from Maxwell's equations to a running plot
+## Example 11: a precondition reflected as a value, via a sum type
+
+Example 6's `time_to_stop_expr` reflects its precondition (`d <> 0`)
+by getting *stuck* (`None`) when it fails. `EInl`/`EInr`/`ECase` let
+the same precondition be reflected as an ordinary value instead:
+`safe_time_to_stop_expr` returns `EInl time` when `d <> 0`, or
+`EInr v` (the velocity, which will now never reach zero) when `d = 0`
+— a *total* function whose result says, at the type level, which case
+happened:
+
+```coq
+Definition safe_time_to_stop_expr : expr :=
+  EIf (EEq (EVar "d") (EConst 0))
+      (EInr (EVar "v"))
+      (EInl (EDiv (EVar "v") (EVar "d"))).
+
+Definition stop_time_or_minus_one_expr : expr :=
+  ECase safe_time_to_stop_expr "t" (EVar "t") "_" (ESub (EConst 0) (EConst 1)).
+```
+
+`ECase` is the eliminator, substituting a concrete reading for either
+outcome (the real stopping time, or `-1` for "never stops"). Same
+numbers as Example 6 — decelerating by 4 per step from speed 20 takes
+5 steps to stop, now a genuine `VInl`, not a `Some` wrapping a bare
+number; zero deceleration is a real, distinguishable `VInr`, not `None`:
+
+```coq
+Example safe_time_to_stop_concrete :
+  eval 10 [("v", VZ 20); ("d", VZ 4)] safe_time_to_stop_expr = Some (VInl (VZ 5)).
+Proof. reflexivity. Qed.
+
+Example safe_time_to_stop_zero_deceleration :
+  eval 10 [("v", VZ 20); ("d", VZ 0)] safe_time_to_stop_expr = Some (VInr (VZ 20)).
+Proof. reflexivity. Qed.
+```
+
+A sum value renders as a tagged 2-tuple (`("inl", v)`/`("inr", v)`),
+and `ECase` as a conditional on that tag, binding the payload with the
+same walrus trick `EListMatch` already uses:
+
+```
+def stop_time_or_minus_one(v, d):
+    return (((t := ((("inr", v) if (d == 0) else ("inl", (v // d))))[1]), t)[-1] if ((("inr", v) if (d == 0) else ("inl", (v // d))))[0] == "inl" else ((_ := ((("inr", v) if (d == 0) else ("inl", (v // d))))[1]), (0 - 1))[-1])
+```
+
+```
+>>> stop_time_or_minus_one(20, 4)
+5
+>>> stop_time_or_minus_one(20, 0)
+-1
+```
+
+## Example 12: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -624,5 +676,5 @@ something a proof catches for you)
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 11 wave simulator, plots it
+make wave_sim  # generates + runs the Example 12 wave simulator, plots it
 ```

@@ -162,10 +162,28 @@ functions defined together, generated as two chained walrus
 assignments in Python (the same self-reference trick `PRec` already
 uses, extended to two names).
 
+The last basic algebraic-data-type piece is in too: `EInl e`/`EInr e`/
+`ECase scrutinee x1 case1 x2 case2` (`VInl`/`VInr`), a 2-alternative
+*sum* type dual to `EPair`/`ERecord`'s *products* — a value tagged as
+one of exactly two cases, eliminated the same two-case way
+`EListMatch` already eliminates `Nil`/`Cons`. No arity cap is needed
+here the way records/mutual-recursion needed one: a sum of more than
+two alternatives already nests (`EInr (EInl e)` is "the third of three
+cases"), so this one constructor-pair handles every finite sum, not
+just a 2-case special case. `examples/Kinematics.v`'s Example 11 uses
+it to turn Example 6's division precondition into a genuine value
+(`EInl time` / `EInr v`, "stopped" vs. "never stops") instead of
+`eval` simply getting stuck — directly the "extract an assumption
+into a value, not just a runtime check" idea the records/division
+examples were already gesturing at. Generated Python renders a sum
+value as a tagged 2-tuple (`("inl", v)`/`("inr", v)`) and `ECase` as a
+tag check with the same walrus-binding trick `EListMatch` already
+uses.
+
 Not yet covered, in roughly the order they'd likely be needed:
 
 - General N-field records / non-trivial inductive types beyond pairs,
-  lists, and 2-field records.
+  lists, 2-field records, and 2-case sums.
 - General mutually-recursive *groups* (more than two functions) —
   `ERecMut` only supports exactly two.
 - Numpy-shaped arrays specifically (fixed-rank, fixed-dtype, with
