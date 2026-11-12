@@ -147,9 +147,10 @@ its own proven round-trip theorem, extracted to OCaml, and wrapped in a
 working CLI that produces real, executing Python. `docs/examples.md`
 walks through two worked examples (a pair-returning Euler integration
 step, and a boolean/comparison-based landing check) with real captured
-output; `docs/roadmap.md` tracks what's intentionally deferred (including
-an honest scoping of the much larger "derive Maxwell's equations from a
-symmetry group" request).
+output; `docs/roadmap.md` tracks what's intentionally deferred. A larger
+worked example — Lorentz symmetry, Maxwell's equations, the wave
+equation, discretized extraction, and visualization — is being built in
+`examples/physics/`.
 
 Decisions made along the way (superseding the "Open questions" below
 where they overlap):

@@ -8,7 +8,7 @@
 # Use `gmake` if your platform's default `make` is BSD make (coqc's own
 # generated-makefile conventions assume GNU make).
 
-.PHONY: all coq ocaml examples test clean
+.PHONY: all coq ocaml examples physics test clean
 
 all: coq ocaml
 
@@ -21,6 +21,14 @@ ocaml: coq
 
 examples:
 	cd coq && coqc -Q . "" -Q ../examples "" ../examples/Kinematics.v
+
+# examples/physics/ is a reusable collection of modules for a larger
+# worked example (see docs/roadmap.md); it may grow to depend on the
+# core coq/ modules (e.g. once it reaches the extraction stage), so both
+# include paths are passed even though the current modules only need
+# their own.
+physics: coq
+	coqc -Q coq "" -Q examples/physics "" examples/physics/Minkowski.v
 
 test: ocaml
 	@echo "--- euler_step (pairs/tuples): examples/Kinematics.v's euler_step_expr ---"

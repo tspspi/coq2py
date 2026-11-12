@@ -6,6 +6,7 @@
 .*.aux
 .lia.cache
 .nia.cache
+.nra.cache
 Makefile.coq
 Makefile.coq.conf
 Makefile.conf

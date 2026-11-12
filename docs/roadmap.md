@@ -90,58 +90,15 @@ minimum:
   question (same array semantics, plus autodiff — a further, separate
   formalization question about what the generated code's gradients mean).
 
-## Requested next example: symmetry → Maxwell's equations → wave equation
+## Electromagnetism example: symmetry, Maxwell's equations, the wave equation
 
-This was asked for directly, so it's worth being precise about scope
-rather than quietly downgrading it. Taken literally — derive Maxwell's
-equations from a symmetry group, get to the electromagnetic wave
-equation, extract a numerical evaluation to Python, and plot it with
-matplotlib (matplotlib/numpy as the only new *Python*-side dependencies,
-consistent with the project's zero-new-Coq-dependency policy) — this is
-several independent, substantial formalization efforts stacked on top of
-each other, not a feature addition to `expr`:
-
-1. **The physics derivation itself** (symmetry group → Maxwell's
-   equations, e.g. via gauge invariance of a Lagrangian and the
-   Euler–Lagrange equations, or via Lorentz-covariance of the
-   electromagnetic field tensor) is genuine graduate-level theoretical
-   physics, independent of Coq entirely. It would need to be pinned down
-   mathematically before any formalization question even arises.
-2. **Formalizing continuous mathematics in Coq**: real/vector/tensor
-   calculus (gradient, divergence, curl, or the 4-tensor formalism),
-   partial differential equations, and a chosen formalization of Lie
-   groups/symmetry — none of which exist in this repository, and each of
-   which is itself a significant formalization undertaking (there is no
-   small shortcut here; this is comparable to or larger than existing
-   standalone Coq analysis libraries).
-3. **A numerical scheme for extraction**: the wave equation is a PDE;
-   "evaluate it in Python" in practice means a discretization (e.g.
-   finite-difference time-domain) over an array/grid, which needs the
-   array/loop features already flagged as missing above (`expr` has no
-   arrays, no loops, no mutable grid state) — plus a proof that the
-   *discretization* itself is a faithful (consistent, stable) numerical
-   method for the continuous equation, which is a numerical-analysis
-   question layered on top of everything else.
-4. Only the last mile — rendering a numpy array to a plot — is small, and
-   is explicitly the "unverified utility function" category this project
-   already has a place for (like `PyPrint.v`): a `matplotlib`-based
-   plotting call sitting outside the trust boundary, consuming the
-   (verified) simulator's output.
-
-None of this is implemented, and shouldn't be faked with a hand-wavy
-"proof" that doesn't actually establish what it claims to — that would
-undermine the one thing this project has been careful about so far: that
-"proved" here always means `coqc` checked it, not that it reads
-plausibly.
-
-**A tractable, honest first step in this direction**, if wanted: skip
-the symmetry-group derivation and start directly from the 1D scalar wave
-equation $\partial_t^2 u = c^2 \partial_x^2 u$ in its standard explicit
-finite-difference form — a genuinely real instance of "a PDE simulator
-extracted from Coq," just without claiming a from-first-principles
-physics derivation that isn't built yet. Even that needs arrays/bounded
-iteration first (the item at the top of the previous section), so it's
-naturally the next rung on the ladder rather than a parallel track.
+`examples/physics/` contains a larger worked example built on reusable
+modules: Lorentz symmetry and the Minkowski metric, a multivariable
+calculus layer, Maxwell's equations and the electromagnetic wave
+equation, a discretized numerical scheme, and extraction to a Python/numpy
+simulator visualized with matplotlib. This depends on array and bounded-
+iteration support in `expr`/`pyexpr` (see above), which is core extractor
+work rather than part of the example itself.
 
 ## Deployment target: the remote host
 
