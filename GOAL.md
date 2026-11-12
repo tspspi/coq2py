@@ -186,14 +186,18 @@ proof chain from `R` down to the generated Python.
 A first step toward ingesting real, human-written Coq (rather than
 hand-built `expr` terms) now also exists: `coq/RealIR.v` proves that a
 recognized fragment of Coq's own `Extraction Language JSON` output
-(`Z`/`bool` arithmetic and `if`, real intrinsic calls like `Z.ltb`
-verified against Coq's own semantics directly, not a reimplementation)
-translates into the existing `expr` subset with no new axioms;
-`examples/NaturalCoq.v` carries one real, empirically-captured
-extraction example (`clamp_nonneg`) all the way through to running
-Python. See `docs/roadmap.md` for exactly what's proven versus what's
-still missing (parsing the JSON text itself, numeral-literal
-reconstruction, the function/recursion wrappers).
+(`Z`/`bool` arithmetic and `if`, lists, pairs, 2-field `Record`s, a
+whole non-recursive declaration's `argnames` wrapper, a real
+single-argument self-recursive `Fixpoint`, and a real 2-case sum —
+real intrinsic calls like `Z.ltb` verified against Coq's own
+semantics directly, not a reimplementation) translates into the
+existing `expr` subset with no new axioms; `examples/NaturalCoq.v`
+carries seven real, empirically-captured extraction examples (from
+`clamp_nonneg` through a self-recursive `any_true` and a 2-case-sum
+`classify`) all the way through to running Python. See
+`docs/roadmap.md` for exactly what's proven versus what's still
+missing (parsing the JSON text itself, numeral-literal
+reconstruction, and recursive *groups* of more than one function).
 
 Decisions made along the way (superseding the "Open questions" below
 where they overlap):
@@ -206,23 +210,26 @@ where they overlap):
 ## Open questions
 
 - Exact initial supported Coq subset beyond the current one (functions,
-  closures, self-recursion via `ERec`, 2-function mutual recursion via
-  `ERecMut`, lists, 2-field records, 2-case sum types (`EInl`/`EInr`/
-  `ECase`), and identifier-shaped first-class strings (`EStrConst`/
-  `EStrConcat`/`EStrEq`) are now in; next likely additions: general
-  N-field records, mutually-recursive groups larger than two, general
-  (non-identifier-shaped) string literals, richer inductive types —
-  see `docs/roadmap.md`).
+  closures, self-recursion via `ERec`, mutual recursion via `ERecMut`
+  (two functions) and `ERecGroup` (any number), lists, records
+  (`ERecord`, two fields, and `ERecordN`, any number), 2-case sum
+  types (`EInl`/`EInr`/`ECase`), and first-class strings
+  (`EStrConst`/`EStrConcat`/`EStrEq`, any text, not just
+  identifier-shaped) are now in; next likely additions: richer
+  inductive types (e.g. `option`), numpy-shaped arrays — see
+  `docs/roadmap.md`).
 - Fully reconciling `Json.v`'s grammar against Coq's actual
   `Extraction Language JSON` output. A first proven step exists
   (`coq/RealIR.v`, `examples/NaturalCoq.v`): a recognized fragment of
-  real, human-written Coq (`Z`/`bool` arithmetic and `if`, real
-  `Z.ltb`/etc. calls, verified against Coq's own captured extraction
+  real, human-written Coq (`Z`/`bool` arithmetic and `if`, lists,
+  pairs, 2-field records, a declaration's own `argnames` wrapper, a
+  single-argument self-recursive `Fixpoint`, and a 2-case sum — real
+  `Z.ltb`/etc. calls verified against Coq's own captured extraction
   JSON) translates into this project's existing `expr` subset with no
   new axioms. Still missing: parsing the JSON *text* itself (rather than
   hand-encoding `real_expr` terms directly), numeral-literal
-  reconstruction from nested `Z0`/`Zpos`/`positive` constructors, and the
-  `expr:lambda`/`decl:fixgroup` function/recursion wrappers — see
+  reconstruction from nested `Z0`/`Zpos`/`positive` constructors, and
+  recursive `decl:fixgroup`s of more than one function — see
   `docs/roadmap.md`.
 - What exactly the "theory-evaluating agent" on the remote host needs from
   `coq2py` at the interface level (input format, invocation, how generated
