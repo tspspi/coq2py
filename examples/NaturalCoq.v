@@ -1,11 +1,13 @@
 (** NaturalCoq.v
 
-    Closes the loop RealIR.v opens: a genuine, human-style Coq
-    [Definition] -- the kind of thing chapter 2 of a book like
+    Closes the loop RealIR.v opens: genuine, human-style Coq
+    [Definition]s -- the kind of thing chapter 2 of a book like
     *Certified Programming with Dependent Types* writes without a
     second thought -- carried all the way through to real, running
     Python, via [RealIR.v]'s [real_to_expr] and then this project's
-    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline.
+    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Two
+    examples: [clamp_nonneg] (Z/bool arithmetic and [if]) and
+    [head_or_zero] (a real list pattern match).
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -147,5 +149,97 @@ Compute py_function "clamp_nonneg" ["a"; "b"] (translate clamp_nonneg_expr).
     7
     >>> clamp_nonneg(5, 7)
     5
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * A second example: a real list pattern match *)
+
+(** Another genuine, human-written Coq definition, also run through
+    [coqc]/[Extraction Language JSON] during this session: *)
+Definition head_or_zero (l : list Z) : Z :=
+  match l with
+  | nil => 0
+  | x :: _ => x
+  end.
+
+(** What Coq's real extraction emitted for it, captured verbatim:
+
+    [[
+    {
+      "what": "decl:term", "name": "head_or_zero",
+      "type": { ... list z -> z ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["l"],
+        "body": {
+          "what": "expr:case",
+          "expr": { "what": "expr:rel", "name": "l" },
+          "cases": [
+            { "pat": {"name": "Nil", "argnames": []},
+              "body": {"what":"expr:constructor","name":"Z0","args":[]} },
+            { "pat": {"name": "Cons", "argnames": ["x", "_"]},
+              "body": {"what":"expr:rel","name":"x"} }
+          ]
+        }
+      }
+    }
+    ]]
+
+    -- an [expr:case] over [l] with [Nil]/[Cons] patterns (in that
+    order, matching [RealIR.v]'s [RListMatch]'s [nilcase]-then-
+    [conscase] argument order exactly), [RListMatch]'s own [hd]/[tl]
+    binder names taken directly from the real [Cons] pattern's
+    [argnames]. *)
+Definition head_or_zero_ir : real_expr :=
+  RListMatch (RRel "l") (RZLit 0) "x" "_" (RRel "x").
+
+Example head_or_zero_ir_matches_real_definition :
+  forall l : list Z,
+    real_eval [("l", VList (map VZ l))] head_or_zero_ir = Some (VZ (head_or_zero l)).
+Proof. intro l. destruct l as [| x xs]; reflexivity. Qed.
+
+Definition head_or_zero_expr : expr :=
+  match real_to_expr head_or_zero_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: head_or_zero_ir is in the recognized fragment *)
+  end.
+
+Example head_or_zero_ir_translates :
+  real_to_expr head_or_zero_ir = Some head_or_zero_expr.
+Proof. reflexivity. Qed.
+
+Example head_or_zero_expr_matches_real_definition :
+  forall l : list Z,
+    eval 10 [("l", VList (map VZ l))] head_or_zero_expr = Some (VZ (head_or_zero l)).
+Proof.
+  intro l.
+  rewrite (real_to_expr_preserves_semantics head_or_zero_ir head_or_zero_expr
+             head_or_zero_ir_translates 10 [("l", VList (map VZ l))] ltac:(simpl; lia)).
+  apply head_or_zero_ir_matches_real_definition.
+Qed.
+
+Theorem head_or_zero_idents_valid :
+  expr_idents_valid is_valid_ident head_or_zero_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr head_or_zero_expr.
+
+Corollary head_or_zero_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate head_or_zero_expr)
+      = option_map value_to_pyvalue (eval fuel rho head_or_zero_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** Lists render as nested Python tuples, the same as every other list
+    example in this project (see PyPrint.v's comment on [PListMatch]). *)
+Compute py_function "head_or_zero" ["l"] (translate head_or_zero_expr).
+
+(** Run for real:
+
+    [[
+    >>> head_or_zero((3, (4, (5, ()))))
+    3
+    >>> head_or_zero(())
+    0
     ]]
 *)

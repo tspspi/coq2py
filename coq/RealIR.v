@@ -70,7 +70,10 @@ Inductive real_expr : Type :=
   | RBoolLit (b : bool)
   | RApp1 (fn : var) (arg : real_expr)
   | RApp2 (fn : var) (arg1 arg2 : real_expr)
-  | RIfBool (scrutinee then_ else_ : real_expr).
+  | RIfBool (scrutinee then_ else_ : real_expr)
+  | RNil
+  | RCons (hd tl : real_expr)
+  | RListMatch (scrutinee nilcase : real_expr) (hd tl : var) (conscase : real_expr).
 
 (** The reference semantics: not a reimplementation of [Z.add]/
     [Z.ltb]/etc, but a direct call to Coq's own, so this file's trust
@@ -110,6 +113,18 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VBool false) => real_eval rho e
       | _ => None
       end
+  | RNil => Some (VList [])
+  | RCons hd tl =>
+      match real_eval rho hd, real_eval rho tl with
+      | Some hv, Some (VList tvs) => Some (VList (hv :: tvs))
+      | _, _ => None
+      end
+  | RListMatch scrutinee nilcase hd tl conscase =>
+      match real_eval rho scrutinee with
+      | Some (VList []) => real_eval rho nilcase
+      | Some (VList (hv :: tvs)) => real_eval ((hd, hv) :: (tl, VList tvs) :: rho) conscase
+      | _ => None
+      end
   end.
 
 (** The translator: recognize each intrinsic by the exact unqualified
@@ -144,6 +159,17 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | Some ec, Some et, Some ee => Some (EIf ec et ee)
       | _, _, _ => None
       end
+  | RNil => Some ENil
+  | RCons hd tl =>
+      match real_to_expr hd, real_to_expr tl with
+      | Some eh, Some et => Some (ECons eh et)
+      | _, _ => None
+      end
+  | RListMatch scrutinee nilcase hd tl conscase =>
+      match real_to_expr scrutinee, real_to_expr nilcase, real_to_expr conscase with
+      | Some es, Some en, Some ec => Some (EListMatch es en hd tl ec)
+      | _, _, _ => None
+      end
   end.
 
 (** [real_expr] has no closures/recursion at all (that is exactly what
@@ -158,6 +184,10 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RApp2 _ a1 a2 => S (Nat.max (real_expr_depth a1) (real_expr_depth a2))
   | RIfBool c t e =>
       S (Nat.max (real_expr_depth c) (Nat.max (real_expr_depth t) (real_expr_depth e)))
+  | RNil => O
+  | RCons hd tl => S (Nat.max (real_expr_depth hd) (real_expr_depth tl))
+  | RListMatch scrutinee nilcase _ _ conscase =>
+      S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth nilcase) (real_expr_depth conscase)))
   end.
 
 Theorem real_to_expr_preserves_semantics :
@@ -246,4 +276,35 @@ Proof.
     destruct bc.
     + apply (IHre2 et eq_refl fuel' rho Hdt').
     + apply (IHre3 ee eq_refl fuel' rho Hde').
+  - (* RNil *) inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|]. reflexivity.
+  - (* RCons *)
+    destruct (real_to_expr re1) as [eh|] eqn:Hreh; [|discriminate].
+    destruct (real_to_expr re2) as [et|] eqn:Hret; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    assert (Hdh' : (real_expr_depth re1 < fuel')%nat) by lia.
+    assert (Hdt' : (real_expr_depth re2 < fuel')%nat) by lia.
+    simpl.
+    rewrite (IHre1 eh eq_refl fuel' rho Hdh'), (IHre2 et eq_refl fuel' rho Hdt').
+    destruct (real_eval rho re1) as [[zh|bh|p1h p2h|fh|sh prh bdh ceh|vsh|rk1h rv1h rk2h rv2h|cf1h cp1h cb1h cf2h cp2h cb2h cceh cwh|iv1h|iv2h|isvh]|];
+      destruct (real_eval rho re2) as [[zt|bt|p1t p2t|ft|st prt bdt cet|vst|rk1t rv1t rk2t rv2t|cf1t cp1t cb1t cf2t cp2t cb2t ccet cwt|iv1t|iv2t|isvt]|];
+      reflexivity.
+  - (* RListMatch *)
+    destruct (real_to_expr re1) as [es|] eqn:Hres; [|discriminate].
+    destruct (real_to_expr re2) as [en|] eqn:Hren; [|discriminate].
+    destruct (real_to_expr re3) as [ec|] eqn:Hrec; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    assert (Hds' : (real_expr_depth re1 < fuel')%nat) by lia.
+    assert (Hdn' : (real_expr_depth re2 < fuel')%nat) by lia.
+    assert (Hdc' : (real_expr_depth re3 < fuel')%nat) by lia.
+    simpl.
+    rewrite (IHre1 es eq_refl fuel' rho Hds').
+    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs]|]; try reflexivity.
+    destruct vs as [| hv tvs].
+    + apply (IHre2 en eq_refl fuel' rho Hdn').
+    + apply (IHre3 ec eq_refl fuel' ((hd, hv) :: (tl, VList tvs) :: rho) Hdc').
 Qed.

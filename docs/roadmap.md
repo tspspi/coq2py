@@ -65,12 +65,19 @@ an open guess.
   this project's existing, already-proven `expr` subset, with
   `real_to_expr_preserves_semantics` proving the translation matches
   `real_eval` exactly (no new axioms -- confirmed via `Print
-  Assumptions`). `examples/NaturalCoq.v` closes the loop concretely for
-  `clamp_nonneg` above: its real captured JSON output is reproduced
-  verbatim in a comment, hand-encoded as a `real_expr` term, proved to
-  match calling the real `clamp_nonneg` for all `a`/`b`, translated, and
-  run all the way through this project's existing `Translate.v`/
-  `Json.v`/`PyPrint.v` pipeline to real, executing Python.
+  Assumptions`). The recognized fragment now also covers lists (`RNil`/
+  `RCons`/`RListMatch`, into `ENil`/`ECons`/`EListMatch`) -- `list`'s own
+  constructor names (`Nil`/`Cons`) are stable across extraction the way
+  `Z.add` is not (constructors aren't subject to the same
+  dependency-order disambiguation named helper functions are), confirmed
+  directly against a real extracted list pattern match.
+  `examples/NaturalCoq.v` closes the loop concretely for two real,
+  captured examples -- `clamp_nonneg` (`Z`/`bool`/`if`) and
+  `head_or_zero` (a real list pattern match): each one's real captured
+  JSON output is reproduced verbatim in a comment, hand-encoded as a
+  `real_expr` term, proved to match the real definition for every input,
+  translated, and run all the way through this project's existing
+  `Translate.v`/`Json.v`/`PyPrint.v` pipeline to real, executing Python.
 
 What `RealIR.v` deliberately does *not* yet do, in roughly the order
 they'd be needed next:
@@ -92,8 +99,9 @@ they'd be needed next:
 - Recognize the `expr:lambda`/`argnames` function wrapper itself (so a
   whole `Definition`, not just its body, can be ingested) and real
   recursive `decl:fixgroup`s (`ERec`'s cousin on the *ingestion* side).
-- Broaden the recognized intrinsic set beyond `Z`/`bool` (lists, pairs,
-  the other operations this project's `expr` already has).
+- Broaden the recognized intrinsic set further (pairs, records, sums --
+  the other shapes this project's `expr` already has, beyond the `Z`/
+  `bool`/`list` now covered).
 - Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
   disambiguation above -- e.g. by controlling the extraction unit so
   only the intrinsics themselves are ever extracted (no competing
