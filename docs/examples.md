@@ -295,7 +295,43 @@ def euler_trajectory_3(x0, v0, a, dt):
 Run for real: `euler_trajectory_3(0, 0, 2, 1)` gives `(12, 6)`, matching
 the proof.
 
-## Example 6: a wave simulator, from Maxwell's equations to a running plot
+## Example 6: a precondition, proved and reflected in Python
+
+Time to stop, decelerating at rate `d` from speed `v`: `t = v / d`,
+meaningful only for `d <> 0`. `EDiv` is built the same way — `eval` gets
+*stuck* (not some default answer) on a zero divisor:
+
+```coq
+Definition time_to_stop_expr : expr := EDiv (EVar "v") (EVar "d").
+
+Example time_to_stop_concrete : eval [("v", VZ 20); ("d", VZ 4)] time_to_stop_expr = Some (VZ 5).
+Example time_to_stop_zero_deceleration : eval [("v", VZ 20); ("d", VZ 0)] time_to_stop_expr = None.
+```
+
+`eval_div_correct` (Lang.v) is the proof that, given the precondition
+`d <> 0`, this computes exactly `Z.div v d`. The generated Python needs
+no extra validation code for that precondition at all:
+
+```
+def time_to_stop(v, d):
+    return (v // d)
+```
+
+```
+>>> time_to_stop(20, 4)
+5
+>>> time_to_stop(20, 0)
+ZeroDivisionError: integer division or modulo by zero
+```
+
+Python's own `//` already raises on a zero divisor — the same
+undefined case `eval` already refuses to answer, enforced by the target
+language for free. (Compare Example 7's wave simulator: there, the CFL
+precondition *isn't* automatically enforced by anything, so
+`wave1d.py` has to check it explicitly — the two examples are opposite
+ends of the same idea.)
+
+## Example 7: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -436,5 +472,5 @@ something a proof catches for you)
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 6 wave simulator, plots it
+make wave_sim  # generates + runs the Example 7 wave simulator, plots it
 ```

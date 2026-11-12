@@ -40,7 +40,22 @@
     this cheaper than general recursion (see docs/roadmap.md): [eval]
     terminates on it by the same structural-recursion-on-[n] Coq already
     checks for free, no fuel parameter or well-founded-recursion argument
-    needed anywhere in this file or its proofs. *)
+    needed anywhere in this file or its proofs.
+
+    [EDiv]/[EMod] are integer floor-division/modulo, matching Python's
+    [//]/[%] exactly (including for negative operands -- Coq's [Z.div]/
+    [Z.modulo] already use the same floor convention Python does, unlike
+    OCaml's native [/]/[mod], which truncates toward zero; this is
+    exactly why [ExtrOcamlZInt] declines to give them a native-[int]
+    realizer, extracting their real recursive definition instead --
+    slower, but correct, the same accepted tradeoff as [Z] not being
+    arbitrary-precision). Division by zero is *undefined* here: [eval]
+    gets stuck ([None]) on a zero divisor rather than reaching for
+    [Z.div]'s own (silently total, defaults-to-0) convention, so that
+    [eval]'s domain matches Python's own -- [//]/[%] raise
+    [ZeroDivisionError] on a zero divisor too. See [eval_div_correct] for
+    the precondition this buys: given [b <> 0], [EDiv]/[EMod] compute
+    exactly [Z.div]/[Z.modulo], no more, no less. *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -82,7 +97,9 @@ Inductive expr : Type :=
   | EFEq (e1 e2 : expr)
   | EFLt (e1 e2 : expr)
   | EFLe (e1 e2 : expr)
-  | ERepeat (n : nat) (x : var) (body init : expr).
+  | ERepeat (n : nat) (x : var) (body init : expr)
+  | EDiv (e1 e2 : expr)
+  | EMod (e1 e2 : expr).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -230,7 +247,45 @@ Fixpoint eval (rho : env) (e : expr) : option value :=
       | Some v0 => iterate n (fun v => eval ((x, v) :: rho) body) v0
       | None => None
       end
+  | EDiv e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VZ a), Some (VZ b) => if Z.eqb b 0 then None else Some (VZ (Z.div a b))
+      | _, _ => None
+      end
+  | EMod e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VZ a), Some (VZ b) => if Z.eqb b 0 then None else Some (VZ (Z.modulo a b))
+      | _, _ => None
+      end
   end.
+
+(** The precondition, made explicit: whenever the divisor is known
+    non-zero, [EDiv]/[EMod] compute exactly [Z.div]/[Z.modulo] -- no
+    hidden rounding or truncation-vs-floor surprise, matching the
+    comment above. This is the Coq-side half of "extract an assumption
+    into a runtime check": the *assumption* ([b <> 0]) is what this
+    theorem needs to say anything at all; the *check* is [eval]'s own
+    [Z.eqb b 0] test above, and (separately, assumed not proved per
+    docs/duality.md) Python's own [ZeroDivisionError] on [//]/[%]. *)
+Lemma eval_div_correct :
+  forall rho e1 e2 a b,
+    eval rho e1 = Some (VZ a) -> eval rho e2 = Some (VZ b) -> b <> 0 ->
+    eval rho (EDiv e1 e2) = Some (VZ (Z.div a b)).
+Proof.
+  intros rho e1 e2 a b He1 He2 Hb.
+  simpl. rewrite He1, He2.
+  apply Z.eqb_neq in Hb. rewrite Hb. reflexivity.
+Qed.
+
+Lemma eval_mod_correct :
+  forall rho e1 e2 a b,
+    eval rho e1 = Some (VZ a) -> eval rho e2 = Some (VZ b) -> b <> 0 ->
+    eval rho (EMod e1 e2) = Some (VZ (Z.modulo a b)).
+Proof.
+  intros rho e1 e2 a b He1 He2 Hb.
+  simpl. rewrite He1, He2.
+  apply Z.eqb_neq in Hb. rewrite Hb. reflexivity.
+Qed.
 
 (** Identifier validity: the restricted grammar in Json.v only round-trips
     names made of ASCII letters/digits/underscore. This predicate marks
@@ -272,4 +327,6 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | ERepeat _ x body init =>
       andb (is_valid_ident x)
            (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident init))
+  | EDiv e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EMod e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   end.

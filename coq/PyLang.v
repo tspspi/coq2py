@@ -59,7 +59,9 @@ Inductive pyexpr : Type :=
   | PFEq (e1 e2 : pyexpr)
   | PFLt (e1 e2 : pyexpr)
   | PFLe (e1 e2 : pyexpr)
-  | PRepeat (n : nat) (x : var) (body init : pyexpr).
+  | PRepeat (n : nat) (x : var) (body init : pyexpr)
+  | PDiv (e1 e2 : pyexpr)
+  | PMod (e1 e2 : pyexpr).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -197,5 +199,15 @@ Fixpoint peval (rho : pyenv) (e : pyexpr) : option pyvalue :=
       match peval rho init with
       | Some v0 => piterate n (fun v => peval ((x, v) :: rho) body) v0
       | None => None
+      end
+  | PDiv e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVZ a), Some (PVZ b) => if Z.eqb b 0 then None else Some (PVZ (Z.div a b))
+      | _, _ => None
+      end
+  | PMod e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVZ a), Some (PVZ b) => if Z.eqb b 0 then None else Some (PVZ (Z.modulo a b))
+      | _, _ => None
       end
   end.

@@ -41,7 +41,20 @@
     binding and returning [init], matching [piterate 0 f v = Some v]. No
     Python [for]/[while] statement is used -- [pyexpr] still has no
     statement forms -- so this stays a single expression like everything
-    else in this file. *)
+    else in this file.
+
+    [PDiv]/[PMod] render as Python's [//]/[%] directly -- correct, not
+    just structure-preserving, for every operand (including negative
+    ones): Python's [//]/[%] are floor division/modulo, the exact same
+    convention Coq's [Z.div]/[Z.modulo] use (confirmed empirically: e.g.
+    both give [(-7) `div` 2 = -4, -7 `mod` 2 = 1]), unlike OCaml's native
+    [/]/[mod], which truncate toward zero instead -- precisely why
+    [ExtrOcamlZInt] (Extract.v) declines to give [Z.div]/[Z.modulo] a
+    native-[int] realizer. Zero divisors need no special-casing in the
+    printer either: [Lang.v]'s [eval] already gets stuck on a zero
+    divisor (see its comment), and Python's [//]/[%] *already* raise
+    [ZeroDivisionError] for one -- the two "undefined" cases line up on
+    their own. *)
 
 From Coq Require Import String List ZArith.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
@@ -106,6 +119,8 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PRepeat n x body init =>
       "((" ++ x ++ " := " ++ py_expr init ++ ")"
         ++ py_repeat_steps n x (py_expr body) ++ ", " ++ x ++ ")[-1]"
+  | PDiv e1 e2 => "(" ++ py_expr e1 ++ " // " ++ py_expr e2 ++ ")"
+  | PMod e1 e2 => "(" ++ py_expr e1 ++ " % " ++ py_expr e2 ++ ")"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

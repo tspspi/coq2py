@@ -11,11 +11,14 @@
     booleans: "has the projectile reached or passed ground level while
     still moving downward?" -- two more, [euler_step_float_expr] and
     [landed_float_expr], the same integration step and landing check
-    again but over real [PrimFloat.float] state instead of [Z] -- and a
+    again but over real [PrimFloat.float] state instead of [Z] -- a
     fifth, [euler_multi_step_expr], chaining [n] Euler steps into a
-    whole trajectory via bounded iteration ([ERepeat]).
+    whole trajectory via bounded iteration ([ERepeat]) -- and a sixth,
+    [time_to_stop_expr], a simple division with a precondition ([d <>
+    0]) proved to matter and shown to need no separate runtime check:
+    Python's own [//] already enforces it.
 
-    All five are expressed as terms of our supported [expr] subset
+    All six are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -278,3 +281,47 @@ Proof. intros n rho. apply translate_preserves_semantics. Qed.
     compile-time-known count. *)
 Compute py_function "euler_trajectory_3" ["x0"; "v0"; "a"; "dt"]
   (translate (euler_multi_step_expr 3)).
+
+(* ----------------------------------------------------------------- *)
+(** * Example 6: a precondition, proved and reflected in Python *)
+
+(** Time for a decelerating object (deceleration magnitude [d], moving
+    at speed [v]) to stop: [t = v / d]. This is only *meaningful* for
+    [d <> 0] -- a deceleration of zero never stops anything -- and
+    [EDiv] only *produces an answer* for [d <> 0] too ([eval] gets
+    stuck on a zero divisor; see Lang.v's comment). [eval_div_correct]
+    is the proof that, given that precondition, this computes exactly
+    [Z.div v d], nothing more. *)
+Definition time_to_stop_expr : expr := EDiv (EVar "v") (EVar "d").
+
+Theorem time_to_stop_idents_valid :
+  expr_idents_valid is_valid_ident time_to_stop_expr = true.
+Proof. reflexivity. Qed.
+
+(** At 20 (distance units)/(time unit), decelerating by 4 per step,
+    it takes 5 steps to stop. *)
+Example time_to_stop_concrete : eval [("v", VZ 20); ("d", VZ 4)] time_to_stop_expr = Some (VZ 5).
+Proof. reflexivity. Qed.
+
+(** And the precondition's failure case: zero deceleration means
+    [eval] is honestly undefined here, not "0" or some other
+    plausible-looking placeholder. *)
+Example time_to_stop_zero_deceleration : eval [("v", VZ 20); ("d", VZ 0)] time_to_stop_expr = None.
+Proof. reflexivity. Qed.
+
+Compute py_function "time_to_stop" ["v"; "d"] (translate time_to_stop_expr).
+
+(** No validation code needed in the generated function at all: Python's
+    own [//] already raises [ZeroDivisionError] on a zero divisor,
+    exactly matching [eval]'s own notion of "undefined here" -- the
+    precondition [eval_div_correct] needs is enforced by the target
+    language for free, not by anything this project had to add. Run for
+    real:
+
+    [[
+    >>> time_to_stop(20, 4)
+    5
+    >>> time_to_stop(20, 0)
+    ZeroDivisionError: integer division or modulo by zero
+    ]]
+*)

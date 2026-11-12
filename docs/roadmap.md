@@ -39,20 +39,24 @@ right kind of bug to be able to have at this layer.
 ## Narrow source and target subsets
 
 `expr`/`pyexpr` currently cover: integer, boolean, and float constants,
-variables, integer and float `+`/`-`/`*` (plus float `/`), general
-comparisons (`=`/`<`/`<=`, over both integers and floats, via
-`EEq`/`ELt`/`ELe` and `EFEq`/`EFLt`/`EFLe` respectively) and boolean
-connectives (`and`/`or`/`not`), a general `if` (on a genuine boolean
-condition, not the earlier "equals zero" hack), pairs/tuples
-(construction and projection), a single non-recursive `let`, and bounded
-iteration (`ERepeat n x body init`, `n` a literal, compile-time `nat` —
-see `examples/Kinematics.v`'s `euler_multi_step_expr` for a worked
-instance chaining a whole trajectory this way, no external loop needed).
-Values are now a real four-way sum (`VZ`/`VBool`/`VPair`/`VFloat`), not
-bare integers — operations applied to a value of the wrong shape get
-stuck (`None`), the same way an unbound variable already did; there is
-no separate static type system layered on top. Not yet covered, in
-roughly the order they'd likely be needed:
+variables, integer and float `+`/`-`/`*` (plus float `/`, and integer
+floor-`/`/`%` via `EDiv`/`EMod` — undefined, not merely assumed, on a
+zero divisor; see `examples/Kinematics.v`'s `time_to_stop_expr`, where
+that precondition turns out to need no separate runtime check at all,
+since Python's own `//`/`%` already raise on one), general comparisons
+(`=`/`<`/`<=`, over both integers and floats, via `EEq`/`ELt`/`ELe` and
+`EFEq`/`EFLt`/`EFLe` respectively) and boolean connectives
+(`and`/`or`/`not`), a general `if` (on a genuine boolean condition, not
+the earlier "equals zero" hack), pairs/tuples (construction and
+projection), a single non-recursive `let`, and bounded iteration
+(`ERepeat n x body init`, `n` a literal, compile-time `nat` — see
+`euler_multi_step_expr` for a worked instance chaining a whole
+trajectory this way, no external loop needed). Values are now a real
+four-way sum (`VZ`/`VBool`/`VPair`/`VFloat`), not bare integers —
+operations applied to a value of the wrong shape get stuck (`None`), the
+same way an unbound variable already did; there is no separate static
+type system layered on top. Not yet covered, in roughly the order
+they'd likely be needed:
 
 - Mutual and recursive `let`/`fix` (general structural recursion, where
   the number of steps depends on runtime data rather than being fixed
