@@ -58,6 +58,24 @@
     partiality already works throughout this project:
     [real_to_expr] returns [None] rather than guessing. *)
 
+(** [RPair]/[RProj1]/[RProj2] cover both tuples *and* 2-field
+    [Record]s, confirmed directly: a real two-field [Record point :=
+    mkpoint { px : Z; py : Z }.] extracts its constructor exactly like
+    [pair] (an [expr:constructor] with 2 args -- [RPair] already
+    recognizes any 2-arg constructor, whatever it's named), but field
+    *access* ([py p]) does not extract as a named function call the
+    way [fst]/[snd] do -- it extracts as a 1-case [expr:case] match on
+    that same constructor, binding one field to a real name and the
+    other to ["_"], returning the named one bare. Since a Coq [Record]
+    is genuinely just sugar for a single-constructor inductive --
+    isomorphic to a plain product at the value level, with the field
+    *names* living only in the generated projection functions, not in
+    the runtime representation -- [RProj1]/[RProj2] model exactly that
+    1-case match shape and translate into the same [EFst]/[ESnd]
+    tuples already use, rather than inventing a separate representation
+    keyed by field name for what is, underneath, the same value shape
+    [RPair] already covers. *)
+
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
 Require Import Lang.
@@ -74,7 +92,9 @@ Inductive real_expr : Type :=
   | RNil
   | RCons (hd tl : real_expr)
   | RListMatch (scrutinee nilcase : real_expr) (hd tl : var) (conscase : real_expr)
-  | RPair (e1 e2 : real_expr).
+  | RPair (e1 e2 : real_expr)
+  | RProj1 (scrutinee : real_expr)
+  | RProj2 (scrutinee : real_expr).
 
 (** The reference semantics: not a reimplementation of [Z.add]/
     [Z.ltb]/etc, but a direct call to Coq's own, so this file's trust
@@ -135,6 +155,16 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some v1, Some v2 => Some (VPair v1 v2)
       | _, _ => None
       end
+  | RProj1 scrutinee =>
+      match real_eval rho scrutinee with
+      | Some (VPair v1 _) => Some v1
+      | _ => None
+      end
+  | RProj2 scrutinee =>
+      match real_eval rho scrutinee with
+      | Some (VPair _ v2) => Some v2
+      | _ => None
+      end
   end.
 
 (** The translator: recognize each intrinsic by the exact unqualified
@@ -189,6 +219,16 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | Some e1', Some e2' => Some (EPair e1' e2')
       | _, _ => None
       end
+  | RProj1 scrutinee =>
+      match real_to_expr scrutinee with
+      | Some e => Some (EFst e)
+      | None => None
+      end
+  | RProj2 scrutinee =>
+      match real_to_expr scrutinee with
+      | Some e => Some (ESnd e)
+      | None => None
+      end
   end.
 
 (** [real_expr] has no closures/recursion at all (that is exactly what
@@ -208,6 +248,8 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RListMatch scrutinee nilcase _ _ conscase =>
       S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth nilcase) (real_expr_depth conscase)))
   | RPair e1 e2 => S (Nat.max (real_expr_depth e1) (real_expr_depth e2))
+  | RProj1 scrutinee => S (real_expr_depth scrutinee)
+  | RProj2 scrutinee => S (real_expr_depth scrutinee)
   end.
 
 Theorem real_to_expr_preserves_semantics :
@@ -349,4 +391,20 @@ Proof.
     simpl.
     rewrite (IHre1 e1 eq_refl fuel' rho Hd1'), (IHre2 e2 eq_refl fuel' rho Hd2').
     destruct (real_eval rho re1); destruct (real_eval rho re2); reflexivity.
+  - (* RProj1 *)
+    destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
+    simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; reflexivity.
+  - (* RProj2 *)
+    destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl in Hfuel.
+    assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
+    simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv]|]; reflexivity.
 Qed.

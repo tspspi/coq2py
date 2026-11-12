@@ -5,10 +5,11 @@
     *Certified Programming with Dependent Types* writes without a
     second thought -- carried all the way through to real, running
     Python, via [RealIR.v]'s [real_to_expr] and then this project's
-    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Three
+    already-proven [Translate.v]/[Json.v]/[PyPrint.v] pipeline. Four
     examples: [clamp_nonneg] (Z/bool arithmetic and [if]),
-    [head_or_zero] (a real list pattern match), and [swap_pair] (real
-    pair construction/projection).
+    [head_or_zero] (a real list pattern match), [swap_pair] (real pair
+    construction/projection), and [flip_point] (a real two-field
+    [Record], recognized as a plain pair).
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -326,6 +327,108 @@ Compute py_function "swap_pair" ["p"] (translate swap_pair_expr).
 
     [[
     >>> swap_pair((3, 7))
+    (7, 3)
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * A fourth example: a real two-field Record *)
+
+(** A fourth genuine, human-written Coq definition, also run through
+    [coqc]/[Extraction Language JSON] during this session: *)
+Record point := mkpoint { px : Z; py : Z }.
+
+Definition flip_point (p : point) : point := mkpoint (py p) (px p).
+
+(** What Coq's real extraction emitted for it, captured verbatim
+    (abbreviated -- [point]'s own [decl:ind] declares [Mkpoint] with 2
+    [z] fields, unremarkable and omitted here):
+
+    [[
+    {
+      "what": "decl:term", "name": "flip_point",
+      "type": { ... point -> point ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["p"],
+        "body": {
+          "what": "expr:constructor", "name": "Mkpoint",
+          "args": [
+            { "what": "expr:case",
+              "expr": {"what":"expr:rel","name":"p"},
+              "cases": [
+                { "pat": {"name":"Mkpoint","argnames":["_","py"]},
+                  "body": {"what":"expr:rel","name":"py"} }
+              ] },
+            { "what": "expr:case",
+              "expr": {"what":"expr:rel","name":"p"},
+              "cases": [
+                { "pat": {"name":"Mkpoint","argnames":["px","_"]},
+                  "body": {"what":"expr:rel","name":"px"} }
+              ] }
+          ]
+        }
+      }
+    }
+    ]]
+
+    -- a [Record]'s own constructor ([Mkpoint]) builds exactly like
+    [pair] (a 2-arg [expr:constructor], [RPair]'s existing shape,
+    regardless of the constructor's name), while each field *access*
+    ([py p]/[px p]) is a 1-case [expr:case] on that same constructor
+    binding one field to a real name and the other to ["_"] -- exactly
+    [RProj2]/[RProj1]'s shape (see [RealIR.v]'s header for why a
+    [Record] is treated as a plain product here, not given its own
+    keyed representation). *)
+Definition flip_point_ir : real_expr :=
+  RPair (RProj2 (RRel "p")) (RProj1 (RRel "p")).
+
+Example flip_point_ir_matches_real_definition :
+  forall a b : Z,
+    real_eval [("p", VPair (VZ a) (VZ b))] flip_point_ir = Some (VPair (VZ b) (VZ a)).
+Proof. reflexivity. Qed.
+
+Definition flip_point_expr : expr :=
+  match real_to_expr flip_point_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: flip_point_ir is in the recognized fragment *)
+  end.
+
+Example flip_point_ir_translates :
+  real_to_expr flip_point_ir = Some flip_point_expr.
+Proof. reflexivity. Qed.
+
+Example flip_point_expr_matches_real_definition :
+  forall a b : Z,
+    eval 10 [("p", VPair (VZ a) (VZ b))] flip_point_expr = Some (VPair (VZ b) (VZ a)).
+Proof.
+  intros a b.
+  rewrite (real_to_expr_preserves_semantics flip_point_ir flip_point_expr
+             flip_point_ir_translates 10 [("p", VPair (VZ a) (VZ b))] ltac:(simpl; lia)).
+  apply flip_point_ir_matches_real_definition.
+Qed.
+
+Theorem flip_point_idents_valid :
+  expr_idents_valid is_valid_ident flip_point_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr flip_point_expr.
+
+Corollary flip_point_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate flip_point_expr)
+      = option_map value_to_pyvalue (eval fuel rho flip_point_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** Coq's [Record] becomes a plain Python tuple on the generated side,
+    the same as a tuple [point] would have -- the field *names* were
+    only ever a source-level convenience, not part of the runtime
+    value, on either side of this pipeline. *)
+Compute py_function "flip_point" ["p"] (translate flip_point_expr).
+
+(** Run for real:
+
+    [[
+    >>> flip_point((3, 7))
     (7, 3)
     ]]
 *)

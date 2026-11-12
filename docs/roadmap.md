@@ -77,10 +77,26 @@ an open guess.
   `expr:constructor "Pair"` with 2 args (`RPair`'s own shape exactly),
   and `fst`/`snd` are plain unary calls, the same shape `negb` already
   had, so no new `real_expr` constructor was needed for them.
-  `examples/NaturalCoq.v` closes the loop concretely for three real,
+  2-field `Record`s are in too (`RProj1`/`RProj2`, into `EFst`/`ESnd`) --
+  confirmed directly against a real extracted `Record point := mkpoint {
+  px : Z; py : Z }.`: construction extracts identically to `pair`
+  (another 2-arg `expr:constructor`, whatever it's named -- `RPair`
+  already covers it unchanged), but field *access* (`py p`) does *not*
+  extract as a named call the way `fst`/`snd` do; it is a 1-case
+  `expr:case` match on that same constructor, binding one field to a
+  real name and the other to `"_"`. Since a Coq `Record` really is just
+  sugar for a single-constructor inductive -- isomorphic to a plain
+  product at the value level, with field *names* living only in the
+  generated projection functions, never in the runtime representation
+  -- `RProj1`/`RProj2` model that 1-case match shape directly and
+  translate into the same `EFst`/`ESnd` tuples already use, rather than
+  inventing a second, keyed representation for what is, underneath, the
+  value shape `RPair` already covers.
+  `examples/NaturalCoq.v` closes the loop concretely for four real,
   captured examples -- `clamp_nonneg` (`Z`/`bool`/`if`), `head_or_zero`
-  (a real list pattern match), and `swap_pair` (real pair construction/
-  projection): each one's real captured JSON output is reproduced
+  (a real list pattern match), `swap_pair` (real pair construction/
+  projection), and `flip_point` (a real two-field `Record`, recognized
+  as a plain pair): each one's real captured JSON output is reproduced
   verbatim in a comment, hand-encoded as a `real_expr` term, proved to
   match the real definition for every input, translated, and run all
   the way through this project's existing `Translate.v`/`Json.v`/
@@ -106,9 +122,9 @@ they'd be needed next:
 - Recognize the `expr:lambda`/`argnames` function wrapper itself (so a
   whole `Definition`, not just its body, can be ingested) and real
   recursive `decl:fixgroup`s (`ERec`'s cousin on the *ingestion* side).
-- Broaden the recognized intrinsic set further (records, sums -- the
-  other shapes this project's `expr` already has, beyond the `Z`/
-  `bool`/`list`/pair now covered).
+- Broaden the recognized intrinsic set further (sums, and general
+  N-field `Record`s/mutual recursion once the ingestion side's own
+  arity caps are lifted -- see below).
 - Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
   disambiguation above -- e.g. by controlling the extraction unit so
   only the intrinsics themselves are ever extracted (no competing
