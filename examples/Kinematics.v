@@ -13,18 +13,27 @@
     [landed_float_expr], the same integration step and landing check
     again but over real [PrimFloat.float] state instead of [Z] -- a
     fifth, [euler_multi_step_expr], chaining [n] Euler steps into a
-    whole trajectory via bounded iteration ([ERepeat]) -- and a sixth,
+    whole trajectory via bounded iteration ([ERepeat]) -- a sixth,
     [time_to_stop_expr], a simple division with a precondition ([d <>
     0]) proved to matter and shown to need no separate runtime check:
-    Python's own [//] already enforces it.
+    Python's own [//] already enforces it -- and a seventh,
+    [fall_until_landed_expr], the data-dependent cousin of Example 5:
+    run the same step function (via genuine recursion, [ERec], not
+    [ERepeat]) until [landed_expr] actually holds, however many steps
+    that takes -- not knowable at "compile time" the way Example 5's
+    fixed [n] was.
 
-    All six are expressed as terms of our supported [expr] subset
+    All seven are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
     (PyPrint.v). Everything marked [Compute] below is meant to be
     evaluated with [coqc]/[coqtop] and its real output captured into
     docs/examples.md -- nothing in that doc is hand-written/fabricated.
+    [eval]/[peval] (and so [translate_preserves_semantics]) now take an
+    explicit fuel argument (see Lang.v's header for why [EApp] forces
+    this) -- every [eval _ rho e] call below just picks a fuel generous
+    enough that none of these small, terminating terms ever run out.
 
     This is also the first concrete instance of the project's stated goal
     (GOAL.md): "express physics in Coq, extract a Python simulator proven
@@ -35,8 +44,10 @@
     3 and 4 close that gap for a single step (real float arithmetic and
     comparisons, proven the same way); Example 5 closes it for a whole
     multi-step trajectory, computed *inside* the proven subset (no
-    external loop) -- see docs/roadmap.md for what's still missing before
-    a genuine numpy-shaped simulator (arrays). *)
+    external loop); Example 7 closes it again for a trajectory whose
+    length genuinely depends on the data, not on anything fixed in
+    advance -- see docs/roadmap.md for what's still missing before a
+    genuine numpy-shaped simulator (arrays). *)
 
 From Coq Require Import ZArith String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -87,9 +98,11 @@ Theorem euler_step_idents_valid :
 Proof. reflexivity. Qed.
 
 (** A concrete run: starting at rest (x=0, v=0) with acceleration a=2 for
-    one step of dt=1, the new state is (x'=2, v'=2). *)
+    one step of dt=1, the new state is (x'=2, v'=2). Fuel [10] is already
+    far more than this tiny, non-recursive term could ever need -- there
+    is no meaningful "right" fuel bound here, just "enough". *)
 Example euler_step_concrete :
-  eval [("x", VZ 0); ("v", VZ 0); ("a", VZ 2); ("dt", VZ 1)] euler_step_expr
+  eval 10 [("x", VZ 0); ("v", VZ 0); ("a", VZ 2); ("dt", VZ 1)] euler_step_expr
     = Some (VPair (VZ 2) (VZ 2)).
 Proof. reflexivity. Qed.
 
@@ -110,10 +123,10 @@ Proof. json_roundtrip_corollary euler_step_expr euler_step_idents_valid. Qed.
     value<->pyvalue correspondence) -- an instance of
     [translate_preserves_semantics], not a new proof. *)
 Corollary euler_step_translation_correct :
-  forall rho,
-    peval (env_to_pyenv rho) (translate euler_step_expr)
-      = option_map value_to_pyvalue (eval rho euler_step_expr).
-Proof. intro rho. apply translate_preserves_semantics. Qed.
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate euler_step_expr)
+      = option_map value_to_pyvalue (eval fuel rho euler_step_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
 
 (** The actual generated Python source. *)
 Compute py_function "euler_step" ["x"; "v"; "a"; "dt"] (translate euler_step_expr).
@@ -133,15 +146,15 @@ Theorem landed_idents_valid :
 Proof. reflexivity. Qed.
 
 Example landed_concrete_true :
-  eval [("x", VZ (-1)); ("v", VZ (-3))] landed_expr = Some (VBool true).
+  eval 10 [("x", VZ (-1)); ("v", VZ (-3))] landed_expr = Some (VBool true).
 Proof. reflexivity. Qed.
 
 Example landed_concrete_false_still_above_ground :
-  eval [("x", VZ 5); ("v", VZ (-3))] landed_expr = Some (VBool false).
+  eval 10 [("x", VZ 5); ("v", VZ (-3))] landed_expr = Some (VBool false).
 Proof. reflexivity. Qed.
 
 Example landed_concrete_false_rising :
-  eval [("x", VZ (-1)); ("v", VZ 3)] landed_expr = Some (VBool false).
+  eval 10 [("x", VZ (-1)); ("v", VZ 3)] landed_expr = Some (VBool false).
 Proof. reflexivity. Qed.
 
 Compute print_expr landed_expr.
@@ -152,10 +165,10 @@ Corollary landed_json_roundtrip :
 Proof. json_roundtrip_corollary landed_expr landed_idents_valid. Qed.
 
 Corollary landed_translation_correct :
-  forall rho,
-    peval (env_to_pyenv rho) (translate landed_expr)
-      = option_map value_to_pyvalue (eval rho landed_expr).
-Proof. intro rho. apply translate_preserves_semantics. Qed.
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate landed_expr)
+      = option_map value_to_pyvalue (eval fuel rho landed_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
 
 Compute py_function "landed" ["x"; "v"] (translate landed_expr).
 
@@ -180,7 +193,7 @@ Proof. reflexivity. Qed.
     [euler_step_concrete] above, now computed in real [float]
     arithmetic rather than standing in via [Z]. *)
 Example euler_step_float_concrete :
-  eval [("x", VFloat 0.0%float); ("v", VFloat 0.0%float);
+  eval 10 [("x", VFloat 0.0%float); ("v", VFloat 0.0%float);
         ("a", VFloat 2.0%float); ("dt", VFloat 1.0%float)]
     euler_step_float_expr
     = Some (VPair (VFloat 2.0%float) (VFloat 2.0%float)).
@@ -194,10 +207,10 @@ Corollary euler_step_float_json_roundtrip :
 Proof. json_roundtrip_corollary euler_step_float_expr euler_step_float_idents_valid. Qed.
 
 Corollary euler_step_float_translation_correct :
-  forall rho,
-    peval (env_to_pyenv rho) (translate euler_step_float_expr)
-      = option_map value_to_pyvalue (eval rho euler_step_float_expr).
-Proof. intro rho. apply translate_preserves_semantics. Qed.
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate euler_step_float_expr)
+      = option_map value_to_pyvalue (eval fuel rho euler_step_float_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
 
 (** The generated Python: exact, via the [mantissa * (2.0 ** exponent)]
     encoding described in PyPrint.v -- not the shortest decimal a human
@@ -218,12 +231,12 @@ Theorem landed_float_idents_valid :
 Proof. reflexivity. Qed.
 
 Example landed_float_concrete_true :
-  eval [("x", VFloat (-1)%float); ("v", VFloat (-3)%float)] landed_float_expr
+  eval 10 [("x", VFloat (-1)%float); ("v", VFloat (-3)%float)] landed_float_expr
     = Some (VBool true).
 Proof. reflexivity. Qed.
 
 Example landed_float_concrete_false_still_above_ground :
-  eval [("x", VFloat 5%float); ("v", VFloat (-3)%float)] landed_float_expr
+  eval 10 [("x", VFloat 5%float); ("v", VFloat (-3)%float)] landed_float_expr
     = Some (VBool false).
 Proof. reflexivity. Qed.
 
@@ -258,7 +271,7 @@ Proof. intro n. reflexivity. Qed.
 (** Three steps of the same constant-acceleration motion as Example 1,
     starting at rest: (x,v) = (0,0) -> (2,2) -> (6,4) -> (12,6). *)
 Example euler_multi_step_concrete :
-  eval [("x0", VZ 0); ("v0", VZ 0); ("a", VZ 2); ("dt", VZ 1)]
+  eval 10 [("x0", VZ 0); ("v0", VZ 0); ("a", VZ 2); ("dt", VZ 1)]
     (euler_multi_step_expr 3)
     = Some (VPair (VZ 12) (VZ 6)).
 Proof. reflexivity. Qed.
@@ -271,10 +284,10 @@ Proof.
 Qed.
 
 Corollary euler_multi_step_translation_correct :
-  forall n rho,
-    peval (env_to_pyenv rho) (translate (euler_multi_step_expr n))
-      = option_map value_to_pyvalue (eval rho (euler_multi_step_expr n)).
-Proof. intros n rho. apply translate_preserves_semantics. Qed.
+  forall fuel n rho,
+    peval fuel (env_to_pyenv rho) (translate (euler_multi_step_expr n))
+      = option_map value_to_pyvalue (eval fuel rho (euler_multi_step_expr n)).
+Proof. intros fuel n rho. apply translate_preserves_semantics. Qed.
 
 (** The generated Python literally unrolls the 3 steps -- see PyPrint.v's
     comment on [PRepeat] for why that's the right call for a bounded,
@@ -300,13 +313,13 @@ Proof. reflexivity. Qed.
 
 (** At 20 (distance units)/(time unit), decelerating by 4 per step,
     it takes 5 steps to stop. *)
-Example time_to_stop_concrete : eval [("v", VZ 20); ("d", VZ 4)] time_to_stop_expr = Some (VZ 5).
+Example time_to_stop_concrete : eval 10 [("v", VZ 20); ("d", VZ 4)] time_to_stop_expr = Some (VZ 5).
 Proof. reflexivity. Qed.
 
 (** And the precondition's failure case: zero deceleration means
     [eval] is honestly undefined here, not "0" or some other
     plausible-looking placeholder. *)
-Example time_to_stop_zero_deceleration : eval [("v", VZ 20); ("d", VZ 0)] time_to_stop_expr = None.
+Example time_to_stop_zero_deceleration : eval 10 [("v", VZ 20); ("d", VZ 0)] time_to_stop_expr = None.
 Proof. reflexivity. Qed.
 
 Compute py_function "time_to_stop" ["v"; "d"] (translate time_to_stop_expr).
@@ -323,5 +336,81 @@ Compute py_function "time_to_stop" ["v"; "d"] (translate time_to_stop_expr).
     5
     >>> time_to_stop(20, 0)
     ZeroDivisionError: integer division or modulo by zero
+    ]]
+*)
+
+(* ----------------------------------------------------------------- *)
+(** * Example 7: run until it actually lands, via real recursion *)
+
+(** Example 5 chained a *fixed* number of Euler steps. Here, the number
+    of steps genuinely depends on the data (when does [landed_expr]
+    first become true?), which [ERepeat] -- a compile-time-known count
+    -- cannot express at all. [ERec] can: [fall_until_landed_expr] is a
+    self-referential function, ["simulate"], that checks the landing
+    condition and either returns the current state or calls itself again
+    on one more Euler step -- reusing both [euler_multi_step_body]
+    (Example 5's step function) and [landed_expr]'s condition shape
+    (Example 2) unchanged. *)
+Definition fall_until_landed_expr : expr :=
+  ERec "simulate" "state"
+    (EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+         (EVar "state")
+         (EApp (EVar "simulate") euler_multi_step_body)).
+
+Theorem fall_until_landed_idents_valid :
+  expr_idents_valid is_valid_ident fall_until_landed_expr = true.
+Proof. reflexivity. Qed.
+
+(** Dropped from height 45 with "gravity" [a = -10] and [dt = 1]:
+    (45,0) -> (35,-10) -> (15,-20) -> (-15,-30), landing on the third
+    step (x <= 0 and still moving down). Fuel [100] is nowhere near
+    tight -- there is no proof obligation to pick a *minimal* fuel, only
+    "enough for this particular run to actually finish". *)
+Example fall_until_landed_concrete :
+  eval 100 [("a", VZ (-10)); ("dt", VZ 1)]
+    (EApp fall_until_landed_expr (EPair (EConst 45) (EConst 0)))
+    = Some (VPair (VZ (-15)) (VZ (-30))).
+Proof. reflexivity. Qed.
+
+(** Too little fuel and this honestly-recursive term simply doesn't
+    finish in the fuel given -- [eval] is stuck the same way it would be
+    on an unbound variable, not wrong. *)
+Example fall_until_landed_out_of_fuel :
+  eval 3 [("a", VZ (-10)); ("dt", VZ 1)]
+    (EApp fall_until_landed_expr (EPair (EConst 45) (EConst 0)))
+    = None.
+Proof. reflexivity. Qed.
+
+Compute print_expr (EApp fall_until_landed_expr (EPair (EConst 45) (EConst 0))).
+
+Corollary fall_until_landed_json_roundtrip :
+  parse_expr_top (print_expr (EApp fall_until_landed_expr (EPair (EConst 45) (EConst 0))))
+    = Some (EApp fall_until_landed_expr (EPair (EConst 45) (EConst 0)), "").
+Proof.
+  json_roundtrip_corollary
+    (EApp fall_until_landed_expr (EPair (EConst 45) (EConst 0)))
+    fall_until_landed_idents_valid.
+Qed.
+
+Corollary fall_until_landed_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate fall_until_landed_expr)
+      = option_map value_to_pyvalue (eval fuel rho fall_until_landed_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: a genuinely recursive closure, via the
+    walrus-self-reference trick described in PyPrint.v's comment on
+    [PRec] -- not unrolled, since (unlike Example 5's [ERepeat]) there
+    is no fixed count to unroll by. *)
+Compute py_function "fall_until_landed" ["a"; "dt"] (translate fall_until_landed_expr).
+
+(** Run for real -- [fall_until_landed(-10, 1)] builds the recursive
+    closure once; calling it on the initial state runs exactly as many
+    steps as it takes to land, matching the proof above exactly:
+
+    [[
+    >>> f = fall_until_landed(-10, 1)
+    >>> f((45, 0))
+    (-15, -30)
     ]]
 *)

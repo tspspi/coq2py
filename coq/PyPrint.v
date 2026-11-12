@@ -54,7 +54,22 @@
     printer either: [Lang.v]'s [eval] already gets stuck on a zero
     divisor (see its comment), and Python's [//]/[%] *already* raise
     [ZeroDivisionError] for one -- the two "undefined" cases line up on
-    their own. *)
+    their own.
+
+    [PLam]/[PApp] render as an ordinary Python [lambda]/call -- real
+    first-class functions on the Python side too, no encoding needed.
+    [PRec] (a named recursive function) is the one case needing a trick,
+    since Python's [lambda] has no way to refer to itself by name: it
+    reuses the exact same walrus assignment [PLet] already does,
+    [(f := (lambda param: BODY)), f)[1]], which works for recursion
+    specifically *because* Python resolves a free variable inside a
+    [lambda]'s body against its enclosing scope at *call* time, not at
+    the [lambda]'s creation time -- so by the time [f] is actually
+    invoked (always after the assignment that created it has run), [f]
+    inside [BODY] already refers to the very closure being called. No
+    textual substitution of [f] for anything else is needed anywhere in
+    [BODY] (confirmed by actually running a generated recursive
+    [factorial] this way, not just reasoned about). *)
 
 From Coq Require Import String List ZArith.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
@@ -121,6 +136,10 @@ Fixpoint py_expr (e : pyexpr) : string :=
         ++ py_repeat_steps n x (py_expr body) ++ ", " ++ x ++ ")[-1]"
   | PDiv e1 e2 => "(" ++ py_expr e1 ++ " // " ++ py_expr e2 ++ ")"
   | PMod e1 e2 => "(" ++ py_expr e1 ++ " % " ++ py_expr e2 ++ ")"
+  | PLam param body => "(lambda " ++ param ++ ": " ++ py_expr body ++ ")"
+  | PRec f param body =>
+      "((" ++ f ++ " := (lambda " ++ param ++ ": " ++ py_expr body ++ ")), " ++ f ++ ")[-1]"
+  | PApp func arg => "(" ++ py_expr func ++ "(" ++ py_expr arg ++ "))"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

@@ -326,12 +326,46 @@ ZeroDivisionError: integer division or modulo by zero
 
 Python's own `//` already raises on a zero divisor — the same
 undefined case `eval` already refuses to answer, enforced by the target
-language for free. (Compare Example 7's wave simulator: there, the CFL
+language for free. (Compare Example 8's wave simulator: there, the CFL
 precondition *isn't* automatically enforced by anything, so
 `wave1d.py` has to check it explicitly — the two examples are opposite
 ends of the same idea.)
 
-## Example 7: a wave simulator, from Maxwell's equations to a running plot
+## Example 7: run until it actually lands, via real recursion
+
+Example 5 chained a *fixed* number of Euler steps (`ERepeat`). Here, the
+step count depends on the data — when does the object actually land? —
+which needs real recursion, `ERec`, reusing the step function and
+landing condition from Examples 5 and 2 unchanged:
+
+```coq
+Definition fall_until_landed_expr : expr :=
+  ERec "simulate" "state"
+    (EIf (EAnd (ELe (EFst (EVar "state")) (EConst 0)) (ELt (ESnd (EVar "state")) (EConst 0)))
+         (EVar "state")
+         (EApp (EVar "simulate") euler_multi_step_body)).
+```
+
+Dropped from height 45 under `a = -10`, `dt = 1`: `(45,0) -> (35,-10) ->
+(15,-20) -> (-15,-30)`, landing on step 3 — checked with generous fuel
+(`eval 100 ...`), and shown to genuinely need *some* fuel (`eval 3 ...`
+runs out and gets stuck, same as an unbound variable would). The
+generated Python is a real recursive closure (see `PyPrint.v`'s `PRec`
+comment for the walrus-self-reference trick that makes this work with
+no textual substitution):
+
+```
+def fall_until_landed(a, dt):
+    return ((simulate := (lambda state: (state if (((state)[0] <= 0) and ((state)[1] < 0)) else (simulate(((x := (state)[0]), ((v := (state)[1]), ((v2 := (v + (a * dt))), ((x + (v2 * dt)), v2))[1])[1])[1]))))), simulate)[-1]
+```
+
+```
+>>> f = fall_until_landed(-10, 1)
+>>> f((45, 0))
+(-15, -30)
+```
+
+## Example 8: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -472,5 +506,5 @@ something a proof catches for you)
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 7 wave simulator, plots it
+make wave_sim  # generates + runs the Example 8 wave simulator, plots it
 ```

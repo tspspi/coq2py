@@ -148,24 +148,25 @@ already installed on both machines today.
 
 A first vertical slice is implemented and proven (see `coq/`, `examples/`,
 `docs/`): an `expr` subset covering integer/boolean/float arithmetic,
-comparisons, boolean connectives, a general `if`, pairs/tuples, and
-non-recursive `let`, translated to a Python-subset AST with a proven
+comparisons, boolean connectives, a general `if`, pairs/tuples,
+non-recursive `let`, bounded iteration, and now real functions/closures
+and self-recursion, translated to a Python-subset AST with a proven
 preservation theorem, round-tripped through a restricted JSON codec with
 its own proven round-trip theorem, extracted to OCaml, and wrapped in a
 working CLI that produces real, executing Python. `docs/examples.md`
-walks through six worked examples (a pair-returning Euler integration
+walks through seven worked examples (a pair-returning Euler integration
 step over integers, a boolean/comparison-based landing check, both again
 over real `PrimFloat.float` state, a multi-step trajectory via bounded
-iteration, and a division precondition reflected directly in the
-generated Python) with real captured output; `docs/roadmap.md` tracks
-what's intentionally deferred.
+iteration, a division precondition reflected directly in the generated
+Python, and a data-dependent trajectory via genuine recursion) with real
+captured output; `docs/roadmap.md` tracks what's intentionally deferred.
 A larger worked example lives in `examples/physics/`: Lorentz symmetry
 (`Minkowski.v`), a symbolic calculus layer (`Calculus.v`), Maxwell's
 equations and the wave equation derived from them (`Maxwell.v`), and a
 discretized numerical scheme for that wave equation with its own
 consistency proof, extracted and actually run as a Python/numpy simulator
 with a matplotlib plot (`Discretize.v`, `runtime/wave1d.py`, `make
-wave_sim` — see `docs/examples.md`'s Example 7 for the full walkthrough).
+wave_sim` — see `docs/examples.md`'s Example 8 for the full walkthrough).
 That simulator's grid/loop/boundary-condition plumbing is hand-written,
 unproven external runtime, not a formalized numpy subset (see
 `docs/roadmap.md`'s electromagnetism entry for exactly what that does and
@@ -184,9 +185,10 @@ where they overlap):
 
 ## Open questions
 
-- Exact initial supported Coq subset beyond the current one (next likely
-  additions: mutual/recursive `let`/`fix`, records, richer inductive
-  types — see `docs/roadmap.md`).
+- Exact initial supported Coq subset beyond the current one (functions,
+  closures, and self-recursion via `ERec` are now in; next likely
+  additions: mutual recursion, records, richer inductive types — see
+  `docs/roadmap.md`).
 - Reconciling `Json.v`'s grammar against Coq's actual
   `Extraction Language JSON` output (currently `expr` values are
   constructed directly rather than ingested from real `.v` sources — see

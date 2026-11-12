@@ -53,13 +53,15 @@ answer is: it's a materially bigger gap than "adjust the grammar a bit."
     documented one (confirming the schema-stability caveat below).
 
 None of this is a reason to abandon the idea — the non-recursive,
-single-declaration shape is a real, bounded starting point — but closing
-this gap for real needs function application in `expr`/`pyexpr` first
-(see the recursion entry below), then a translation layer from this
-richer MiniML-style IR down to the subset `expr` actually covers, not a
-small adjustment to `Json.v`'s current flat grammar. Re-doing the
-round-trip proof against whatever grammar comes out the other end is
-still step 3, unchanged.
+single-declaration shape is a real, bounded starting point. The
+"needs function application in `expr`/`pyexpr` first" prerequisite is
+now done (`ELam`/`ERec`/`EApp`, see below) — what's still missing is a
+translation layer from this richer, curried, named-global-reference
+MiniML-style IR down to the subset `expr` actually covers (binary
+`EAdd` vs. a named 2-argument `expr:apply`, binary-tree integer
+literals vs. flat decimals, etc.), not a small adjustment to `Json.v`'s
+current flat grammar. Re-doing the round-trip proof against whatever
+grammar comes out the other end is still step 3, unchanged.
 
 ## Not proved: the pretty-printer
 
@@ -84,19 +86,41 @@ since Python's own `//`/`%` already raise on one), general comparisons
 `EFEq`/`EFLt`/`EFLe` respectively) and boolean connectives
 (`and`/`or`/`not`), a general `if` (on a genuine boolean condition, not
 the earlier "equals zero" hack), pairs/tuples (construction and
-projection), a single non-recursive `let`, and bounded iteration
+projection), a single non-recursive `let`, bounded iteration
 (`ERepeat n x body init`, `n` a literal, compile-time `nat` — see
 `euler_multi_step_expr` for a worked instance chaining a whole
-trajectory this way, no external loop needed). Values are now a real
-four-way sum (`VZ`/`VBool`/`VPair`/`VFloat`), not bare integers —
+trajectory this way, no external loop needed), and now real, first-class
+functions and recursion: `ELam`/`EApp` (closures and application) and
+`ERec` (a named self-referential closure, the only way to write
+recursion here — see `examples/Kinematics.v`'s `fall_until_landed_expr`
+for a worked instance whose step count genuinely depends on the data,
+unlike `ERepeat`'s fixed count). Values are now a real five-way sum
+(`VZ`/`VBool`/`VPair`/`VFloat`/`VClosure`), not bare integers —
 operations applied to a value of the wrong shape get stuck (`None`), the
 same way an unbound variable already did; there is no separate static
-type system layered on top. Not yet covered, in roughly the order
-they'd likely be needed:
+type system layered on top.
 
-- Mutual and recursive `let`/`fix` (general structural recursion, where
-  the number of steps depends on runtime data rather than being fixed
-  up front the way `ERepeat`'s count is).
+Adding functions forced one real architectural change, not just another
+constructor: `eval`/`peval` now take an explicit `fuel : nat` (see
+Lang.v's header). This isn't a style choice — once a closure can be
+returned, stored, and reapplied, evaluating its body is no longer a
+structural subterm of whatever `expr` `eval` was first called on, so
+Coq's guardedness checker rejects the natural recursive definition
+outright (confirmed directly: the obvious fuel-free interpreter fails
+to compile with "cannot guess decreasing argument of fix", even for a
+*non*-recursive closure). This is the same reason general-purpose
+languages can't have a total type-checked interpreter written in a
+total language at all — not a limitation specific to this project.
+Running out of fuel is one more way to get stuck, alongside the
+wrong-shape-value and unbound-variable cases that already existed;
+`translate_preserves_semantics` holds for the *same* shared fuel on
+both sides and needs no new axioms (`Print Assumptions` still reports
+only the same `PrimFloat` primitives as before).
+
+Not yet covered, in roughly the order they'd likely be needed:
+
+- Mutual recursion (two or more `ERec`-like functions calling each
+  other) — `ERec` only supports a function calling *itself*.
 - Records and non-trivial inductive types beyond pairs.
 - Lists/arrays (needed before numpy-shaped state makes sense).
 - Modules and typeclasses.

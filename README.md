@@ -24,8 +24,10 @@ yet.
 
 - **`Translate.translate_preserves_semantics`** — the translation from the
   supported Gallina subset (`Lang.v`: integers, booleans, floats, pairs,
-  comparisons, `if`, `let`) to the Python-subset AST (`PyLang.v`)
-  preserves semantics, for every term and environment, unconditionally.
+  comparisons, `if`, `let`, bounded iteration, functions/closures and
+  self-recursion) to the Python-subset AST (`PyLang.v`) preserves
+  semantics, for every term, environment, and amount of evaluation fuel,
+  unconditionally.
 - **`Json.parse_print_roundtrip`** — the JSON-flavoured parser
   (`Json.v`) is a proven inverse of its own printer, over every term with
   valid identifiers.
@@ -59,7 +61,7 @@ GOAL.md's dependency policy: deliberately no MetaCoq/coq-equations/bignum
 libraries). `make wave_sim` additionally needs `numpy` (required) and
 `matplotlib` (optional — skipped with a message if absent) to run
 `runtime/wave1d.py`, the hand-written, unproven external runtime
-described in [docs/examples.md](docs/examples.md)'s Example 7 and
+described in [docs/examples.md](docs/examples.md)'s Example 8 and
 [docs/roadmap.md](docs/roadmap.md)'s electromagnetism entry.
 
 If your system's default `make` is BSD make (as on FreeBSD), use `gmake`

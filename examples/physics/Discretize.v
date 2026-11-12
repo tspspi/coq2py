@@ -159,7 +159,7 @@ Proof. reflexivity. Qed.
     computes the same float [leapfrog_update] would (modulo the
     [VFloat]/bare-[float] wrapping [eval]'s [value] type needs). *)
 Example leapfrog_update_expr_concrete :
-  eval [("u_prev", VFloat 1.0%float); ("u_left", VFloat 2.0%float);
+  eval 10 [("u_prev", VFloat 1.0%float); ("u_left", VFloat 2.0%float);
         ("u_center", VFloat 3.0%float); ("u_right", VFloat 4.0%float);
         ("r", VFloat 0.5%float)]
     leapfrog_update_expr
@@ -192,10 +192,10 @@ Proof.
 Qed.
 
 Corollary leapfrog_update_translation_correct :
-  forall rho,
-    peval (env_to_pyenv rho) (translate leapfrog_update_expr)
-      = option_map value_to_pyvalue (eval rho leapfrog_update_expr).
-Proof. intro rho. apply translate_preserves_semantics. Qed.
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate leapfrog_update_expr)
+      = option_map value_to_pyvalue (eval fuel rho leapfrog_update_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
 
 (** The generated Python -- this is what [runtime/wave1d.py] actually
     imports and calls per grid cell; see its header comment. *)

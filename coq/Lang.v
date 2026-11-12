@@ -36,11 +36,10 @@
     [ERepeat n x body init] is bounded iteration: evaluate [init] to a
     starting value, then apply [body] (with [x] bound to the current
     value) exactly [n] times, [n] a literal [nat] fixed at "compile
-    time" -- not a runtime-computed count, which is exactly what makes
-    this cheaper than general recursion (see docs/roadmap.md): [eval]
-    terminates on it by the same structural-recursion-on-[n] Coq already
-    checks for free, no fuel parameter or well-founded-recursion argument
-    needed anywhere in this file or its proofs.
+    time" -- not a runtime-computed count. Its own recursion is plain
+    structural recursion on [n], needing no fuel on its own -- but seeing
+    why that doesn't extend to real functions is exactly the motivation
+    for the fuel parameter described next.
 
     [EDiv]/[EMod] are integer floor-division/modulo, matching Python's
     [//]/[%] exactly (including for negative operands -- Coq's [Z.div]/
@@ -55,7 +54,41 @@
     [eval]'s domain matches Python's own -- [//]/[%] raise
     [ZeroDivisionError] on a zero divisor too. See [eval_div_correct] for
     the precondition this buys: given [b <> 0], [EDiv]/[EMod] compute
-    exactly [Z.div]/[Z.modulo], no more, no less. *)
+    exactly [Z.div]/[Z.modulo], no more, no less.
+
+    * Functions, closures, and why [eval] now needs fuel
+
+    [ELam param body] builds a closure value ([VClosure]) capturing the
+    *current* environment -- standard lexical scoping. [EApp func arg]
+    applies one. [ERec f param body] is the recursive variant: inside
+    [body], [EVar f] resolves to the closure itself (rebuilt and rebound
+    on every call), which is what lets a function call itself -- there is
+    deliberately no other way to write recursion in this language, so
+    every recursive [expr] is visibly, syntactically recursive via
+    [ERec], not accidentally so via some other combination.
+
+    This is also why [eval] takes an explicit [fuel : nat] first
+    argument, decremented by one on *every* call (the same fuel-as-
+    recursion-governor pattern [Json.v]'s [parse_expr] already uses, for
+    the same underlying reason). It is not an optional optimization: once
+    a closure can be returned, stored, and re-applied, [EApp]'s case
+    needs to evaluate a [body] that is *not* a structural subterm of the
+    [expr] [eval] was originally called on (it is a subterm of wherever
+    the closure was first built, possibly a value flowing through
+    several other applications first) -- Coq's guardedness checker
+    rejects exactly this shape of recursive call outright, as it must:
+    this language can now express genuine, unbounded recursion (an
+    [ERec] applied without a decreasing argument diverges, the same as in
+    Python), so no *total* evaluator for it can exist without an explicit
+    resource bound. Running out of fuel ([eval 0 _ _ = None], or fuel
+    reaching [0] partway through) is "stuck" the same way an unbound
+    variable or a wrong-shape value already is -- indistinguishable from
+    any other [None], and *not* claimed to correspond to anything on the
+    Python side (an infinite Python loop just doesn't return; there is no
+    "ran out of fuel" exception to match against, so this is one place
+    the source and target semantics only agree on *terminating* runs,
+    stated as a hypothesis rather than silently assumed -- see
+    [Translate.v]'s correctness theorem). *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -64,12 +97,6 @@ Open Scope Z_scope.
 Open Scope string_scope.
 
 Definition var := string.
-
-Inductive value : Type :=
-  | VZ (z : Z)
-  | VBool (b : bool)
-  | VPair (v1 v2 : value)
-  | VFloat (f : float).
 
 Inductive expr : Type :=
   | EConst (z : Z)
@@ -99,7 +126,25 @@ Inductive expr : Type :=
   | EFLe (e1 e2 : expr)
   | ERepeat (n : nat) (x : var) (body init : expr)
   | EDiv (e1 e2 : expr)
-  | EMod (e1 e2 : expr).
+  | EMod (e1 e2 : expr)
+  | ELam (param : var) (body : expr)
+  | ERec (f param : var) (body : expr)
+  | EApp (func arg : expr).
+
+(** A value is now possibly a function: [VClosure self param body cenv]
+    is [fun param => body] (or, if [self = Some f], the same but with
+    [f] bound to the closure itself inside [body]), closed over the
+    environment [cenv] it was created in. [value] can refer to [expr]
+    directly (for [body]) and to itself (for [cenv], via [list (var *
+    value)]) because both are already fully defined above/structurally
+    nested -- no forward reference or mutual-inductive declaration
+    needed. *)
+Inductive value : Type :=
+  | VZ (z : Z)
+  | VBool (b : bool)
+  | VPair (v1 v2 : value)
+  | VFloat (f : float)
+  | VClosure (self : option var) (param : var) (body : expr) (cenv : list (var * value)).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -119,7 +164,7 @@ Fixpoint lookup (rho : env) (x : var) : option value :=
     over an arbitrary [f] rather than folded directly into [eval]'s
     [ERepeat] case so that this is a plain structural recursion on [n]
     with no dependency on [expr]/[eval] at all -- [eval] below just
-    supplies [f] as a closure over one fixed [body]/[rho]. *)
+    supplies [f] as a closure over one fixed [body]/[rho]/[fuel]. *)
 Fixpoint iterate (n : nat) (f : value -> option value) (v : value) : option value :=
   match n with
   | O => Some v
@@ -130,133 +175,155 @@ Fixpoint iterate (n : nat) (f : value -> option value) (v : value) : option valu
       end
   end.
 
-Fixpoint eval (rho : env) (e : expr) : option value :=
+(** [fuel] bounds recursion depth through function application (see this
+    file's header for why that's unavoidable once closures exist); every
+    other case just passes [fuel'] through unchanged to its immediate
+    sub-evaluations, the same uniform style [Json.v]'s [parse_expr]
+    already uses its own fuel parameter with. *)
+Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
+  match fuel with
+  | O => None
+  | S fuel' =>
   match e with
   | EConst z => Some (VZ z)
   | EBool b => Some (VBool b)
   | EVar x => lookup rho x
   | EAdd e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ v1), Some (VZ v2) => Some (VZ (v1 + v2))
       | _, _ => None
       end
   | ESub e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ v1), Some (VZ v2) => Some (VZ (v1 - v2))
       | _, _ => None
       end
   | EMul e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ v1), Some (VZ v2) => Some (VZ (v1 * v2))
       | _, _ => None
       end
   | EEq e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ v1), Some (VZ v2) => Some (VBool (Z.eqb v1 v2))
       | _, _ => None
       end
   | ELt e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ v1), Some (VZ v2) => Some (VBool (Z.ltb v1 v2))
       | _, _ => None
       end
   | ELe e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ v1), Some (VZ v2) => Some (VBool (Z.leb v1 v2))
       | _, _ => None
       end
   | EAnd e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VBool b1), Some (VBool b2) => Some (VBool (andb b1 b2))
       | _, _ => None
       end
   | EOr e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VBool b1), Some (VBool b2) => Some (VBool (orb b1 b2))
       | _, _ => None
       end
   | ENot e1 =>
-      match eval rho e1 with
+      match eval fuel' rho e1 with
       | Some (VBool b) => Some (VBool (negb b))
       | _ => None
       end
   | EIf c e1 e2 =>
-      match eval rho c with
-      | Some (VBool true) => eval rho e1
-      | Some (VBool false) => eval rho e2
+      match eval fuel' rho c with
+      | Some (VBool true) => eval fuel' rho e1
+      | Some (VBool false) => eval fuel' rho e2
       | _ => None
       end
   | EPair e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some v1, Some v2 => Some (VPair v1 v2)
       | _, _ => None
       end
   | EFst e1 =>
-      match eval rho e1 with
+      match eval fuel' rho e1 with
       | Some (VPair v1 _) => Some v1
       | _ => None
       end
   | ESnd e1 =>
-      match eval rho e1 with
+      match eval fuel' rho e1 with
       | Some (VPair _ v2) => Some v2
       | _ => None
       end
   | ELet x e1 e2 =>
-      match eval rho e1 with
-      | Some v1 => eval ((x, v1) :: rho) e2
+      match eval fuel' rho e1 with
+      | Some v1 => eval fuel' ((x, v1) :: rho) e2
       | None => None
       end
   | EFConst f => Some (VFloat f)
   | EFAdd e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 + f2)%float)
       | _, _ => None
       end
   | EFSub e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 - f2)%float)
       | _, _ => None
       end
   | EFMul e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 * f2)%float)
       | _, _ => None
       end
   | EFDiv e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 / f2)%float)
       | _, _ => None
       end
   | EFEq e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 =? f2)%float)
       | _, _ => None
       end
   | EFLt e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 <? f2)%float)
       | _, _ => None
       end
   | EFLe e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 <=? f2)%float)
       | _, _ => None
       end
   | ERepeat n x body init =>
-      match eval rho init with
-      | Some v0 => iterate n (fun v => eval ((x, v) :: rho) body) v0
+      match eval fuel' rho init with
+      | Some v0 => iterate n (fun v => eval fuel' ((x, v) :: rho) body) v0
       | None => None
       end
   | EDiv e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ a), Some (VZ b) => if Z.eqb b 0 then None else Some (VZ (Z.div a b))
       | _, _ => None
       end
   | EMod e1 e2 =>
-      match eval rho e1, eval rho e2 with
+      match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VZ a), Some (VZ b) => if Z.eqb b 0 then None else Some (VZ (Z.modulo a b))
       | _, _ => None
       end
+  | ELam param body => Some (VClosure None param body rho)
+  | ERec f param body => Some (VClosure (Some f) param body rho)
+  | EApp func arg =>
+      match eval fuel' rho func, eval fuel' rho arg with
+      | Some (VClosure self param body cenv), Some argv =>
+          let cenv' :=
+            match self with
+            | None => cenv
+            | Some fname => (fname, VClosure self param body cenv) :: cenv
+            end in
+          eval fuel' ((param, argv) :: cenv') body
+      | _, _ => None
+      end
+  end
   end.
 
 (** The precondition, made explicit: whenever the divisor is known
@@ -266,23 +333,27 @@ Fixpoint eval (rho : env) (e : expr) : option value :=
     into a runtime check": the *assumption* ([b <> 0]) is what this
     theorem needs to say anything at all; the *check* is [eval]'s own
     [Z.eqb b 0] test above, and (separately, assumed not proved per
-    docs/duality.md) Python's own [ZeroDivisionError] on [//]/[%]. *)
+    docs/duality.md) Python's own [ZeroDivisionError] on [//]/[%]. The
+    hypotheses are at fuel level [fuel] (how much fuel evaluating [e1]/
+    [e2] actually used) and the conclusion at [S fuel] (one more, for
+    [EDiv]/[EMod]'s own step) -- matching exactly how [eval] unfolds
+    once before recursing. *)
 Lemma eval_div_correct :
-  forall rho e1 e2 a b,
-    eval rho e1 = Some (VZ a) -> eval rho e2 = Some (VZ b) -> b <> 0 ->
-    eval rho (EDiv e1 e2) = Some (VZ (Z.div a b)).
+  forall fuel rho e1 e2 a b,
+    eval fuel rho e1 = Some (VZ a) -> eval fuel rho e2 = Some (VZ b) -> b <> 0 ->
+    eval (S fuel) rho (EDiv e1 e2) = Some (VZ (Z.div a b)).
 Proof.
-  intros rho e1 e2 a b He1 He2 Hb.
+  intros fuel rho e1 e2 a b He1 He2 Hb.
   simpl. rewrite He1, He2.
   apply Z.eqb_neq in Hb. rewrite Hb. reflexivity.
 Qed.
 
 Lemma eval_mod_correct :
-  forall rho e1 e2 a b,
-    eval rho e1 = Some (VZ a) -> eval rho e2 = Some (VZ b) -> b <> 0 ->
-    eval rho (EMod e1 e2) = Some (VZ (Z.modulo a b)).
+  forall fuel rho e1 e2 a b,
+    eval fuel rho e1 = Some (VZ a) -> eval fuel rho e2 = Some (VZ b) -> b <> 0 ->
+    eval (S fuel) rho (EMod e1 e2) = Some (VZ (Z.modulo a b)).
 Proof.
-  intros rho e1 e2 a b He1 He2 Hb.
+  intros fuel rho e1 e2 a b He1 He2 Hb.
   simpl. rewrite He1, He2.
   apply Z.eqb_neq in Hb. rewrite Hb. reflexivity.
 Qed.
@@ -291,8 +362,9 @@ Qed.
     names made of ASCII letters/digits/underscore. This predicate marks
     exactly the [expr] terms whose variable names satisfy that. It is not a
     restriction on the semantics above -- [eval] is total (modulo the
-    "wrong shape of value" / unbound-variable getting-stuck cases already
-    described) over all [expr] values regardless of identifier shape. *)
+    "wrong shape of value" / unbound-variable / out-of-fuel getting-stuck
+    cases already described) over all [expr] values regardless of
+    identifier shape. *)
 Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   match e with
   | EConst _ => true
@@ -329,4 +401,8 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
            (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident init))
   | EDiv e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EMod e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | ELam param body => andb (is_valid_ident param) (expr_idents_valid is_valid_ident body)
+  | ERec f param body =>
+      andb (is_valid_ident f) (andb (is_valid_ident param) (expr_idents_valid is_valid_ident body))
+  | EApp func arg => andb (expr_idents_valid is_valid_ident func) (expr_idents_valid is_valid_ident arg)
   end.

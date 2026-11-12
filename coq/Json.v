@@ -584,8 +584,21 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""div"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   | EMod e1 e2 =>
       "{""tag"":""mod"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | ELam param body =>
+      "{""tag"":""lam"",""param"":" ++ quote_string param ++ ",""body"":" ++ print_expr body ++ "}"
+  | ERec f param body =>
+      "{""tag"":""rec"",""name"":" ++ quote_string f
+        ++ ",""param"":" ++ quote_string param ++ ",""body"":" ++ print_expr body ++ "}"
+  | EApp func arg =>
+      "{""tag"":""app"",""func"":" ++ print_expr func ++ ",""arg"":" ++ print_expr arg ++ "}"
   end.
 
+(** Note: this [expr_fuel] is this module's own parser-recursion-depth
+    bound (how deep [parse_expr] needs to descend through nested JSON
+    text) -- a different, unrelated concept from [Lang.eval]'s evaluation
+    fuel (how many function-application steps [eval] may take), despite
+    the name collision. One is about parsing a fixed piece of text; the
+    other is about a potentially-nonterminating computation. *)
 Fixpoint expr_fuel (e : expr) : nat :=
   match e with
   | EConst _ | EBool _ | EVar _ | EFConst _ => 1
@@ -597,9 +610,11 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | ELet _ e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
   | EFAdd e1 e2 | EFSub e1 e2 | EFMul e1 e2 | EFDiv e1 e2
   | EFEq e1 e2 | EFLt e1 e2 | EFLe e1 e2
-  | EDiv e1 e2 | EMod e1 e2 =>
+  | EDiv e1 e2 | EMod e1 e2 | EApp e1 e2 =>
       S (Nat.max (expr_fuel e1) (expr_fuel e2))
   | ERepeat _ _ body init => S (Nat.max (expr_fuel body) (expr_fuel init))
+  | ELam _ body => S (expr_fuel body)
+  | ERec _ _ body => S (expr_fuel body)
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1113,8 +1128,73 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""lam"",""param"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (param, s2) =>
+            match expect ",""body"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (body, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (ELam param body, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""rec"",""name"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (f, s2) =>
+            match expect ",""param"":" s2 with
+            | Some s3 =>
+                match parse_qstring s3 with
+                | Some (param, s4) =>
+                    match expect ",""body"":" s4 with
+                    | Some s5 =>
+                        match parse_expr fuel' s5 with
+                        | Some (body, s6) =>
+                            match expect "}" s6 with
+                            | Some s7 => Some (ERec f param body, s7)
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""app"",""func"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (func, s2) =>
+            match expect ",""arg"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (arg, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EApp func arg, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -1160,7 +1240,10 @@ Proof.
     | e1 IH1 e2 IH2              (* EFLe *)
     | n x body IH1 init IH2      (* ERepeat *)
     | e1 IH1 e2 IH2              (* EDiv *)
-    | e1 IH1 e2 IH2 ];           (* EMod *)
+    | e1 IH1 e2 IH2              (* EMod *)
+    | param body IH1             (* ELam *)
+    | f param body IH1           (* ERec *)
+    | func IH1 arg IH2 ];        (* EApp *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -1347,6 +1430,28 @@ Proof.
   - (* EMod *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* ELam *) apply andb_true_iff in Hvalid as [Hvp Hv1].
+    assert (Hf1 : (expr_fuel body <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print param Hvp). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). reflexivity.
+  - (* ERec *) apply andb_true_iff in Hvalid as [Hvf Hv12].
+    apply andb_true_iff in Hv12 as [Hvp Hv1].
+    assert (Hf1 : (expr_fuel body <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print f Hvf). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print param Hvp). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). reflexivity.
+  - (* EApp *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel func <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel arg <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.
     rewrite (IH1 Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
