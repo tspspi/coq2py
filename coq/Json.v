@@ -544,6 +544,12 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""fmul"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   | EFDiv e1 e2 =>
       "{""tag"":""fdiv"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EFEq e1 e2 =>
+      "{""tag"":""feq"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EFLt e1 e2 =>
+      "{""tag"":""flt"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EFLe e1 e2 =>
+      "{""tag"":""fle"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   end.
 
 Fixpoint expr_fuel (e : expr) : nat :=
@@ -555,7 +561,8 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | ENot e1 | EFst e1 | ESnd e1 => S (expr_fuel e1)
   | EIf c e1 e2 => S (Nat.max (expr_fuel c) (Nat.max (expr_fuel e1) (expr_fuel e2)))
   | ELet _ e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
-  | EFAdd e1 e2 | EFSub e1 e2 | EFMul e1 e2 | EFDiv e1 e2 =>
+  | EFAdd e1 e2 | EFSub e1 e2 | EFMul e1 e2 | EFDiv e1 e2
+  | EFEq e1 e2 | EFLt e1 e2 | EFLe e1 e2 =>
       S (Nat.max (expr_fuel e1) (expr_fuel e2))
   end.
 
@@ -940,8 +947,65 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""feq"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFEq e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""flt"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFLt e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""fle"",""lhs"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect ",""rhs"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (e2, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EFLe e1 e2, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -981,7 +1045,10 @@ Proof.
     | e1 IH1 e2 IH2              (* EFAdd *)
     | e1 IH1 e2 IH2              (* EFSub *)
     | e1 IH1 e2 IH2              (* EFMul *)
-    | e1 IH1 e2 IH2 ];           (* EFDiv *)
+    | e1 IH1 e2 IH2              (* EFDiv *)
+    | e1 IH1 e2 IH2              (* EFEq *)
+    | e1 IH1 e2 IH2              (* EFLt *)
+    | e1 IH1 e2 IH2 ];           (* EFLe *)
   intros Hvalid fuel Hfuel rest;
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
@@ -1119,6 +1186,27 @@ Proof.
     repeat rewrite string_append_assoc.
     rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
   - (* EFDiv *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFEq *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFLt *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (IH1 Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (IH2 Hv2 fuel' Hf2). reflexivity.
+  - (* EFLe *) apply andb_true_iff in Hvalid as [Hv1 Hv2].
     assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
     assert (Hf2 : (expr_fuel e2 <= fuel')%nat) by lia.
     repeat rewrite string_append_assoc.

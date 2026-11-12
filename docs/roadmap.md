@@ -39,22 +39,18 @@ right kind of bug to be able to have at this layer.
 ## Narrow source and target subsets
 
 `expr`/`pyexpr` currently cover: integer, boolean, and float constants,
-variables, integer `+`/`-`/`*` and float `+`/`-`/`*`/`/` (as separate
-operators — see below), general comparisons (`=`/`<`/`<=`, integers
-only so far) and boolean connectives (`and`/`or`/`not`), a general `if`
-(on a genuine boolean condition, not the earlier "equals zero" hack),
-pairs/tuples (construction and projection), and a single non-recursive
-`let`. Values are now a real four-way sum
-(`VZ`/`VBool`/`VPair`/`VFloat`), not bare integers — operations applied
-to a value of the wrong shape get stuck (`None`), the same way an
-unbound variable already did; there is no separate static type system
-layered on top. Not yet covered, in roughly the order they'd likely be
-needed:
+variables, integer and float `+`/`-`/`*` (plus float `/`), general
+comparisons (`=`/`<`/`<=`, over both integers and floats, via
+`EEq`/`ELt`/`ELe` and `EFEq`/`EFLt`/`EFLe` respectively) and boolean
+connectives (`and`/`or`/`not`), a general `if` (on a genuine boolean
+condition, not the earlier "equals zero" hack), pairs/tuples
+(construction and projection), and a single non-recursive `let`. Values
+are now a real four-way sum (`VZ`/`VBool`/`VPair`/`VFloat`), not bare
+integers — operations applied to a value of the wrong shape get stuck
+(`None`), the same way an unbound variable already did; there is no
+separate static type system layered on top. Not yet covered, in roughly
+the order they'd likely be needed:
 
-- Comparisons (`=`/`<`/`<=`) and conditionals over floats — `EEq`/`ELt`/`ELe`
-  are integer-only today; extending them to floats is a small, mechanical
-  addition in the same shape as the existing float arithmetic ops, not
-  done yet simply because nothing in this repository has needed it.
 - Bounded iteration (a fixed, statically-known number of repetitions of a
   state-transforming expression) as a cheaper first step toward real
   recursion — see the next section.

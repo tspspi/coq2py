@@ -261,7 +261,16 @@ back to exactly `1.5`, bit for bit. See `PyPrint.v`'s comment for why
 that's the easy, exact choice here, where a decimal pretty-printer would
 be the genuinely hard one.
 
-## Example 4: a wave simulator, from Maxwell's equations to a running plot
+`EFEq`/`EFLt`/`EFLe` give floats the same comparisons integers already
+had. `landed_float_expr` is `landed_expr` (Example 2) with `EFLe`/`EFLt`
+in place of `ELe`/`ELt`:
+
+```
+def landed_float(x, v):
+    return ((x <= 0.0) and (v < 0.0))
+```
+
+## Example 5: a wave simulator, from Maxwell's equations to a running plot
 
 This walks through [`examples/physics/Discretize.v`](../examples/physics/Discretize.v)
 and [`runtime/wave1d.py`](../runtime/wave1d.py) — a longer chain than
@@ -383,5 +392,5 @@ are all actually correct together, not just individually plausible.
 make all       # builds the Coq proofs, extracts, builds the OCaml CLI
 make test      # runs the CLI against the Kinematics.v examples above
 make physics   # checks Minkowski/Calculus/Maxwell/Discretize.v
-make wave_sim  # generates + runs the Example 4 wave simulator, plots it
+make wave_sim  # generates + runs the Example 5 wave simulator, plots it
 ```

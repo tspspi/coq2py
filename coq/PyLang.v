@@ -55,7 +55,10 @@ Inductive pyexpr : Type :=
   | PFAdd (e1 e2 : pyexpr)
   | PFSub (e1 e2 : pyexpr)
   | PFMul (e1 e2 : pyexpr)
-  | PFDiv (e1 e2 : pyexpr).
+  | PFDiv (e1 e2 : pyexpr)
+  | PFEq (e1 e2 : pyexpr)
+  | PFLt (e1 e2 : pyexpr)
+  | PFLe (e1 e2 : pyexpr).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -160,6 +163,21 @@ Fixpoint peval (rho : pyenv) (e : pyexpr) : option pyvalue :=
   | PFDiv e1 e2 =>
       match peval rho e1, peval rho e2 with
       | Some (PVFloat f1), Some (PVFloat f2) => Some (PVFloat (f1 / f2)%float)
+      | _, _ => None
+      end
+  | PFEq e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVBool (f1 =? f2)%float)
+      | _, _ => None
+      end
+  | PFLt e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVBool (f1 <? f2)%float)
+      | _, _ => None
+      end
+  | PFLe e1 e2 =>
+      match peval rho e1, peval rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVBool (f1 <=? f2)%float)
       | _, _ => None
       end
   end.

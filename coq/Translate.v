@@ -44,6 +44,9 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EFSub e1 e2 => PFSub (translate e1) (translate e2)
   | EFMul e1 e2 => PFMul (translate e1) (translate e2)
   | EFDiv e1 e2 => PFDiv (translate e1) (translate e2)
+  | EFEq e1 e2 => PFEq (translate e1) (translate e2)
+  | EFLt e1 e2 => PFLt (translate e1) (translate e2)
+  | EFLe e1 e2 => PFLe (translate e1) (translate e2)
   end.
 
 Fixpoint value_to_pyvalue (v : value) : pyvalue :=
@@ -101,7 +104,10 @@ Proof.
     | e1 IH1 e2 IH2               (* EFAdd *)
     | e1 IH1 e2 IH2               (* EFSub *)
     | e1 IH1 e2 IH2               (* EFMul *)
-    | e1 IH1 e2 IH2 ];            (* EFDiv *)
+    | e1 IH1 e2 IH2               (* EFDiv *)
+    | e1 IH1 e2 IH2               (* EFEq *)
+    | e1 IH1 e2 IH2               (* EFLt *)
+    | e1 IH1 e2 IH2 ];            (* EFLe *)
   intro rho; simpl.
   - (* EConst *) reflexivity.
   - (* EBool *) reflexivity.
@@ -149,5 +155,11 @@ Proof.
   - (* EFMul *) rewrite IH1, IH2.
     destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
   - (* EFDiv *) rewrite IH1, IH2.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
+  - (* EFEq *) rewrite IH1, IH2.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
+  - (* EFLt *) rewrite IH1, IH2.
+    destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
+  - (* EFLe *) rewrite IH1, IH2.
     destruct (eval rho e1) as [[z1|b1|p1a p1b|f1]|]; destruct (eval rho e2) as [[z2|b2|p2a p2b|f2]|]; reflexivity.
 Qed.

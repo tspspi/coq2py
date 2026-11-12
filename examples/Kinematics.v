@@ -9,11 +9,11 @@
     returning the pair (x', v') -- exercising pairs/tuples -- plus a
     second example, [landed_expr], exercising general comparisons and
     booleans: "has the projectile reached or passed ground level while
-    still moving downward?" -- and a third, [euler_step_float_expr], the
-    same integration step again but over real [PrimFloat.float] state
-    instead of [Z].
+    still moving downward?" -- and two more, [euler_step_float_expr] and
+    [landed_float_expr], the same integration step and landing check
+    again but over real [PrimFloat.float] state instead of [Z].
 
-    All three are expressed as terms of our supported [expr] subset
+    All four are expressed as terms of our supported [expr] subset
     (Lang.v), then run through every stage of the pipeline this repository
     actually proves: JSON round-trip (Json.v), translation to the
     Python-subset AST (Translate.v), and rendering as Python source
@@ -26,10 +26,11 @@
     correct". Examples 1 and 2 are deliberately tiny instances -- integers
     standing in for what would eventually be a floating-point/numpy state
     vector -- chosen to stay inside the subset that's actually proven
-    today rather than gesture at scope the proofs don't yet cover. Example
-    3 closes that one gap for a single step (real float arithmetic, proven
-    the same way) -- see docs/roadmap.md for what's still missing before a
-    genuine discretized simulator (bounded iteration, arrays). *)
+    today rather than gesture at scope the proofs don't yet cover. Examples
+    3 and 4 close that gap for a single step (real float arithmetic and
+    comparisons, proven the same way) -- see docs/roadmap.md for what's
+    still missing before a genuine discretized simulator (bounded
+    iteration, arrays). *)
 
 From Coq Require Import ZArith String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -196,3 +197,28 @@ Proof. intro rho. apply translate_preserves_semantics. Qed.
     encoding described in PyPrint.v -- not the shortest decimal a human
     would write, but bit-for-bit the same value as the source float. *)
 Compute py_function "euler_step_float" ["x"; "v"; "a"; "dt"] (translate euler_step_float_expr).
+
+(* ----------------------------------------------------------------- *)
+(** * Example 4: [landed_expr], over real floats *)
+
+(** [landed_expr] (Example 2) restated with [EFLe]/[EFLt] over real
+    [float] position/velocity instead of [ELe]/[ELt] over [Z] -- the
+    comparison counterpart to Example 3's arithmetic one. *)
+Definition landed_float_expr : expr :=
+  EAnd (EFLe (EVar "x") (EFConst 0)) (EFLt (EVar "v") (EFConst 0)).
+
+Theorem landed_float_idents_valid :
+  expr_idents_valid is_valid_ident landed_float_expr = true.
+Proof. reflexivity. Qed.
+
+Example landed_float_concrete_true :
+  eval [("x", VFloat (-1)%float); ("v", VFloat (-3)%float)] landed_float_expr
+    = Some (VBool true).
+Proof. reflexivity. Qed.
+
+Example landed_float_concrete_false_still_above_ground :
+  eval [("x", VFloat 5%float); ("v", VFloat (-3)%float)] landed_float_expr
+    = Some (VBool false).
+Proof. reflexivity. Qed.
+
+Compute py_function "landed_float" ["x"; "v"] (translate landed_float_expr).

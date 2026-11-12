@@ -28,10 +28,10 @@
     already extracts to native [int]. It is deliberately a same-shape
     value (not mixed into [VZ]/arithmetic on [Z]) -- floats and integers
     don't silently coerce into each other here any more than booleans and
-    integers already don't. Comparisons ([EEq]/[ELt]/[ELe]) are not yet
-    extended to floats -- only arithmetic is needed for the discretized
-    wave-equation scheme this is building toward; tracked as a gap, not an
-    oversight. *)
+    integers already don't. [EFEq]/[EFLt]/[EFLe] mirror [EEq]/[ELt]/[ELe]
+    for floats, returning [VBool] the same way; there is still no
+    [EIf]-usable float-to-bool coercion beyond that (a float condition
+    gets stuck, same as any other wrong-shape value). *)
 
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
@@ -69,7 +69,10 @@ Inductive expr : Type :=
   | EFAdd (e1 e2 : expr)
   | EFSub (e1 e2 : expr)
   | EFMul (e1 e2 : expr)
-  | EFDiv (e1 e2 : expr).
+  | EFDiv (e1 e2 : expr)
+  | EFEq (e1 e2 : expr)
+  | EFLt (e1 e2 : expr)
+  | EFLe (e1 e2 : expr).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -181,6 +184,21 @@ Fixpoint eval (rho : env) (e : expr) : option value :=
       | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (f1 / f2)%float)
       | _, _ => None
       end
+  | EFEq e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 =? f2)%float)
+      | _, _ => None
+      end
+  | EFLt e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 <? f2)%float)
+      | _, _ => None
+      end
+  | EFLe e1 e2 =>
+      match eval rho e1, eval rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 <=? f2)%float)
+      | _, _ => None
+      end
   end.
 
 (** Identifier validity: the restricted grammar in Json.v only round-trips
@@ -217,4 +235,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EFSub e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFMul e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFDiv e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFEq e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFLt e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFLe e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   end.
