@@ -7,10 +7,10 @@
 
 COQC = coqc -Q . ""
 
-VFILES = Lang.v PyLang.v Translate.v Json.v
+VFILES = Lang.v PyLang.v Translate.v Json.v PyPrint.v
 VOFILES = $(VFILES:.v=.vo)
 
-.PHONY: all clean
+.PHONY: all extract clean
 
 all: $(VOFILES)
 
@@ -26,5 +26,12 @@ Translate.vo: Translate.v Lang.vo PyLang.vo
 Json.vo: Json.v Lang.vo
 	$(COQC) Json.v
 
+PyPrint.vo: PyPrint.v PyLang.vo Json.vo
+	$(COQC) PyPrint.v
+
+extract: all Extract.v
+	$(COQC) Extract.v
+
 clean:
 	rm -f *.vo *.vos *.vok *.glob
+	rm -f coq2py_core.ml coq2py_core.mli
