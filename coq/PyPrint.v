@@ -119,7 +119,7 @@
     the enclosing scope at *call* time, the same reason [PRec]'s/
     [PRecMut]'s own single/double self-reference already works. *)
 
-From Coq Require Import String List ZArith.
+From Coq Require Import String List ZArith Ascii.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
 Import ListNotations.
 Require Import Lang. (* reuses var *)
@@ -317,6 +317,51 @@ Proof.
   pose proof (forallb_forall (fun w => negb (is_py_keyword (w ++ "_"))) py_keywords) as [Hf _].
   specialize (Hf Hcheck s Hin).
   destruct (is_py_keyword (s ++ "_")); [discriminate | reflexivity].
+Qed.
+
+(** [safe_py_name_not_keyword] only covers the one identifier that is
+    never renamed (the function's own name) -- every *other*
+    identifier [PyPrint.v] ever emits comes from [PyRename.fresh_name]
+    (["v" ++ digits]) instead, and was only ever *claimed*, never
+    proved, to avoid [py_keywords] too (this file's own header, and
+    [PyRename.v]'s). [fresh_name_not_keyword] below closes that gap
+    for real: no word in [py_keywords] starts with ['v'] (a direct,
+    decidable check over the fixed, finite list, same style as
+    [safe_py_name_not_keyword]), and [fresh_name] always does, so it
+    can never equal one. [fresh_name_is_py_identifier] goes further,
+    confirming the *syntactic* shape Python's own grammar requires (a
+    letter, then any run of letters/digits/underscores) rather than
+    just asserting it from the "v" ++ digits description in prose. *)
+Definition starts_with_v (s : string) : bool :=
+  match s with
+  | String c _ => Ascii.eqb c "v"%char
+  | EmptyString => false
+  end.
+
+Lemma py_keywords_not_v_prefixed :
+  forallb (fun k => negb (starts_with_v k)) py_keywords = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Lemma fresh_name_not_keyword : forall n, is_py_keyword (PyRename.fresh_name n) = false.
+Proof.
+  intro n.
+  assert (Hv : starts_with_v (PyRename.fresh_name n) = true)
+    by (unfold PyRename.fresh_name; reflexivity).
+  unfold is_py_keyword.
+  destruct (in_dec string_dec (PyRename.fresh_name n) py_keywords) as [Hin | Hnin];
+    [| reflexivity].
+  exfalso.
+  pose proof (forallb_forall (fun k => negb (starts_with_v k)) py_keywords) as [Hf _].
+  specialize (Hf py_keywords_not_v_prefixed (PyRename.fresh_name n) Hin).
+  rewrite Hv in Hf. simpl in Hf. discriminate.
+Qed.
+
+Lemma fresh_name_is_py_identifier : forall n,
+  exists t, PyRename.fresh_name n = String "v"%char t /\ string_forallb is_digit t = true.
+Proof.
+  intro n. unfold PyRename.fresh_name.
+  eexists. split; [reflexivity |].
+  apply nat_to_string_all_digits.
 Qed.
 
 Definition newline : string := String (Ascii.ascii_of_nat 10) EmptyString.

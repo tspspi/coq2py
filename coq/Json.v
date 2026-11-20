@@ -278,6 +278,21 @@ Proof.
   rewrite Nat2Z.id. reflexivity.
 Qed.
 
+(** [nat_to_string] never needs a minus sign ([n] is a [nat]) and is
+    built from the same [NilZero] digit-string machinery [z_to_string]
+    always is -- so, like [z_to_string] itself, it never produces
+    anything but digit characters. Needed by [PyPrint.v] to confirm a
+    [PyRename.fresh_name] is a syntactically valid Python identifier,
+    not just assumed to be one from its ["v" ++ digits] description. *)
+Lemma nat_to_string_all_digits : forall n : nat, string_forallb is_digit (nat_to_string n) = true.
+Proof.
+  intro n. unfold nat_to_string, z_to_string.
+  destruct (Z.of_nat n) eqn:E.
+  - reflexivity.
+  - simpl. apply nilzero_string_of_uint_all_digits.
+  - exfalso. pose proof (Nat2Z.is_nonneg n) as H. rewrite E in H. lia.
+Qed.
+
 (* ----------------------------------------------------------------- *)
 (** * Quoted identifiers *)
 
