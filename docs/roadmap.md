@@ -637,15 +637,27 @@ check (`quad(3) = 10`, exact — no rounding error to propagate for this
 one input) standing in for the general theorem the paragraph above
 explains is not yet in scope.
 
+**Done** (rounding out the four basic operations): `"rminus"`/`"rdiv"`
+translate into the existing `EFSub`/`EFDiv`, the same way `"rplus"`/
+`"rmult"` do — `real_to_expr_preserves_semantics` extended again, no
+new axioms. Deliberately **not** `"ropp"` (unary negation) alongside
+them: translating it as `EFSub (EFConst 0) e` would compute
+`PrimFloat.sub 0 f` where `real_eval`'s own reference computes
+`PrimFloat.opp f` directly, and those two genuinely differ for `f = 0`
+under IEEE-754 signed zero (`0.0 - 0.0 = +0.0`, but `opp 0.0 = -0.0`)
+— a real edge case this file's own comment flags rather than silently
+sidestepping, not yet resolved (would need either a genuine `EFOpp`
+in `Lang.v`, or a case split on `f = 0` in the translation/proof).
+
 Still not done: a `RealJson.v`-ingested version of this same example
 (parsing the real JSON *text*, not just the hand-built `real_expr`
 term the way `examples/NaturalCoq.v`'s own instances now go beyond);
-recognizing any Coquelicot-adjacent shape beyond this one (`Rminus`/
-`Ropp`/`Rdiv`, `R` literals other than small-integer `iZR`, anything
-nested deeper where the error-propagation question above would
-actually start to matter); and the general compositional correspondence
-theorem itself, if ever prioritized -- which the paragraph above
-already scopes as Flocq-scale work, not a bounded next step.
+`"ropp"` (the signed-zero edge case above); `R` literals other than
+small-integer `iZR`; anything nested deeper where the error-propagation
+question above would actually start to matter; and the general
+compositional correspondence theorem itself, if ever prioritized --
+which the paragraph above already scopes as Flocq-scale work, not a
+bounded next step.
 `coq-coquelicot`/`coq-mathcomp-ssreflect` are installed in this dev
 environment (via `coq-released`) so further real captures are possible,
 but neither is a build dependency of `coq2py` itself — they only

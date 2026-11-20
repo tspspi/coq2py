@@ -149,10 +149,11 @@
     needs an extra `S` for those two, and the proof needs a second
     [destruct fuel] step to match. *)
 
-(** [RFLit]/[RApp2]'s new ["rplus"]/["rmult"] cases: a first, narrow
-    step into Coquelicot-adjacent code (`docs/roadmap.md`'s own
-    section on this, and `coq/RealBridge.v`'s header), confirmed
-    directly against a real extracted Coquelicot-proven function:
+(** [RFLit]/[RApp2]'s new ["rplus"]/["rmult"]/["rminus"]/["rdiv"]
+    cases: a first, narrow step into Coquelicot-adjacent code
+    (`docs/roadmap.md`'s own section on this, and
+    `coq/RealBridge.v`'s header), confirmed directly against a real
+    extracted Coquelicot-proven function:
 
       Definition quad (x : R) : R := x * x + 1.
       Lemma quad_is_derive : forall x, is_derive quad x (2 * x).
@@ -197,7 +198,17 @@
     concrete-instance correspondence (checked for one specific input,
     where the arithmetic involved happens to be exact, no rounding
     error to propagate) is still honestly within reach, and is exactly
-    what the worked example below does. *)
+    what the worked example below does.
+
+    ["rminus"]/["rdiv"] round out the four basic operations the same
+    way, translating into [EFSub]/[EFDiv] (already in [Lang.v]) --
+    deliberately *not* ["ropp"] (unary negation) alongside them:
+    translating it as [EFSub (EFConst 0) e] would compute
+    [PrimFloat.sub 0 f] where [real_eval]'s own reference computes
+    [PrimFloat.opp f] directly, and those two differ for [f = 0] under
+    IEEE-754's signed zero ([0.0 - 0.0 = +0.0], but [-0.0] is a
+    distinct value from [opp 0.0]) -- a genuine edge case, not
+    excluded here by fiat. *)
 
 From Coq Require Import ZArith String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -264,6 +275,8 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VFloat f1), Some (VFloat f2) =>
           if string_dec fn "rplus" then Some (VFloat (PrimFloat.add f1 f2))
           else if string_dec fn "rmult" then Some (VFloat (PrimFloat.mul f1 f2))
+          else if string_dec fn "rminus" then Some (VFloat (PrimFloat.sub f1 f2))
+          else if string_dec fn "rdiv" then Some (VFloat (PrimFloat.div f1 f2))
           else None
       | _, _ => None
       end
@@ -360,6 +373,8 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           else if string_dec fn "orb" then Some (EOr e1 e2)
           else if string_dec fn "rplus" then Some (EFAdd e1 e2)
           else if string_dec fn "rmult" then Some (EFMul e1 e2)
+          else if string_dec fn "rminus" then Some (EFSub e1 e2)
+          else if string_dec fn "rdiv" then Some (EFDiv e1 e2)
           else None
       | _, _ => None
       end
@@ -542,6 +557,16 @@ Proof.
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
        reflexivity|].
     destruct (string_dec fn "rmult") as [Heq|Hne10];
+      [inversion Htrans; subst; simpl; rewrite IH1, IH2;
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
+       reflexivity|].
+    destruct (string_dec fn "rminus") as [Heq|Hne11];
+      [inversion Htrans; subst; simpl; rewrite IH1, IH2;
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
+       reflexivity|].
+    destruct (string_dec fn "rdiv") as [Heq|Hne12];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
        destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c]|];
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
