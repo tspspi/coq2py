@@ -182,23 +182,29 @@ an open guess.
   grown a field) is the worked instance, run all the way to real
   Python.
 
-What `RealIR.v` deliberately does *not* yet do, in roughly the order
-they'd be needed next:
+**Done** (landed in `coq/RealJson.v`): parsing the actual JSON *text*
+`Extraction Language JSON` emits -- not just building `real_expr` terms
+directly as Gallina values the way `examples/Kinematics.v` builds
+`expr` terms by hand. `RealJson.v` is a generic `jvalue` parser (reusing
+`Json.v`'s string/number lexing; tolerant of the whitespace real `coqc`
+output has that `Json.v`'s own bespoke grammar deliberately lacks) plus
+an interpreter into `real_expr`/`real_decl`/`real_fix_decl`, confirmed
+end to end against four fresh `coqc` probes (`clamp_nonneg`, `classify`,
+`swap_xz`, `any_true`) -- each mechanically parsed from real extraction
+JSON produces, through the rest of the already-proven pipeline,
+byte-identical Python to the hand-built version already in
+`examples/NaturalCoq.v`. This also landed the nested `Z0`/`Zpos`/
+`Zneg`/`XH`/`XO`/`XI` numeral reconstruction (folding real `expr:constructor`
+numeral encodings back into `RZLit`'s plain `Z`), so that item below is
+done too, not just the parser shell around it. Not yet proved: no
+roundtrip/soundness theorem for the parser itself (unlike `Json.v`'s
+own `parse_print_roundtrip`) -- correctness is checked empirically (the
+four instances above), not by proof; tracked as `RealJson.v`'s own next
+step, the file's header has the detail.
 
-- Parse the actual JSON *text* `Extraction Language JSON` emits into a
-  `real_expr` -- today, `real_expr` terms are built directly as Gallina
-  values (the same way `examples/Kinematics.v` already builds `expr`
-  terms directly, without first round-tripping through `Json.v`'s
-  parser). Writing that parser means handling arbitrary nesting (`decl`/
-  `expr`/`pat`/`type` tags with list-valued fields), which reopens
-  exactly the structural-induction problem the 2-field-record/2-function-
-  mutual-recursion caps were designed around, for a *new* grammar this
-  time, not `Json.v`'s own.
-- Recognize integer literals: a numeral extracts as nested `Z0`/`Zpos`/
-  `Zneg`/`positive` (`XH`/`XO`/`XI`) constructor applications, not a flat
-  JSON number. `real_expr`'s own `RZLit` already stores a plain `Z` (no
-  new type invented for this), so folding the nested constructors into
-  that `Z` is purely a job for the future JSON-text parser above.
+What `RealIR.v`/`RealJson.v` deliberately does *not* yet do, in
+roughly the order they'd be needed next:
+
 - Broaden the recognized intrinsic set further: genuinely *N-ary*
   `Record`s/mutual-recursion groups specifically (an `ERecordN`-style
   recognizer that works for *any* field count, not one more fixed
@@ -524,6 +530,43 @@ minimum:
 - Only after those exist does a "PyTorch backend" become a sensible
   question (same array semantics, plus autodiff — a further, separate
   formalization question about what the generated code's gradients mean).
+
+## Coquelicot support -- gated on the `R`-vs-float item above, not independent
+
+A real request: extend `RealIR.v`/`RealJson.v`'s recognized fragment to
+cover code built on [Coquelicot](http://coquelicot.saclay.inria.fr/)
+(derivatives, limits, series, integrals over Coq's classical `R`). This
+is *not* a small addition to the existing ingestion recognizer the way
+`RCase`/`RRecord3` were — it is blocked on the still-open "formalization
+of `R` and its correspondence to IEEE-754 floats" item directly above,
+for a structural reason worth spelling out:
+
+- Coq's `R` is axiomatic (Dedekind-cut/Cauchy-style, not a computable
+  representation); `Extraction` of `R`'s own operations
+  (`Rplus`/`Rmult`/...) produces *axioms to realize*, not runnable code
+  — the same "R has no computational content" gap this roadmap's float
+  section already describes resolving for `PrimFloat` by replacing `R`
+  with floats entirely at the *source* language level. Coquelicot is
+  built *on top of* `R`, so it inherits this exactly, with no shortcut.
+- Coquelicot's own calculus lemmas (continuity, differentiability,
+  `is_derive`, limits, integrals) are `Prop`-sorted *statements about*
+  such functions, not themselves computational — under this project's
+  own erasure model (`docs/duality.md`), a proof using them contributes
+  nothing to extracted code either way, which is correct and expected,
+  not a gap to close.
+- So the actually computational part of a Coquelicot-based `Definition`
+  is whatever real-valued *function* it names (built from `R`'s
+  operations) — and that is precisely, unavoidably, the open
+  `R`-vs-float correspondence item above, not a new, separate problem.
+
+The right first step, if this is prioritized, is therefore *not* to
+touch `RealIR.v` at all yet: it is choosing and formalizing that `R`
+model (most likely: a computable `expr`-level real/float type with an
+explicit, stated-not-assumed axiomatic correspondence to `R`, mirroring
+how `PrimFloat` already relates to `Lang.v`'s `VFloat`), then
+re-examining what a Coquelicot-based source definition's extracted JSON
+actually looks like (empirically, the same way every other `RealIR.v`
+shape was confirmed) before writing any new recognizer.
 
 ## Electromagnetism example: symmetry, Maxwell's equations, the wave equation
 
