@@ -112,16 +112,42 @@
     would fail it, which is the honest outcome for that case, not a
     silent wrong answer).
 
-    What's still not done: actually *using* [recgroup_rebuild_corr]
-    inside [rename_pyexpr_correct]'s own [PRecGroup]/[PVClosureGroup]
-    cases to retire their [admit.]s, and deciding where [group_names_ok]
-    itself becomes a hypothesis of (something built on top of)
-    [rename_pyexpr_correct] -- it cannot be discharged unconditionally
-    for an arbitrary [e] inside that theorem's own induction, so it has
-    to enter *somewhere* explicit, most likely as a side condition on
-    the top-level corollary this fix's actual callers (e.g. [PyPrint.
-    rename_function]) would use, not threaded through every one of the
-    44 already-proved cases' hypotheses. *)
+    What's still not done, now precisely scoped after actually attempting
+    the wiring (a real correction to the previous paragraph's own
+    estimate, which assumed this was a bounded, bureaucratic hypothesis-
+    threading pass -- it is not, quite): a syntactic well-formedness
+    predicate on the *current* expression alone ([pyexpr_recgroup_ok e],
+    recursing the same way [pyexpr_size] does) is not actually enough to
+    thread through [rename_pyexpr_correct]'s fuel-indexed induction,
+    because [PApp]'s closure-application cases need the fact for the
+    closure's own *captured body* -- and that body is reached through a
+    *value* already sitting in [rho] (from [vf]/[value_corr]), not
+    through a subterm of the *current* expression [PApp func arg]. No
+    amount of destructuring [pyexpr_recgroup_ok (PApp func arg)] can ever
+    produce a fact about a body that isn't syntactically present in
+    [func]/[arg] at all. So the well-formedness fact has to be carried
+    *in the value itself*: [value_corr]'s four closure constructors
+    ([vcorr_closure_lam]/[vcorr_closure_rec]/[vcorr_closuremut]/
+    [vcorr_closuregroup]) already carry an [env_corr] premise about the
+    captured environment for exactly this reason (established once, at
+    construction time; consumed later, at application time) -- a
+    [pyexpr_recgroup_ok body] (or, for [vcorr_closuremut]/
+    [vcorr_closuregroup], one per body/member) premise of the same shape
+    is what's actually missing, not a bigger hypothesis on [e]. That is
+    a real, additional change to [value_corr] (re-touching
+    [recgroup_rebuild_corr]'s own use of [vcorr_closuregroup] too), on
+    top of -- not instead of -- threading [pyexpr_recgroup_ok] through
+    the 44 already-proved cases' own [IHfuel'] calls (straightforward
+    for those: every subterm *is* syntactically present, so each call
+    site's needed fact is a plain projection out of the current case's
+    own [Hok], no [value_corr] involvement). Both pieces are needed
+    together before [PRecGroup]/[PVClosureGroup] can retire their
+    [admit.]s; neither alone suffices. Where [group_names_ok] (and now,
+    by the same argument, the closures' own body well-formedness) enters
+    as a hypothesis of whatever sits on top of [rename_pyexpr_correct]
+    is still an open call -- most likely a side condition on the actual
+    callers (e.g. [PyPrint.rename_function]), discharged per concrete
+    program the way every other partiality in this project already is. *)
 
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
@@ -469,6 +495,54 @@ Proof.
     + specialize (IH Hin). simpl in IH |- *. lia.
 Qed.
 
+(** The explicit, checkable side condition a [PRecGroup]'s own
+    env-correspondence needs ([ec_cons_group], later below): no
+    member's own name is of the [fresh_name] shape. Trivial to
+    discharge for every concrete group this project runs. *)
+Definition group_names_ok (fns : list (var * var * pyexpr)) : Prop :=
+  forall f p b, In (f, p, b) fns -> forall k, f <> fresh_name k.
+
+(** A well-formedness predicate on [pyexpr] itself, recursing the same
+    way [pyexpr_size] does: every [PRecGroup] anywhere inside [e] (at
+    any depth) has member names avoiding the [fresh_name] shape. This
+    is the explicit, checkable hypothesis [rename_pyexpr_correct]
+    (below) needs for its own [PRecGroup]/[PVClosureGroup] cases --
+    *not* a hypothesis that can be discharged unconditionally for an
+    arbitrary [e], since it is genuinely false for an adversarial one
+    (a group member named literally [v7] really can collide with an
+    unrelated [fresh_name 7] elsewhere in the same renamed tree, which
+    really would make two distinct bindings share one generated Python
+    identifier -- the exact bug class this whole file exists to rule
+    out). Every concrete group this project runs discharges it
+    trivially by [reflexivity]/[discriminate] against [fresh_name]'s
+    ["v" ++ digits] shape. *)
+Fixpoint pyexpr_recgroup_ok (e : pyexpr) : Prop :=
+  match e with
+  | PConst _ | PBool _ | PVar _ | PNil | PFConst _ | PStrConst _ => True
+  | PNot e1 | PFst e1 | PSnd e1 | PField _ e1 | PInl e1 | PInr e1 | PFieldN _ e1 =>
+      pyexpr_recgroup_ok e1
+  | PAdd e1 e2 | PSub e1 e2 | PMul e1 e2 | PEq e1 e2 | PLt e1 e2 | PLe e1 e2
+  | PAnd e1 e2 | POr e1 e2 | PPair e1 e2 | PFAdd e1 e2 | PFSub e1 e2 | PFMul e1 e2
+  | PFDiv e1 e2 | PFEq e1 e2 | PFLt e1 e2 | PFLe e1 e2 | PDiv e1 e2 | PMod e1 e2
+  | PApp e1 e2 | PCons e1 e2 | PStrConcat e1 e2 | PStrEq e1 e2
+  | PLet _ e1 e2 | PRecord _ e1 _ e2 =>
+      pyexpr_recgroup_ok e1 /\ pyexpr_recgroup_ok e2
+  | PIf c e1 e2 => pyexpr_recgroup_ok c /\ pyexpr_recgroup_ok e1 /\ pyexpr_recgroup_ok e2
+  | PRepeat _ _ body init => pyexpr_recgroup_ok body /\ pyexpr_recgroup_ok init
+  | PLam _ body => pyexpr_recgroup_ok body
+  | PRec _ _ body => pyexpr_recgroup_ok body
+  | PRecMut _ _ body1 _ _ body2 => pyexpr_recgroup_ok body1 /\ pyexpr_recgroup_ok body2
+  | PListMatch sc nc _ _ cc => pyexpr_recgroup_ok sc /\ pyexpr_recgroup_ok nc /\ pyexpr_recgroup_ok cc
+  | PCase sc _ c1 _ c2 => pyexpr_recgroup_ok sc /\ pyexpr_recgroup_ok c1 /\ pyexpr_recgroup_ok c2
+  | PRecordN fields =>
+      (fix go (fs : list (var * pyexpr)) : Prop :=
+         match fs with [] => True | (_, fe) :: rest => pyexpr_recgroup_ok fe /\ go rest end) fields
+  | PRecGroup fns =>
+      group_names_ok fns /\
+      (fix go (fs : list (var * var * pyexpr)) : Prop :=
+         match fs with [] => True | (_, _, b) :: rest => pyexpr_recgroup_ok b /\ go rest end) fns
+  end.
+
 Lemma rename_pyexpr_monotone : forall e env n, n <= snd (rename_pyexpr env n e).
 Proof.
   assert (Hstrong : forall sz e, pyexpr_size e <= sz -> forall env n, n <= snd (rename_pyexpr env n e)).
@@ -614,16 +688,19 @@ Inductive value_corr : pyvalue -> pyvalue -> Prop :=
       value_corr (PVRecordN fs) (PVRecordN fs')
   | vcorr_closure_lam : forall param body cenv env n yparam body' cenv',
       env_corr n env cenv cenv' ->
+      pyexpr_recgroup_ok body ->
       rename_pyexpr env n (PLam param body) = (PLam yparam body', snd (rename_pyexpr env n (PLam param body))) ->
       value_corr (PVClosure None param body cenv) (PVClosure None yparam body' cenv')
   | vcorr_closure_rec : forall f param body cenv env n yf yparam body' cenv',
       env_corr n env cenv cenv' ->
+      pyexpr_recgroup_ok body ->
       rename_pyexpr env n (PRec f param body)
         = (PRec yf yparam body', snd (rename_pyexpr env n (PRec f param body))) ->
       value_corr (PVClosure (Some f) param body cenv) (PVClosure (Some yf) yparam body' cenv')
   | vcorr_closuremut : forall f1 param1 body1 f2 param2 body2 cenv which
                                env n yf1 yparam1 body1' yf2 yparam2 body2' cenv',
       env_corr n env cenv cenv' ->
+      pyexpr_recgroup_ok body1 -> pyexpr_recgroup_ok body2 ->
       rename_pyexpr env n (PRecMut f1 param1 body1 f2 param2 body2)
         = (PRecMut yf1 yparam1 body1' yf2 yparam2 body2',
            snd (rename_pyexpr env n (PRecMut f1 param1 body1 f2 param2 body2))) ->
@@ -631,6 +708,7 @@ Inductive value_corr : pyvalue -> pyvalue -> Prop :=
                  (PVClosureMut yf1 yparam1 body1' yf2 yparam2 body2' cenv' which)
   | vcorr_closuregroup : forall fns cenv self_name env n fns' cenv',
       env_corr n env cenv cenv' ->
+      pyexpr_recgroup_ok (PRecGroup fns) ->
       rename_pyexpr env n (PRecGroup fns)
         = (PRecGroup fns', snd (rename_pyexpr env n (PRecGroup fns))) ->
       value_corr (PVClosureGroup fns cenv self_name) (PVClosureGroup fns' cenv' self_name)
@@ -659,10 +737,10 @@ with env_corr : nat -> list (var * var) -> pyenv -> pyenv -> Prop :=
 
 (** [env_corr]'s bound only ever needs to grow: nothing about the
     relation depends on using the *tightest* bound. *)
-Lemma env_corr_weaken : forall n env rho rho',
-  env_corr n env rho rho' -> forall n', n <= n' -> env_corr n' env rho rho'.
+Lemma env_corr_weaken : forall n n' env rho rho',
+  n <= n' -> env_corr n env rho rho' -> env_corr n' env rho rho'.
 Proof.
-  intros n env rho rho' H.
+  intros n n' env rho rho' Hle H. revert n' Hle.
   induction H as [n0 | n0 m x v v' env0 rho0 rho0' Hm Hv Hcorr _
                   | n0 f v v' env0 rho0 rho0' Hf Hv Hcorr IH]; intros n' Hle.
   - constructor.
@@ -767,13 +845,6 @@ Fixpoint recgroup_build_bindings
   | (f, p, b) :: rest => (f, PVClosureGroup fns cenv f) :: recgroup_build_bindings rest fns cenv
   end.
 
-(** The explicit, checkable side condition [ec_cons_group] needs,
-    specialized to an actual [fns]: no member's own name is of the
-    [fresh_name] shape. Trivial to discharge for every concrete group
-    this project runs. *)
-Definition group_names_ok (fns : list (var * var * pyexpr)) : Prop :=
-  forall f p b, In (f, p, b) fns -> forall k, f <> fresh_name k.
-
 (** [rename_pyexpr]'s [PRecGroup] case renames every member's own
     [param]/[body] but never its name (see this file's header) -- so
     the *list of names* a group ends up with is exactly the list it
@@ -869,12 +940,13 @@ Lemma recgroup_rebuild_corr :
   forall env0 n0 cenv cenv', env_corr n0 env0 cenv cenv' ->
   forall fns fns' n',
   rename_pyexpr env0 n0 (PRecGroup fns) = (PRecGroup fns', n') ->
-  group_names_ok fns ->
+  pyexpr_recgroup_ok (PRecGroup fns) ->
   env_corr n0 (List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env0)
               (recgroup_build_bindings fns fns cenv)
               (recgroup_build_bindings fns' fns' cenv').
 Proof.
-  intros env0 n0 cenv cenv' Hcorr0 fns fns' n' Hren Hok.
+  intros env0 n0 cenv cenv' Hcorr0 fns fns' n' Hren Hwf.
+  assert (Hok : group_names_ok fns) by (destruct Hwf as [Hok _]; exact Hok).
   assert (Hren2 : rename_pyexpr env0 n0 (PRecGroup fns)
                   = (PRecGroup fns', snd (rename_pyexpr env0 n0 (PRecGroup fns))))
     by (rewrite Hren; reflexivity).
@@ -894,6 +966,7 @@ Proof.
       + exact (Hok f p b Hin).
       + apply (vcorr_closuregroup fns cenv f env0 n0 fns').
         * exact Hcorr0.
+        * exact Hwf.
         * exact Hren2.
       + apply (IHfs Hsub'). }
   pose proof (Hbodies fns (fun f p b Hin => Hin)) as Hb.
