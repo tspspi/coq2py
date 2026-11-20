@@ -501,3 +501,132 @@ Proof.
   }
   intros e env n. apply (Hstrong (pyexpr_size e) e (le_n _) env n).
 Qed.
+
+(* ------------------------------------------------------------------ *)
+(** * Correctness: renaming does not change what [peval] computes
+
+    [value_corr v v'] / [env_corr n env rho rho'] are a joint logical
+    relation: [env_corr] ties [env] (the renaming map), [rho] (the
+    original environment) and [rho'] (the renamed one) together
+    *structurally*, one entry at a time, in exactly the order
+    [rename_pyexpr]'s own binders push them -- the [m < n] chain
+    descends strictly with depth, so (via [fresh_name_injective]) no
+    two entries anywhere in one [env_corr] derivation ever share a
+    renamed name. [value_corr]'s closure cases carry their own
+    captured [env]/[n] existentially, since different closures in one
+    program are renamed under different (but each individually
+    well-formed) accumulated bindings.
+
+    [pyval_opt_corr] is intentionally *one-sided*: it only constrains
+    the renamed side when the original [peval] actually succeeds, the
+    same forward-simulation shape [translate_preserves_semantics] would
+    have if stated for a possibly-stuck evaluator cast to this form.
+    This sidesteps a genuine (if narrow) edge case for the *other*
+    direction with no loss to what this theorem is for: nothing here
+    needs "if the original gets stuck, so does the renamed one" (a
+    stuck original already produced nothing to preserve), and proving
+    it would require knowing no real source identifier ever collides,
+    character for character, with a generated [fresh_name] -- a fact
+    about the rest of the pipeline's naming conventions, not about
+    [rename_pyexpr] itself. *)
+
+Inductive value_corr : pyvalue -> pyvalue -> Prop :=
+  | vcorr_z : forall z, value_corr (PVZ z) (PVZ z)
+  | vcorr_bool : forall bb, value_corr (PVBool bb) (PVBool bb)
+  | vcorr_float : forall ff, value_corr (PVFloat ff) (PVFloat ff)
+  | vcorr_str : forall ss, value_corr (PVStr ss) (PVStr ss)
+  | vcorr_pair : forall v1 v2 v1' v2',
+      value_corr v1 v1' -> value_corr v2 v2' -> value_corr (PVPair v1 v2) (PVPair v1' v2')
+  | vcorr_inl : forall v v', value_corr v v' -> value_corr (PVInl v) (PVInl v')
+  | vcorr_inr : forall v v', value_corr v v' -> value_corr (PVInr v) (PVInr v')
+  | vcorr_record : forall k1 v1 k2 v2 v1' v2',
+      value_corr v1 v1' -> value_corr v2 v2' ->
+      value_corr (PVRecord k1 v1 k2 v2) (PVRecord k1 v1' k2 v2')
+  | vcorr_recordn : forall fs fs',
+      Forall2 (fun kv kv' => fst kv = fst kv' /\ value_corr (snd kv) (snd kv')) fs fs' ->
+      value_corr (PVRecordN fs) (PVRecordN fs')
+  | vcorr_closure_lam : forall param body cenv env n yparam body' cenv',
+      env_corr n env cenv cenv' ->
+      rename_pyexpr env n (PLam param body) = (PLam yparam body', snd (rename_pyexpr env n (PLam param body))) ->
+      value_corr (PVClosure None param body cenv) (PVClosure None yparam body' cenv')
+  | vcorr_closure_rec : forall f param body cenv env n yf yparam body' cenv',
+      env_corr n env cenv cenv' ->
+      rename_pyexpr env n (PRec f param body)
+        = (PRec yf yparam body', snd (rename_pyexpr env n (PRec f param body))) ->
+      value_corr (PVClosure (Some f) param body cenv) (PVClosure (Some yf) yparam body' cenv')
+  | vcorr_closuremut : forall f1 param1 body1 f2 param2 body2 cenv which
+                               env n yf1 yparam1 body1' yf2 yparam2 body2' cenv',
+      env_corr n env cenv cenv' ->
+      rename_pyexpr env n (PRecMut f1 param1 body1 f2 param2 body2)
+        = (PRecMut yf1 yparam1 body1' yf2 yparam2 body2',
+           snd (rename_pyexpr env n (PRecMut f1 param1 body1 f2 param2 body2))) ->
+      value_corr (PVClosureMut f1 param1 body1 f2 param2 body2 cenv which)
+                 (PVClosureMut yf1 yparam1 body1' yf2 yparam2 body2' cenv' which)
+  | vcorr_closuregroup : forall fns cenv self_name env n fns' self_name' cenv',
+      env_corr n env cenv cenv' ->
+      rename_pyexpr env n (PRecGroup fns)
+        = (PRecGroup fns', snd (rename_pyexpr env n (PRecGroup fns))) ->
+      self_name' = rename_lookup (fst (rename_group_env n fns)) self_name ->
+      value_corr (PVClosureGroup fns cenv self_name) (PVClosureGroup fns' cenv' self_name')
+
+with env_corr : nat -> list (var * var) -> pyenv -> pyenv -> Prop :=
+  | ec_nil : forall n, env_corr n [] [] []
+  | ec_cons : forall n m x v v' env rho rho',
+      m < n -> value_corr v v' -> env_corr m env rho rho' ->
+      env_corr n ((x, fresh_name m) :: env) ((x, v) :: rho) ((fresh_name m, v') :: rho').
+
+(** [env_corr]'s bound only ever needs to grow: nothing about the
+    relation depends on using the *tightest* bound. *)
+Lemma env_corr_weaken : forall n n' env rho rho',
+  n <= n' -> env_corr n env rho rho' -> env_corr n' env rho rho'.
+Proof.
+  intros n n' env rho rho' Hle H.
+  destruct H as [n0 | n0 m x v v' env0 rho0 rho0' Hm Hv Hcorr].
+  - constructor.
+  - apply ec_cons; [lia | exact Hv | exact Hcorr].
+Qed.
+
+(** No entry [env_corr] ever builds into [rho'] uses a seed [>=] the
+    bound in force when it was built -- the structural reason two
+    different bindings can never collide, spelled out for [rho']
+    directly (the form the lookup lemma below actually needs). *)
+Lemma env_corr_rho'_absent : forall n env rho rho' m,
+  env_corr n env rho rho' -> n <= m -> plookup rho' (fresh_name m) = None.
+Proof.
+  intros n env rho rho' m H. revert m.
+  induction H as [n0 | n0 m0 x v v' env0 rho0 rho0' Hm0 Hv Hcorr IH]; intros m Hle.
+  - reflexivity.
+  - cbn [plookup]. destruct (string_dec (fresh_name m) (fresh_name m0)) as [Heq|Hneq].
+    + apply fresh_name_injective in Heq. lia.
+    + apply IH. lia.
+Qed.
+
+(** The heart of the correctness proof: looking a variable up on the
+    original side and on the renamed side (via [rename_lookup]) agree
+    whenever the original lookup actually succeeds -- the one-sided
+    form [pyval_opt_corr] needs; see this section's header for why the
+    other direction is intentionally not claimed. *)
+Lemma env_corr_lookup : forall n env rho rho' x,
+  env_corr n env rho rho' ->
+  match plookup rho x with
+  | None => True
+  | Some v => exists v', plookup rho' (rename_lookup env x) = Some v' /\ value_corr v v'
+  end.
+Proof.
+  intros n env rho rho' x H.
+  induction H as [n | n m x0 v0 v0' env0 rho0 rho0' Hm Hv Hcorr IH].
+  - cbn [plookup]. exact I.
+  - cbn [plookup rename_lookup]. destruct (string_dec x x0) as [->|Hne].
+    + destruct (string_dec (fresh_name m) (fresh_name m)) as [_|Hc];
+        [| exfalso; apply Hc; reflexivity].
+      exists v0'. split; [reflexivity | exact Hv].
+    + cbn [plookup] in IH. destruct (plookup rho0 x) as [v|] eqn:Hlook; [| exact I].
+      destruct IH as [v' [Hv' Hcv]].
+      assert (Habsent : rename_lookup env0 x <> fresh_name m).
+      { intro Heq.
+        pose proof (env_corr_rho'_absent m env0 rho0 rho0' m Hcorr (le_n _)) as Habs.
+        rewrite Heq in Hv'. rewrite Hv' in Habs. discriminate. }
+      destruct (string_dec (rename_lookup env0 x) (fresh_name m)) as [Heq|_].
+      * contradiction.
+      * exists v'. split; [exact Hv' | exact Hcv].
+Qed.
