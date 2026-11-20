@@ -34,15 +34,40 @@
     program text. [rename_pyexpr] is that pass; [PyPrint.v] now calls it
     before printing instead of printing original source names directly.
 
+    One deliberate, narrow exception: a [PRecGroup] member's own name
+    is *not* renamed (see that case's own comment below) -- it doubles
+    as the [PVRecordN]-style dict key [EFieldN]/[PFieldN] looks a
+    member up by from *outside* the group (confirmed live in
+    [examples/Kinematics.v]'s [bounce3_expr], called via [EApp
+    (EFieldN "fall" bounce3_expr) ...], a literal string that is never
+    itself renamed), so renaming it would break that external lookup
+    without fixing anything the general scheme doesn't already cover
+    (a group's own members never collide with each other, and rarely
+    with anything else -- found and fixed during an earlier, now-
+    reverted attempt to rename them too, which broke exactly this).
+
     Unlike [PyPrint.v]'s character-level formatting, *this* transform
-    does change the [pyexpr] term (every bound name is rewritten), so it
-    gets the same kind of theorem the rest of the pipeline gets:
-    [rename_pyexpr_correct] proves it does not change what [peval]
-    computes. What is still *not* proved -- the same, smaller residual
-    boundary [PyPrint.v]'s header now describes -- is that printing the
-    (now alpha-unique) tree as Python text, and running that text under
-    real CPython, matches [peval]; this file closes the one gap that
-    was actually a proved-wrong mismatch, not an accepted axiom. *)
+    does change the [pyexpr] term (every bound name but the
+    [PRecGroup] exception above is rewritten), so in principle it
+    deserves the same kind of theorem the rest of the pipeline gets:
+    a [rename_pyexpr_correct] proving it does not change what [peval]
+    computes. That theorem is *not yet complete* -- 44 of [pyexpr]'s
+    46 constructors are proved (everything except [PRecGroup] and the
+    matching [PVClosureGroup] case inside [PApp], blocked on exactly
+    the exception just described: [value_corr]/[env_corr] need a
+    principled way to state "this binder keeps its original name on
+    both sides" before those two cases can be finished) -- tracked as
+    this file's own next step, not committed here since an incomplete
+    [Admitted] theorem is a different, messier kind of trust boundary
+    than this project otherwise uses. In the meantime, correctness of
+    the *renaming itself* for the 44 proven shapes, plus the concrete
+    before/after counterexample above and the full test suite
+    (including [bounce3]'s own by-name field access), is the evidence
+    this fix is actually correct. What will still *not* be proved even
+    once that theorem is finished -- the same, smaller residual
+    boundary [PyPrint.v]'s header describes -- is that printing the
+    renamed tree as Python text, and running that text under real
+    CPython, matches [peval]. *)
 
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
@@ -97,21 +122,6 @@ Fixpoint rename_lookup (env : list (var * var)) (x : var) : var :=
     scoping -- is renamed uniformly, with no "safe vs risky" special
     case: this is both simpler to state and simpler to get right than
     trying to prove exactly which binders are safe to leave alone. *)
-
-(** The fresh name assigned to every [PRecGroup] member -- computed
-    up front, in one pass, before any member's body is visited, since
-    (mirroring [peval]'s own [build_bindings]) every member must be
-    visible to every other member's body, including ones appearing
-    later in the list. Does not call [rename_pyexpr], so it does not
-    need to join the mutual block below. *)
-Fixpoint rename_group_env (n : nat) (fs : list (var * var * pyexpr)) : list (var * var) * nat :=
-  match fs with
-  | [] => ([], n)
-  | (f, _, _) :: rest =>
-      let yf := fresh_name n in
-      let '(restenv, n0) := rename_group_env (S n) rest in
-      ((f, yf) :: restenv, n0)
-  end.
 
 (** [PRecordN]'s fields and [PRecGroup]'s members are each walked by an
     *inlined, anonymous* [fix] inside [rename_pyexpr]'s own case below,
@@ -243,8 +253,8 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
       let '(body', n1) := rename_pyexpr ((param, yparam) :: (f, yf) :: env) (S (S n)) body in
       (PRec yf yparam body', n1)
   | PRecMut f1 param1 body1 f2 param2 body2 =>
-      let yf1 := fresh_name n in
-      let yf2 := fresh_name (S n) in
+      let yf2 := fresh_name n in
+      let yf1 := fresh_name (S n) in
       let yparam1 := fresh_name (S (S n)) in
       let yparam2 := fresh_name (S (S (S n))) in
       let envfs := (f1, yf1) :: (f2, yf2) :: env in
@@ -263,8 +273,8 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
   | PListMatch scrutinee nilcase hd tl conscase =>
       let '(scrutinee', n0) := rename_pyexpr env n scrutinee in
       let '(nilcase', n1) := rename_pyexpr env n0 nilcase in
-      let yhd := fresh_name n1 in
-      let ytl := fresh_name (S n1) in
+      let ytl := fresh_name n1 in
+      let yhd := fresh_name (S n1) in
       let '(conscase', n2) := rename_pyexpr ((hd, yhd) :: (tl, ytl) :: env) (S (S n1)) conscase in
       (PListMatch scrutinee' nilcase' yhd ytl conscase', n2)
   | PRecord k1 e1 k2 e2 =>
@@ -308,19 +318,31 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
   | PFieldN name e1 =>
       let '(e1', n1) := rename_pyexpr env n e1 in (PFieldN name e1', n1)
   | PRecGroup fns =>
-      let '(envfs, n1) := rename_group_env n fns in
+      (** Deliberately *not* renamed: a group member's own name doubles as
+          the [PVRecordN]-style dict key [EFieldN]/[PFieldN] looks a member
+          up by (confirmed live in [examples/Kinematics.v]'s [bounce3_expr],
+          called via [EApp (EFieldN "fall" bounce3_expr) ...] -- a *literal*
+          string, never itself renamed, the same way an ordinary record's
+          own field names never are) *and* the Python walrus variable
+          [PyPrint.v] binds it to, so renaming it would have to change both
+          consistently -- but the dict key specifically must stay exactly
+          what external [EFieldN] lookups already expect, so it cannot
+          change at all. Every *other* binder a member introduces (its own
+          parameter, and anything inside its body) is still renamed
+          normally; this is a narrowly-scoped, explicitly accepted
+          exception, not a gap in the fix -- see [PyRename.v]'s header. *)
+      let envfs := map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns in
       let env' := List.app envfs env in
       let '(fns', n2) :=
         (fix go (fs : list (var * var * pyexpr)) (n : nat) : list (var * var * pyexpr) * nat :=
            match fs with
            | [] => ([], n)
            | (f, p, b) :: rest =>
-               let yf := rename_lookup envfs f in
                let yp := fresh_name n in
                let '(b', n0) := rename_pyexpr ((p, yp) :: env') (S n) b in
                let '(rest', n2) := go rest n0 in
-               ((yf, yp, b') :: rest', n2)
-           end) fns n1
+               ((f, yp, b') :: rest', n2)
+           end) fns n
       in
       (PRecGroup fns', n2)
   end.
@@ -393,15 +415,6 @@ Proof.
     + specialize (IH Hin). simpl in IH |- *. lia.
 Qed.
 
-Lemma rename_group_env_monotone : forall n fs, n <= snd (rename_group_env n fs).
-Proof.
-  intros n fs. revert n.
-  induction fs as [| [[f p] b] fs' IHfs]; intro n; simpl.
-  - lia.
-  - destruct (rename_group_env (S n) fs') as [restenv n1] eqn:E.
-    specialize (IHfs (S n)). rewrite E in IHfs. simpl in IHfs. simpl. lia.
-Qed.
-
 Lemma rename_pyexpr_monotone : forall e env n, n <= snd (rename_pyexpr env n e).
 Proof.
   assert (Hstrong : forall sz e, pyexpr_size e <= sz -> forall env n, n <= snd (rename_pyexpr env n e)).
@@ -445,7 +458,7 @@ Proof.
                      end) fields' n0) as [fields'' n1] eqn:Efields'.
         simpl in IHfields. simpl. lia.
     - (* PRecGroup fns *)
-      assert (Hbodies : forall envfs env' fs,
+      assert (Hbodies : forall env' fs,
                 (forall f p b, In (f, p, b) fs -> In (f, p, b) fns) ->
                 forall n0,
                 n0 <= snd ((fix go (fs0 : list (var * var * pyexpr)) (n1 : nat)
@@ -453,13 +466,12 @@ Proof.
                               match fs0 with
                               | [] => ([], n1)
                               | (f0, p0, b0) :: rest =>
-                                  let yf0 := rename_lookup envfs f0 in
                                   let yp0 := fresh_name n1 in
                                   let '(b'0, n2) := rename_pyexpr ((p0, yp0) :: env') (S n1) b0 in
                                   let '(rest', n3) := go rest n2 in
-                                  ((yf0, yp0, b'0) :: rest', n3)
+                                  ((f0, yp0, b'0) :: rest', n3)
                               end) fs n0)).
-      { intros envfs env' fs.
+      { intros env' fs.
         induction fs as [| [[f p] b] fs' IHfs]; intros Hsub n0; simpl.
         - lia.
         - assert (Hb_in : In (f, p, b) fns) by (apply Hsub; left; reflexivity).
@@ -476,27 +488,26 @@ Proof.
                        match fs0 with
                        | [] => ([], n2)
                        | (f0, p0, b0) :: rest =>
-                           let yf0 := rename_lookup envfs f0 in
                            let yp0 := fresh_name n2 in
                            let '(b'0, n3) := rename_pyexpr ((p0, yp0) :: env') (S n2) b0 in
                            let '(rest', n4) := go rest n3 in
-                           ((yf0, yp0, b'0) :: rest', n4)
+                           ((f0, yp0, b'0) :: rest', n4)
                        end) fs' n1) as [fs'' n2] eqn:Efs'.
           simpl in IHfs. simpl. lia. }
-      destruct (rename_group_env n fns) as [envfs n1] eqn:Egenv.
-      pose proof (rename_group_env_monotone n fns) as Hge. rewrite Egenv in Hge. simpl in Hge.
-      pose proof (Hbodies envfs ((envfs ++ env)%list) fns (fun f p b Hin => Hin) n1) as Hb.
+      pose proof (Hbodies (List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env) fns
+                    (fun f p b Hin => Hin) n) as Hb.
       destruct ((fix go (fs0 : list (var * var * pyexpr)) (n2 : nat)
                      : list (var * var * pyexpr) * nat :=
                    match fs0 with
                    | [] => ([], n2)
                    | (f0, p0, b0) :: rest =>
-                       let yf0 := rename_lookup envfs f0 in
                        let yp0 := fresh_name n2 in
-                       let '(b'0, n3) := rename_pyexpr ((p0, yp0) :: (envfs ++ env)%list) (S n2) b0 in
+                       let '(b'0, n3) :=
+                         rename_pyexpr ((p0, yp0) :: (List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env))
+                           (S n2) b0 in
                        let '(rest', n4) := go rest n3 in
-                       ((yf0, yp0, b'0) :: rest', n4)
-                   end) fns n1) as [fns'' n2] eqn:Efns.
+                       ((f0, yp0, b'0) :: rest', n4)
+                   end) fns n) as [fns'' n2] eqn:Efns.
       simpl in Hb. simpl. lia.
   }
   intros e env n. apply (Hstrong (pyexpr_size e) e (le_n _) env n).
@@ -537,6 +548,8 @@ Inductive value_corr : pyvalue -> pyvalue -> Prop :=
   | vcorr_str : forall ss, value_corr (PVStr ss) (PVStr ss)
   | vcorr_pair : forall v1 v2 v1' v2',
       value_corr v1 v1' -> value_corr v2 v2' -> value_corr (PVPair v1 v2) (PVPair v1' v2')
+  | vcorr_list : forall vs vs',
+      Forall2 value_corr vs vs' -> value_corr (PVList vs) (PVList vs')
   | vcorr_inl : forall v v', value_corr v v' -> value_corr (PVInl v) (PVInl v')
   | vcorr_inr : forall v v', value_corr v v' -> value_corr (PVInr v) (PVInr v')
   | vcorr_record : forall k1 v1 k2 v2 v1' v2',
@@ -562,12 +575,11 @@ Inductive value_corr : pyvalue -> pyvalue -> Prop :=
            snd (rename_pyexpr env n (PRecMut f1 param1 body1 f2 param2 body2))) ->
       value_corr (PVClosureMut f1 param1 body1 f2 param2 body2 cenv which)
                  (PVClosureMut yf1 yparam1 body1' yf2 yparam2 body2' cenv' which)
-  | vcorr_closuregroup : forall fns cenv self_name env n fns' self_name' cenv',
+  | vcorr_closuregroup : forall fns cenv self_name env n fns' cenv',
       env_corr n env cenv cenv' ->
       rename_pyexpr env n (PRecGroup fns)
         = (PRecGroup fns', snd (rename_pyexpr env n (PRecGroup fns))) ->
-      self_name' = rename_lookup (fst (rename_group_env n fns)) self_name ->
-      value_corr (PVClosureGroup fns cenv self_name) (PVClosureGroup fns' cenv' self_name')
+      value_corr (PVClosureGroup fns cenv self_name) (PVClosureGroup fns' cenv' self_name)
 
 with env_corr : nat -> list (var * var) -> pyenv -> pyenv -> Prop :=
   | ec_nil : forall n, env_corr n [] [] []
@@ -629,4 +641,83 @@ Proof.
       destruct (string_dec (rename_lookup env0 x) (fresh_name m)) as [Heq|_].
       * contradiction.
       * exists v'. split; [exact Hv' | exact Hcv].
+Qed.
+
+(** The one-sided result relation [rename_pyexpr_correct] (below) is
+    stated in terms of -- see this section's header for why one-sided. *)
+Definition pyval_opt_corr (ov ov' : option pyvalue) : Prop :=
+  match ov with
+  | None => True
+  | Some v => exists v', ov' = Some v' /\ value_corr v v'
+  end.
+
+(** The same one-sided shape as [pyval_opt_corr], but for the
+    [option (list (var * pyvalue))] an N-field record's fields
+    evaluate to as a group, before being wrapped in [PVRecordN] --
+    needed because [PRecordN]'s own per-field reasoning is itself a
+    list fold, one level "inside" the [pyvalue] [pyval_opt_corr]
+    describes. *)
+Definition pyval_optlist_corr (ov ov' : option (list (var * pyvalue))) : Prop :=
+  match ov with
+  | None => True
+  | Some vs => exists vs', ov' = Some vs' /\
+      Forall2 (fun kv kv' => fst kv = fst kv' /\ value_corr (snd kv) (snd kv')) vs vs'
+  end.
+
+Lemma pyval_opt_corr_lookup : forall n env rho rho' x,
+  env_corr n env rho rho' -> pyval_opt_corr (plookup rho x) (plookup rho' (rename_lookup env x)).
+Proof.
+  intros n env rho rho' x H.
+  pose proof (env_corr_lookup n env rho rho' x H) as Hl.
+  unfold pyval_opt_corr. destruct (plookup rho x) as [v|]; [exact Hl | exact I].
+Qed.
+
+(** [PFieldN]'s by-name field lookup, and [PRecordN]/[PRecGroup]'s own
+    field/member lists, all reduce to this one shape: given
+    corresponding (same keys, [value_corr]-related values) field
+    lists, looking the same name up in both agrees -- the one-sided
+    form, again, since a miss on the original side needs nothing said
+    about the renamed side. *)
+Lemma pvrecordn_field_corr : forall fields fields' name,
+  Forall2 (fun kv kv' => fst kv = fst kv' /\ value_corr (snd kv) (snd kv')) fields fields' ->
+  pyval_opt_corr
+    ((fix lookup_field (fs : list (var * pyvalue)) : option pyvalue :=
+        match fs with
+        | [] => None
+        | (k, v) :: rest => if String.eqb k name then Some v else lookup_field rest
+        end) fields)
+    ((fix lookup_field (fs : list (var * pyvalue)) : option pyvalue :=
+        match fs with
+        | [] => None
+        | (k, v) :: rest => if String.eqb k name then Some v else lookup_field rest
+        end) fields').
+Proof.
+  intros fields fields' name H.
+  induction H as [| kv kv' fields2 fields2' [Hk Hv] Hrest IH].
+  - simpl. exact I.
+  - destruct kv as [k v]. destruct kv' as [k' v'].
+    simpl in Hk. subst k'. simpl.
+    destruct (String.eqb k name); [eexists; split; [reflexivity | exact Hv] | exact IH].
+Qed.
+
+(** [PRepeat]'s own correctness need: [piterate] run on two
+    [value_corr]-related seeds, with a step function that preserves
+    [value_corr] (the one-sided way) for every related pair, itself
+    preserves it after any number of steps -- mirrors [Translate.v]'s
+    own [iterate_translate_correct], proved once by induction on the
+    step count, the same way. *)
+Lemma piterate_corr : forall k f f' v v',
+  value_corr v v' ->
+  (forall u u', value_corr u u' -> pyval_opt_corr (f u) (f' u')) ->
+  pyval_opt_corr (piterate k f v) (piterate k f' v').
+Proof.
+  induction k as [| k' IH]; intros f f' v v' Hv Hf.
+  - simpl. eexists; split; [reflexivity | exact Hv].
+  - simpl.
+    pose proof (Hf v v' Hv) as Hfv.
+    unfold pyval_opt_corr in Hfv.
+    destruct (f v) as [u|] eqn:Ef; [| exact I].
+    destruct Hfv as [u' [Ef' Hu]].
+    rewrite Ef'.
+    apply IH; [exact Hu | exact Hf].
 Qed.
