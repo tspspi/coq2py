@@ -257,3 +257,68 @@ Example ropp_ir_matches_expected_value :
 Proof. reflexivity. Qed.
 
 Compute py_function "negate" ["x"] (translate (EFOpp (EVar "x"))).
+
+(* ------------------------------------------------------------------ *)
+(** * "rminus"/"rdiv"/"ropp" together, ingested from real JSON text
+
+    One more real probe, closing the loop for the rest of the float
+    fragment the same way [quad_decl_json] did for ["rplus"]/
+    ["rmult"]: a genuine Coquelicot-adjacent definition exercising
+    subtraction, division, *and* negation together, actually run
+    through [coqc] with [coq-coquelicot] installed, not assumed to
+    extract the way [quad]'s did:
+
+    [[
+    Definition combo (x y : R) : R := (x - y) / (- y).
+
+    Lemma combo_is_derive : forall x y, y <> 0 ->
+      is_derive (fun x0 => combo x0 y) x (/ (- y)).
+    Proof. intros x y Hy. unfold combo. auto_derive; auto. Admitted.
+
+    Extraction Language JSON.
+    Extraction "probe2_combo.json" combo.
+    ]]
+
+    ([combo_is_derive] is deliberately left [Admitted] in the *probe*
+    file this JSON came from -- that file is a throwaway scratch
+    artifact used only to run [coqc]'s extraction, never part of this
+    project's own proof obligations, and per this project's own
+    erasure model it couldn't change [combo]'s own extracted JSON
+    either way.) The real captured JSON confirms exactly the shape
+    [RealIR.v]'s header already predicted by analogy with ["rplus"]/
+    ["rmult"], now actually checked rather than assumed: [combo]'s own
+    two-argument [expr:lambda] body is [rdiv (rminus x y) (ropp y)] --
+    [RApp2 "rdiv"]/[RApp2 "rminus"]/[RApp1 "ropp"], exactly the shapes
+    [RealIR.v]/[RealJson.v] already recognize, no further parser
+    changes needed. *)
+Definition combo_decl_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""combo"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rdiv""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rminus""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""y""}]}, {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""ropp""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""y""}]}]}}}]}".
+
+Definition combo_decl_parsed : option real_decl := real_decl_of_module_json combo_decl_json "combo".
+
+Example combo_decl_parsed_shape :
+  combo_decl_parsed
+  = Some {| rd_argnames := ["x"; "y"];
+            rd_body := RApp2 "rdiv" (RApp2 "rminus" (RRel "x") (RRel "y"))
+                               (RApp1 "ropp" (RRel "y")) |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition combo_expr : expr :=
+  match combo_decl_parsed with
+  | Some rd =>
+      match real_to_expr rd.(rd_body) with
+      | Some e => e
+      | None => EFConst 0%float
+      end
+  | None => EFConst 0%float
+  end.
+
+(** [(10 - 4) / (-4) = -1.5] exactly -- no rounding to worry about for
+    this concrete instance, the same honest scoping [quad]'s own
+    concrete-instance check above already uses. *)
+Example combo_expr_matches_expected_value :
+  eval 10 [("x", VFloat 10); ("y", VFloat 4)] combo_expr = Some (VFloat (-1.5)).
+Proof. vm_compute. reflexivity. Qed.
+
+Compute py_function "combo" (match combo_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
+  (translate combo_expr).

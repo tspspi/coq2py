@@ -715,6 +715,18 @@ not a one-off probe -- the right fix for the *general* case is
 `Extract.v`'s own realizer-level string-handling speedup (already
 proven effective for the extracted OCaml path), not a bigger stack.
 
+**Done** (`"rminus"`/`"rdiv"`/`"ropp"` confirmed against real JSON
+text too, not just `"rplus"`/`"rmult"`): a second real probe --
+`combo (x y : R) := (x - y) / (- y)`, actually run through `coqc` with
+`coq-coquelicot` installed, not assumed by analogy -- confirms its
+extracted JSON is exactly `rdiv (rminus x y) (ropp y)`, the
+`RApp2`/`RApp1` shapes `RealIR.v`/`RealJson.v` already recognize, no
+further parser changes needed. `examples/CoquelicotDemo.v`'s
+`combo_decl_json` is that real captured JSON (one declaration, for
+the same `vm_compute`-stack reason as `quad`'s), parsed, translated,
+evaluated (`(10 - 4) / (-4) = -1.5` exactly), and printed to real,
+checked Python (`def combo(v0, v1): return ((v0 - v1) / (-v1))`).
+
 Still not done: `R` literals other than small-integer `iZR`; anything
 nested deeper where the error-propagation question above would
 actually start to matter;
