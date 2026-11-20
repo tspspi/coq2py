@@ -137,6 +137,25 @@ Definition bool_to_py (b : bool) : string := if b then "True" else "False".
     escaping logic is needed. *)
 Definition py_qstring (x : var) : string := """" ++ x ++ """".
 
+(** [py_qstring] is literally [Json.v]'s own [quote_string] (same
+    quote-wrapping, no escaping needed since [is_valid_ident]-
+    restricted names can't contain one) -- so it inherits [quote_
+    string]/[parse_qstring]'s already-proven [parse_qstring_print]
+    round trip for free, the same move [py_text_qstring_parses_back]
+    below makes for the escaped case. Covers every [py_qstring] call
+    site: record/[RecordN] field keys and a [PRecGroup] member's own
+    (never-renamed) name, every one of which is already required to
+    satisfy [is_valid_ident] elsewhere in this pipeline
+    ([expr_idents_valid]). *)
+Lemma py_qstring_is_quote_string : forall x, py_qstring x = quote_string x.
+Proof. intro x. reflexivity. Qed.
+
+Theorem py_qstring_parses_back : forall x, is_valid_ident x = true ->
+  forall rest, parse_qstring (py_qstring x ++ rest) = Some (x, rest).
+Proof.
+  intros x Hvalid rest. rewrite py_qstring_is_quote_string. apply parse_qstring_print, Hvalid.
+Qed.
+
 (** [EStrConst]'s own payload (see Lang.v's header) is *not* restricted
     to [is_valid_ident] -- any string, including one containing a
     literal double-quote or backslash character, is a valid literal --
