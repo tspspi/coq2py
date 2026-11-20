@@ -350,6 +350,45 @@ that computes something different from what was proved — the walrus-
 operator encoding of `PLet` is correct but not idiomatic, which is the
 right kind of bug to be able to have at this layer.
 
+That said, several *narrow, syntactic* properties of what this
+unproved printer actually emits are still fully proved, each closed
+under the global context (only the pre-existing `PrimFloat.float`
+axiom, no new ones):
+- `safe_py_name_not_keyword`: the generated function's own name
+  (never alpha-renamed) is never one of Python's reserved words
+  (`keyword.kwlist`, soft keywords like `match`/`case` deliberately
+  excluded -- confirmed directly that `def match(): return 1` is
+  valid Python).
+- `fresh_name_not_keyword`/`fresh_name_is_py_identifier`: every
+  *other* identifier `py_function` emits -- every `PyRename.fresh_name`-
+  generated parameter or bound variable, shape `"v" ++ digits` -- is
+  provably non-keyword (no Python keyword starts with `'v'`) and a
+  syntactically valid Python identifier.
+- `py_escape_text_is_escape_text`/`py_qstring_is_quote_string` (plus
+  their `_parses_back` corollaries): `py_escape_text`/`py_qstring` are
+  not just "similar to" `Json.v`'s own `escape_text`/`quote_string` --
+  they *are* the same functions, so Python string/identifier literals
+  for `EStrConst`/record field keys inherit `Json.v`'s already-proven
+  round-trip theorems for free, no new round-trip proof needed.
+- `rename_function_params_NoDup`: the parameter list `py_function`
+  actually prints into `def f(p1, ..., pn):` is always pairwise
+  distinct, for *any* input parameter list -- including one that had
+  duplicate or keyword-colliding names before renaming -- ruling out a
+  real Python `SyntaxError: duplicate argument 'x' in function
+  definition` that a bug in the renaming pass could otherwise produce.
+  Proved by naming `rename_function`'s previously-anonymous parameter-
+  seeding `fix` (`mk_param_env`, no behavior change) so it has
+  something to state a lemma about: `mk_param_env_snd_eq_seq` shows
+  the renamed parameters are exactly `fresh_name` applied to
+  consecutive seeds, then `fresh_name_injective` (PyRename.v, already
+  proved for the CPython scoping fix) plus the standard library's
+  `seq_NoDup` finish it.
+
+None of this is the semantics-preservation theorem GOAL.md's trust
+boundary explicitly declines to attempt for this file -- it's the
+largest *bounded* slice of "verification where possible" that doesn't
+require one.
+
 ## Narrow source and target subsets
 
 `expr`/`pyexpr` currently cover: integer, boolean, and float constants,

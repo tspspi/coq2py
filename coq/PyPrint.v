@@ -423,24 +423,83 @@ Qed.
 
 Definition newline : string := String (Ascii.ascii_of_nat 10) EmptyString.
 
+(** Assign each parameter, in order, the next fresh seed starting from
+    [n] -- named (unlike [rename_function]'s own inline anonymous
+    [fix] it replaces) so [mk_param_env_snd_eq_seq] below has
+    something to state a clean lemma about. *)
+Fixpoint mk_param_env (ps : list string) (n : nat) : list (var * var) * nat :=
+  match ps with
+  | [] => ([], n)
+  | p :: rest =>
+      let y := fresh_name n in
+      let '(restenv, n') := mk_param_env rest (S n) in
+      ((p, y) :: restenv, n')
+  end.
+
 (** Alpha-rename every parameter and bound variable in [body] (and the
     [params] themselves) to a fresh, globally-unique name before any
     printing happens -- see this file's header. [n0] is an arbitrary
     starting seed (there is only one top-level call per generated
     function, so any value works; [0] keeps it simple). *)
 Definition rename_function (params : list string) (body : pyexpr) : list string * pyexpr :=
-  let '(env0, n0) :=
-    (fix mk (ps : list string) (n : nat) : list (var * var) * nat :=
-       match ps with
-       | [] => ([], n)
-       | p :: rest =>
-           let y := fresh_name n in
-           let '(restenv, n') := mk rest (S n) in
-           ((p, y) :: restenv, n')
-       end) params 0%nat
-  in
+  let '(env0, n0) := mk_param_env params 0%nat in
   let '(body', _) := rename_pyexpr env0 n0 body in
   (map snd env0, body').
+
+(** Every seed [mk_param_env] hands out is consumed in order, starting
+    from [n] -- so the renamed parameter list is exactly [fresh_name]
+    applied to [n], [n+1], ..., one per original parameter. *)
+Lemma mk_param_env_snd_eq_seq : forall ps n,
+  map snd (fst (mk_param_env ps n)) = map fresh_name (seq n (length ps)).
+Proof.
+  induction ps as [| p ps' IH]; intros n; simpl.
+  - reflexivity.
+  - destruct (mk_param_env ps' (S n)) as [restenv n'] eqn:E.
+    simpl. f_equal.
+    specialize (IH (S n)). rewrite E in IH. simpl in IH. exact IH.
+Qed.
+
+(** A function injective everywhere (not just on this particular list)
+    maps a duplicate-free list to a duplicate-free list -- the
+    general fact [fresh_name_injective] (PyRename.v) needs to turn
+    [NoDup_seq] into [NoDup (map fresh_name _)] below. *)
+Lemma NoDup_map_injective : forall (A B : Type) (f : A -> B) (l : list A),
+  (forall x y, f x = f y -> x = y) -> NoDup l -> NoDup (map f l).
+Proof.
+  intros A B f l Hinj Hnd.
+  induction Hnd as [| x l' Hnotin Hnd' IH].
+  - constructor.
+  - simpl. constructor.
+    + intro Hin. apply in_map_iff in Hin as [x' [Heq Hin']].
+      apply Hinj in Heq. subst x'. contradiction.
+    + exact IH.
+Qed.
+
+(** The correctness property this whole alpha-renaming pass exists
+    for, stated directly about [py_function]'s own output for once,
+    not just about [rename_pyexpr]'s internal invariants: the
+    parameter list [py_function] actually prints into [def f(p1, ...,
+    pn):] is always pairwise distinct. Python itself enforces this at
+    parse time ([SyntaxError: duplicate argument 'x' in function
+    definition]) for a *literal* duplicate in the source text -- this
+    is the guarantee that [rename_function] never accidentally
+    produces one, for any input parameter list, including one that
+    already had duplicate or keyword-colliding names before renaming. *)
+Theorem rename_function_params_NoDup : forall params body,
+  NoDup (fst (rename_function params body)).
+Proof.
+  intros params body.
+  unfold rename_function.
+  destruct (mk_param_env params 0%nat) as [env0 n0] eqn:E.
+  destruct (rename_pyexpr env0 n0 body) as [body' n1] eqn:E2.
+  simpl.
+  assert (H : map snd env0 = map fresh_name (seq 0 (length params))).
+  { rewrite <- (mk_param_env_snd_eq_seq params 0%nat). rewrite E. reflexivity. }
+  rewrite H.
+  apply NoDup_map_injective.
+  - intros x y Hxy. apply fresh_name_injective. exact Hxy.
+  - apply seq_NoDup.
+Qed.
 
 (** Wrap a translated [pyexpr] as a complete, standalone Python function
     definition. *)
