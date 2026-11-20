@@ -1003,6 +1003,30 @@ Proof.
   exact Hb.
 Qed.
 
+Lemma recgroup_build_bindings_eq : forall gs fns cenv,
+  (fix build_bindings (gs0 : list (var * var * pyexpr)) : pyenv :=
+     match gs0 with
+     | [] => cenv
+     | (f, p, b) :: rest => (f, PVClosureGroup fns cenv f) :: build_bindings rest
+     end) gs
+  = recgroup_build_bindings gs fns cenv.
+Proof.
+  induction gs as [| [[f p] b] rest IH]; intros fns cenv; simpl.
+  - reflexivity.
+  - f_equal. apply IH.
+Qed.
+
+Lemma plookup_group_fn_in : forall fns self_name param body,
+  plookup_group_fn fns self_name = Some (param, body) ->
+  In (self_name, param, body) fns.
+Proof.
+  induction fns as [| [[f p] b] rest IH]; intros self_name param body Hlook.
+  - simpl in Hlook. discriminate.
+  - simpl in Hlook. destruct (string_dec f self_name) as [->|Hneq].
+    + injection Hlook as -> ->. left. reflexivity.
+    + right. apply (IH self_name param body Hlook).
+Qed.
+
 (** Connects [plookup_group_fn]'s by-name lookup (how [PApp] finds
     which member of a [PVClosureGroup] is actually being called) across
     [rename_pyexpr]'s [PRecGroup] case: if the original side finds a
