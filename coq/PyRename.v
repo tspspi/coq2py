@@ -66,46 +66,52 @@
     renamed tree as Python text, and running that text under real
     CPython, matches [peval].
 
-    A concrete plan for the remaining two cases, worked out but not yet
-    implemented: [PRecGroup]'s own construction needs *no* new
-    [env_corr] machinery at all -- building a [PVRecordN] of
-    [PVClosureGroup]s from [fns]/[fns'] only needs the *ambient*
-    [env_corr n env cenv cenv'] already in scope, applied once per
-    member via [vcorr_recordn]/[vcorr_closuregroup], since constructing
-    the value never evaluates a member's body. The real gap is
-    [PApp]'s reconstruction step: applying a [PVClosureGroup] rebuilds
-    *every* member's own binding (each name [f_i], deliberately
-    unrenamed) into the callee's environment before evaluating the
-    matched body, and relating that reconstructed environment on both
-    sides needs [env_corr] to accept a "same name on both sides" push
-    for each [f_i] -- exactly what an earlier, abandoned [ec_cons_same]
-    attempt tried. That attempt stalled because [env_corr_rho'_absent]
-    (and so [env_corr_lookup]) lean on every [rho']-side name being
-    *of the [fresh_name] shape* (via [fresh_name_injective]) to rule
-    out collisions; a pushed literal [f_i] isn't, so nothing already
-    proved rules out [f_i] someday coinciding with some *later*
-    [fresh_name k] picked for an unrelated binder. That risk is real in
-    general (a source identifier literally spelled like ["v7"] could
-    collide) but it is *not* a reason to abandon the exception -- it is
-    a reason to make it an explicit, checkable side condition instead
-    of trying to prove it away: add a hypothesis to the would-be
-    [ec_cons_group] constructor (and thread a matching
-    [pyexpr_recgroup_names_ok] well-formedness predicate -- "no
-    [PRecGroup] member name anywhere in this term is of the
-    [fresh_name] shape" -- through [rename_pyexpr_correct]'s statement)
-    rather than an unconditional axiom. Every concrete case this
-    project actually runs (["fall"]/["rise"]/["report"], ...) discharges
-    that side condition trivially ([discriminate]/[congruence] against
-    [fresh_name]'s ["v" ++ digits] shape); only a source program that
-    deliberately names something like [v7] would fail it, and failing
-    an explicit, checkable precondition is the honest outcome for that
-    case, not a silent wrong answer. The mechanical cost making this
-    real: [pyexpr_recgroup_names_ok] has to be threaded through the
-    induction's statement, which means revisiting every one of the 44
-    already-proved cases' call to the induction hypothesis to supply
-    it -- large and mechanical, not conceptually hard, which is why it
-    is recorded here as a plan rather than attempted in the same pass
-    that found it. *)
+    A concrete plan for the remaining two cases, now partly landed:
+    [PRecGroup]'s own construction needs *no* new [env_corr] machinery
+    at all -- building a [PVRecordN] of [PVClosureGroup]s from [fns]/
+    [fns'] only needs the *ambient* [env_corr n env cenv cenv'] already
+    in scope, applied once per member via [vcorr_recordn]/
+    [vcorr_closuregroup], since constructing the value never evaluates
+    a member's body. The real gap is [PApp]'s reconstruction step:
+    applying a [PVClosureGroup] rebuilds *every* member's own binding
+    (each name [f_i], deliberately unrenamed) into the callee's
+    environment before evaluating the matched body, and relating that
+    reconstructed environment on both sides needs [env_corr] to accept
+    a "same name on both sides" push for each [f_i] -- exactly what an
+    earlier, abandoned [ec_cons_same] attempt tried, and what
+    [ec_cons_group] (below, now landed) *is*: re-examining why that
+    attempt stalled ([env_corr_rho'_absent]/[env_corr_lookup] lean on
+    every [rho']-side name being *of the [fresh_name] shape*, via
+    [fresh_name_injective], to rule out collisions, which a pushed
+    literal [f_i] isn't) showed the fix needs only a single, *local*
+    side condition carried right in the new constructor -- [f_i] is
+    never of the [fresh_name] shape -- not a blanket axiom, and
+    critically *not* a hypothesis threaded through the whole induction:
+    because [ec_cons_group]'s pushed renamed-side name always *equals*
+    its own original-side key, a lookup for any *other*, already-
+    in-scope name [x <> f_i] can be shown to avoid colliding with
+    [f_i] using nothing but [x <> f_i] itself (if [x] resolves to
+    another [ec_cons_group] entry, its renamed name is just [x] again,
+    by the same identity property) or the one local side condition (if
+    [x] resolves to an ordinary [fresh_name k]) -- no "two different
+    groups never share a member name" assumption is needed either,
+    unlike an earlier worry. [env_corr_weaken]/[env_corr_rho'_absent]/
+    [env_corr_lookup] (plus a new helper, [rename_lookup_shape]) are
+    updated/added for this one more constructor, fully proved, no
+    axioms beyond the pre-existing [PrimFloat.float]. What's *still*
+    missing before [PRecGroup]/[PVClosureGroup] themselves can use
+    this: a lemma connecting [PApp]'s actual reconstructed environment
+    (built by the local [fix] in [PyLang.v]'s own [PApp] case, over the
+    *whole* [fns]/[fns'], generating one [env_corr] push per member via
+    [ec_cons_group]) to [rename_pyexpr]'s [PRecGroup] case's own
+    [fns]/[fns'] pairing -- a structural induction over the member
+    list, not yet written -- and, at the one point that lemma is
+    *invoked*, an explicit proof that this particular [fns]'s member
+    names avoid the [fresh_name] shape (trivial for every concrete
+    group this project runs, e.g. ["fall"]/["rise"]/["report"]; a
+    source program that deliberately named a member [v7] would fail
+    this precondition, which is the honest outcome for that case, not
+    a silent wrong answer). *)
 
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
@@ -623,17 +629,35 @@ with env_corr : nat -> list (var * var) -> pyenv -> pyenv -> Prop :=
   | ec_nil : forall n, env_corr n [] [] []
   | ec_cons : forall n m x v v' env rho rho',
       m < n -> value_corr v v' -> env_corr m env rho rho' ->
-      env_corr n ((x, fresh_name m) :: env) ((x, v) :: rho) ((fresh_name m, v') :: rho').
+      env_corr n ((x, fresh_name m) :: env) ((x, v) :: rho) ((fresh_name m, v') :: rho')
+  (** The [PRecGroup] exception's env-side counterpart: a binder that
+      keeps its *original* name on both sides instead of getting a
+      fresh one -- needed for [PApp]'s reconstruction of a
+      [PVClosureGroup]'s member bindings (see this section's header for
+      why [PRecGroup]'s own construction needs no such thing). Guarded
+      by an explicit, checkable side condition ([f] is never of the
+      [fresh_name] shape) carried right in the constructor rather than
+      threaded through every other case's hypotheses: every concrete
+      group this project actually runs discharges it trivially
+      ([discriminate] against [fresh_name]'s ["v" ++ digits] shape);
+      only a source program that deliberately names a group member like
+      [v7] could fail it, and failing an explicit precondition is the
+      honest outcome for that case, not a silently wrong one. *)
+  | ec_cons_group : forall n f v v' env rho rho',
+      (forall k, f <> fresh_name k) -> value_corr v v' -> env_corr n env rho rho' ->
+      env_corr n ((f, f) :: env) ((f, v) :: rho) ((f, v') :: rho').
 
 (** [env_corr]'s bound only ever needs to grow: nothing about the
     relation depends on using the *tightest* bound. *)
-Lemma env_corr_weaken : forall n n' env rho rho',
-  n <= n' -> env_corr n env rho rho' -> env_corr n' env rho rho'.
+Lemma env_corr_weaken : forall n env rho rho',
+  env_corr n env rho rho' -> forall n', n <= n' -> env_corr n' env rho rho'.
 Proof.
-  intros n n' env rho rho' Hle H.
-  destruct H as [n0 | n0 m x v v' env0 rho0 rho0' Hm Hv Hcorr].
+  intros n env rho rho' H.
+  induction H as [n0 | n0 m x v v' env0 rho0 rho0' Hm Hv Hcorr _
+                  | n0 f v v' env0 rho0 rho0' Hf Hv Hcorr IH]; intros n' Hle.
   - constructor.
   - apply ec_cons; [lia | exact Hv | exact Hcorr].
+  - apply ec_cons_group; [exact Hf | exact Hv | exact (IH n' Hle)].
 Qed.
 
 (** No entry [env_corr] ever builds into [rho'] uses a seed [>=] the
@@ -644,11 +668,37 @@ Lemma env_corr_rho'_absent : forall n env rho rho' m,
   env_corr n env rho rho' -> n <= m -> plookup rho' (fresh_name m) = None.
 Proof.
   intros n env rho rho' m H. revert m.
-  induction H as [n0 | n0 m0 x v v' env0 rho0 rho0' Hm0 Hv Hcorr IH]; intros m Hle.
+  induction H as [n0 | n0 m0 x v v' env0 rho0 rho0' Hm0 Hv Hcorr IH
+                  | n0 f v v' env0 rho0 rho0' Hf Hv Hcorr IH]; intros m Hle.
   - reflexivity.
   - cbn [plookup]. destruct (string_dec (fresh_name m) (fresh_name m0)) as [Heq|Hneq].
     + apply fresh_name_injective in Heq. lia.
     + apply IH. lia.
+  - cbn [plookup]. destruct (string_dec (fresh_name m) f) as [Heq|Hneq].
+    + exfalso. apply (Hf m). symmetry. exact Heq.
+    + apply IH. exact Hle.
+Qed.
+
+(** Every name [rename_lookup] can ever hand back, given a well-formed
+    [env_corr], is either the looked-up name itself unchanged (an
+    [ec_cons_group] binder) or a genuine [fresh_name] (an [ec_cons]
+    binder) -- the fact [env_corr_lookup]'s own new [ec_cons_group]
+    case below needs to rule out an accidental collision with the one
+    it just pushed. *)
+Lemma rename_lookup_shape : forall n env rho rho' x,
+  env_corr n env rho rho' ->
+  rename_lookup env x = x \/ exists k, rename_lookup env x = fresh_name k.
+Proof.
+  intros n env rho rho' x H.
+  induction H as [n0 | n0 m x0 v v' env0 rho0 rho0' Hm Hv Hcorr IH
+                  | n0 f v v' env0 rho0 rho0' Hf Hv Hcorr IH].
+  - cbn [rename_lookup]. left. reflexivity.
+  - cbn [rename_lookup]. destruct (string_dec x x0) as [->|Hne].
+    + right. exists m. reflexivity.
+    + exact IH.
+  - cbn [rename_lookup]. destruct (string_dec x f) as [->|Hne].
+    + left. reflexivity.
+    + exact IH.
 Qed.
 
 (** The heart of the correctness proof: looking a variable up on the
@@ -664,7 +714,8 @@ Lemma env_corr_lookup : forall n env rho rho' x,
   end.
 Proof.
   intros n env rho rho' x H.
-  induction H as [n | n m x0 v0 v0' env0 rho0 rho0' Hm Hv Hcorr IH].
+  induction H as [n | n m x0 v0 v0' env0 rho0 rho0' Hm Hv Hcorr IH
+                  | n f0 v0 v0' env0 rho0 rho0' Hf0 Hv Hcorr IH].
   - cbn [plookup]. exact I.
   - cbn [plookup rename_lookup]. destruct (string_dec x x0) as [->|Hne].
     + destruct (string_dec (fresh_name m) (fresh_name m)) as [_|Hc];
@@ -677,6 +728,18 @@ Proof.
         pose proof (env_corr_rho'_absent m env0 rho0 rho0' m Hcorr (le_n _)) as Habs.
         rewrite Heq in Hv'. rewrite Hv' in Habs. discriminate. }
       destruct (string_dec (rename_lookup env0 x) (fresh_name m)) as [Heq|_].
+      * contradiction.
+      * exists v'. split; [exact Hv' | exact Hcv].
+  - cbn [plookup rename_lookup]. destruct (string_dec x f0) as [->|Hne].
+    + destruct (string_dec f0 f0) as [_|Hc]; [| exfalso; apply Hc; reflexivity].
+      exists v0'. split; [reflexivity | exact Hv].
+    + cbn [plookup] in IH. destruct (plookup rho0 x) as [v|] eqn:Hlook; [| exact I].
+      destruct IH as [v' [Hv' Hcv]].
+      assert (Habsent : rename_lookup env0 x <> f0).
+      { pose proof (rename_lookup_shape n env0 rho0 rho0' x Hcorr) as [Heqx | [k Heqk]].
+        - rewrite Heqx. exact Hne.
+        - rewrite Heqk. intro Heq. apply (Hf0 k). symmetry. exact Heq. }
+      destruct (string_dec (rename_lookup env0 x) f0) as [Heq|_].
       * contradiction.
       * exists v'. split; [exact Hv' | exact Hcv].
 Qed.
