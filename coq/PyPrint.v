@@ -16,6 +16,26 @@
     "pretty" is exactly the kind of concern this file is allowed to not
     prove.
 
+    A real bug this design used to have, found by inspection and
+    confirmed by actually running the generated code: a walrus
+    assignment writes into the *one shared* enclosing Python scope, not
+    a fresh block scope, while [peval] models a closure as capturing an
+    *immutable snapshot* of its environment. If two sibling bindings
+    (anywhere: [PLet], [PListMatch]'s [hd]/[tl], [PCase]'s arms, ...) in
+    the same scope reused the same source name, and a closure created
+    under the first escaped past the point where the second rebound
+    that name, the escaped closure would (under real Python's
+    late-binding closure rule) read back the *second* binding's value,
+    not the first -- exactly the class of "printing silently changes
+    what the program computes" bug [docs/duality.md] says this project
+    does not accept for a Coq-to-Python step. [PyRename.rename_pyexpr]
+    fixes this the standard way: every binder is alpha-renamed to a
+    fresh, globally-unique name before any printing happens, so no two
+    distinct bindings in one generated function body ever share a
+    Python identifier, and no walrus write can ever land on a slot a
+    still-live closure depends on under a different meaning. [py_function]
+    below applies it; nothing in this file's own printing logic changed.
+
     Pairs render as real Python tuples ([(a, b)], [e[0]], [e[1]]), and
     booleans as Python's capitalized [True]/[False] literals.
 
@@ -105,6 +125,8 @@ Import ListNotations.
 Require Import Lang. (* reuses var *)
 Require Import PyLang.
 Require Import Json. (* reuses z_to_string *)
+Require Import PyRename. (* the alpha-renaming pass fixing the walrus/
+  closure-capture hazard described below *)
 Open Scope string_scope.
 
 Definition bool_to_py (b : bool) : string := if b then "True" else "False".
@@ -252,8 +274,28 @@ Fixpoint join_comma (xs : list string) : string :=
 
 Definition newline : string := String (Ascii.ascii_of_nat 10) EmptyString.
 
+(** Alpha-rename every parameter and bound variable in [body] (and the
+    [params] themselves) to a fresh, globally-unique name before any
+    printing happens -- see this file's header. [n0] is an arbitrary
+    starting seed (there is only one top-level call per generated
+    function, so any value works; [0] keeps it simple). *)
+Definition rename_function (params : list string) (body : pyexpr) : list string * pyexpr :=
+  let '(env0, n0) :=
+    (fix mk (ps : list string) (n : nat) : list (var * var) * nat :=
+       match ps with
+       | [] => ([], n)
+       | p :: rest =>
+           let y := fresh_name n in
+           let '(restenv, n') := mk rest (S n) in
+           ((p, y) :: restenv, n')
+       end) params 0%nat
+  in
+  let '(body', _) := rename_pyexpr env0 n0 body in
+  (map snd env0, body').
+
 (** Wrap a translated [pyexpr] as a complete, standalone Python function
     definition. *)
 Definition py_function (name : string) (params : list string) (body : pyexpr) : string :=
-  "def " ++ name ++ "(" ++ join_comma params ++ "):" ++ newline
-    ++ "    return " ++ py_expr body ++ newline.
+  let '(params', body') := rename_function params body in
+  "def " ++ name ++ "(" ++ join_comma params' ++ "):" ++ newline
+    ++ "    return " ++ py_expr body' ++ newline.
