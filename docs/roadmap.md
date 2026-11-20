@@ -649,15 +649,50 @@ under IEEE-754 signed zero (`0.0 - 0.0 = +0.0`, but `opp 0.0 = -0.0`)
 sidestepping, not yet resolved (would need either a genuine `EFOpp`
 in `Lang.v`, or a case split on `f = 0` in the translation/proof).
 
-Still not done: a `RealJson.v`-ingested version of this same example
-(parsing the real JSON *text*, not just the hand-built `real_expr`
-term the way `examples/NaturalCoq.v`'s own instances now go beyond);
-`"ropp"` (the signed-zero edge case above); `R` literals other than
-small-integer `iZR`; anything nested deeper where the error-propagation
-question above would actually start to matter; and the general
-compositional correspondence theorem itself, if ever prioritized --
-which the paragraph above already scopes as Flocq-scale work, not a
-bounded next step.
+**Done** (ingested from the real JSON *text*, not just hand-built):
+`RealJson.v` gained one small addition -- a Coquelicot-adjacent `R`
+literal extracts as `expr:apply`/`expr:global "iZR"` applied to a
+nested `Z` numeral (confirmed directly, in the real captured JSON),
+which the file's already-generic `expr:apply`/`expr:global` dispatch
+would otherwise turn into an *unrecognized* `RApp1 "iZR" (RZLit 1)`
+(`"iZR"` was never a name `RealIR.v` knows, only `RFLit` is). A new
+`float_of_Z` turns the parsed `Z` numeral directly into that `RFLit`
+instead. `examples/CoquelicotDemo.v`'s `quad_decl_json` is the real
+captured JSON bytes for `quad`'s own `decl:term` (not retyped by
+hand beyond JSON's own `"` escaping), run through
+`real_decl_of_module_json`, checked by `vm_compute` to produce
+*exactly* the same `real_decl` the hand-built `quad_ir` above was
+checked against -- and from there translated, evaluated, and printed
+to the same Python as the hand-built version, closing the loop this
+section's very first entry opened. This is also the first time
+`RealJson.v`'s own parser is actually exercised in a *committed*
+example at all, for any fragment (confirmed by checking: nothing in
+`examples/`/`test/` previously called `real_decl_of_module_json`,
+despite the four `Z`/`bool`-fragment instances this file's own header
+already claims were "confirmed" -- apparently only ever checked in
+now-discarded scratch files during an earlier session, not landed).
+
+A real, confirmed limitation surfaced doing this: parsing the *whole*
+captured module (~350KB, dominated by `ClassicalDedekindReals`'s own
+cut representation -- see above) makes `vm_compute` segfault on the
+dev machine, almost certainly a stack-depth issue in how `vm_compute`
+represents a string that large as nested `String` constructors, not a
+bug in the parsing logic itself (the same parser, fed just `quad`'s
+own `decl:term` sub-object -- still real, unedited JSON bytes, just
+not the surrounding bulk this recognizer was never going to look at
+anyway -- works immediately). `examples/CoquelicotDemo.v` uses the
+per-declaration JSON object for exactly this reason, documented rather
+than silently worked around; fixing `vm_compute`'s large-string
+behavior itself (as opposed to `Extract.v`'s existing fix for the
+*extracted OCaml* path) is tracked here as open, not attempted.
+
+Still not done: `"ropp"` (the signed-zero edge case above); `R`
+literals other than small-integer `iZR`; anything nested deeper where
+the error-propagation question above would actually start to matter;
+the `vm_compute`-on-a-large-string limitation just confirmed; and the
+general compositional correspondence theorem itself, if ever
+prioritized -- which the paragraph above already scopes as Flocq-scale
+work, not a bounded next step.
 `coq-coquelicot`/`coq-mathcomp-ssreflect` are installed in this dev
 environment (via `coq-released`) so further real captures are possible,
 but neither is a build dependency of `coq2py` itself — they only

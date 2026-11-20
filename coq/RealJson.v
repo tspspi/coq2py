@@ -28,9 +28,18 @@
       [expr:global] / [expr:rel] / [expr:constructor] (covering
       [True]/[False], [Nil]/[Cons], [Pair], [Inl]/[Inr], [Z0]/[Zpos]/
       [Zneg] applied to nested [XI]/[XO]/[XH] for a numeral, and an
-      arbitrary N-ary record constructor name for [RRecord3]), and a
+      arbitrary N-ary record constructor name for [RRecord3]), a
       self-recursive call recognized as an [expr:apply] whose [func] is
-      an [expr:global] naming the enclosing [fixgroup:item] itself.
+      an [expr:global] naming the enclosing [fixgroup:item] itself, and
+      (confirmed against a real, Coquelicot-adjacent probe -- see
+      [RealIR.v]'s own header) a Coquelicot-adjacent [R] literal, which
+      extracts as [expr:apply]/[expr:global "iZR"] applied to a nested
+      [Z] numeral -- recognized specially (via [float_of_Z], turning
+      the parsed numeral directly into an [RFLit]) rather than falling
+      through to the generic [expr:apply]/[expr:global] dispatch below,
+      which would otherwise build an unrecognized [RApp1 "iZR" (RZLit
+      z)] (["iZR"] is not a name [RealIR.v]'s [real_eval]/
+      [real_to_expr] know, only [RFLit] is).
       Every one of these shapes was confirmed by a *fresh* probe run of
       [coqc] 8.18.0 on genuine, human-written [Definition]s/
       [Fixpoint]s (not reused from this file's own prose, and not
@@ -83,6 +92,7 @@
     docs/roadmap.md as this file's own next step. *)
 
 From Coq Require Import ZArith String List Bool Ascii Lia.
+From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
 Import ListNotations.
 Require Import Lang.
 Require Import RealIR.
@@ -298,6 +308,27 @@ Definition z_of_json (fuel : nat) (j : jvalue) : option Z :=
   | _ => None
   end.
 
+(** A Coquelicot-adjacent [R] literal always extracts as [iZR] applied
+    to a [Z] numeral (confirmed directly against the real [quad]
+    probe, `coq/RealIR.v`'s own header) -- [float_of_Z] turns that
+    numeral directly into the [PrimFloat.float] [RFLit] needs, via the
+    same exact [spec_float] construction `coq/RealIR.v`'s probe already
+    confirmed normalizes correctly ([SF2Prim]'s own job, not re-done
+    here). Exact as long as [z] actually fits a double's 53-bit
+    mantissa -- the same honestly-documented limitation this project
+    already accepts for [Z] extracting to a native (not arbitrary-
+    precision) [int] (`docs/roadmap.md`); not reconstructing it from
+    nested [Zpos]/[XI]/[XO]/[XH] the way [RZLit]'s own [Z] literals are
+    confirmed-exact for is a parsing-time convenience, not a new
+    correctness claim -- this whole file, per its own header, is
+    checked by running it on real JSON, not by a soundness proof. *)
+Definition float_of_Z (z : Z) : PrimFloat.float :=
+  match z with
+  | Z0 => 0%float
+  | Zpos p => SF2Prim (S754_finite false p 0)
+  | Zneg p => SF2Prim (S754_finite true p 0)
+  end.
+
 (* ------------------------------------------------------------------ *)
 (** * [jvalue] -> [real_expr]
 
@@ -410,10 +441,16 @@ with real_app_of_json (self : option var) (fuel : nat) (fname : string) (args : 
   | S fuel' =>
   match args with
   | [a] =>
-      match real_expr_of_json self fuel' a with
-      | Some a' => Some (RApp1 fname a')
-      | None => None
-      end
+      if string_dec fname "iZR" then
+        match z_of_json fuel' a with
+        | Some z => Some (RFLit (float_of_Z z))
+        | None => None
+        end
+      else
+        match real_expr_of_json self fuel' a with
+        | Some a' => Some (RApp1 fname a')
+        | None => None
+        end
   | [a; b] =>
       match real_expr_of_json self fuel' a, real_expr_of_json self fuel' b with
       | Some a', Some b' => Some (RApp2 fname a' b')
