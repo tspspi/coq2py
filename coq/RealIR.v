@@ -256,6 +256,8 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
           if string_dec fn "fst" then Some v1
           else if string_dec fn "snd" then Some v2
           else None
+      | Some (VFloat f) =>
+          if string_dec fn "ropp" then Some (VFloat (PrimFloat.opp f)) else None
       | _ => None
       end
   | RApp2 fn a1 a2 =>
@@ -357,6 +359,7 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           if string_dec fn "negb" then Some (ENot e1)
           else if string_dec fn "fst" then Some (EFst e1)
           else if string_dec fn "snd" then Some (ESnd e1)
+          else if string_dec fn "ropp" then Some (EFOpp e1)
           else None
       | None => None
       end
@@ -498,6 +501,10 @@ Proof.
        destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|];
        reflexivity|].
     destruct (string_dec fn "snd") as [Heq|Hne3];
+      [inversion Htrans; subst; simpl; rewrite IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|];
+       reflexivity|].
+    destruct (string_dec fn "ropp") as [Heq|Hne4];
       [inversion Htrans; subst; simpl; rewrite IH1;
        destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|];
        reflexivity|].

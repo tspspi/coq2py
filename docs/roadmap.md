@@ -640,14 +640,29 @@ explains is not yet in scope.
 **Done** (rounding out the four basic operations): `"rminus"`/`"rdiv"`
 translate into the existing `EFSub`/`EFDiv`, the same way `"rplus"`/
 `"rmult"` do — `real_to_expr_preserves_semantics` extended again, no
-new axioms. Deliberately **not** `"ropp"` (unary negation) alongside
-them: translating it as `EFSub (EFConst 0) e` would compute
-`PrimFloat.sub 0 f` where `real_eval`'s own reference computes
-`PrimFloat.opp f` directly, and those two genuinely differ for `f = 0`
-under IEEE-754 signed zero (`0.0 - 0.0 = +0.0`, but `opp 0.0 = -0.0`)
-— a real edge case this file's own comment flags rather than silently
-sidestepping, not yet resolved (would need either a genuine `EFOpp`
-in `Lang.v`, or a case split on `f = 0` in the translation/proof).
+new axioms.
+
+**Done** (`"ropp"`, including the signed-zero edge case): a real,
+dedicated `EFOpp` landed in `Lang.v` (and its mirror, `PFOpp`, in
+`PyLang.v`), calling `PrimFloat.opp` directly — deliberately *not*
+translating unary negation as `EFSub (EFConst 0) e` the way a
+recognizer without its own constructor would have to, since that
+would compute `PrimFloat.sub 0 f` where the exact value needed is
+`PrimFloat.opp f`, and those two genuinely differ for `f = 0` under
+IEEE-754 signed zero (`0.0 - 0.0 = +0.0`, but `opp 0.0 = -0.0`,
+confirmed directly). A dedicated constructor sidesteps the edge case
+entirely rather than special-casing around it. This touched every
+layer the other float operations already touch —
+`Lang.v`/`PyLang.v`/`Translate.v`/`Json.v`/`PyPrint.v`/`PyRename.v`
+(including `rename_pyexpr_correct`'s own, freshly-completed
+correctness theorem, which needed one more case, following the exact
+pattern its other unary cases already use) — fully proved throughout,
+no new axioms beyond the pre-existing `PrimFloat` ones (`PrimFloat.opp`
+joins the set `PrimFloat.add`/`PrimFloat.sub`/etc. were already in).
+`RealIR.v`'s `RApp1` now recognizes `"ropp"` too, translating into
+`EFOpp`, confirmed directly (`eval` negates `3.0` to `-3.0` and `0.0`
+to `-0.0`, exactly matching `PrimFloat.opp`, not the `EFSub`
+workaround's wrong answer for the zero case).
 
 **Done** (ingested from the real JSON *text*, not just hand-built):
 `RealJson.v` gained one small addition -- a Coquelicot-adjacent `R`
@@ -700,9 +715,9 @@ not a one-off probe -- the right fix for the *general* case is
 `Extract.v`'s own realizer-level string-handling speedup (already
 proven effective for the extracted OCaml path), not a bigger stack.
 
-Still not done: `"ropp"` (the signed-zero edge case above); `R`
-literals other than small-integer `iZR`; anything nested deeper where
-the error-propagation question above would actually start to matter;
+Still not done: `R` literals other than small-integer `iZR`; anything
+nested deeper where the error-propagation question above would
+actually start to matter;
 extending `Extract.v`'s own realizer-level string speedup to cover
 `vm_compute`'s in-Coq path (not just the extracted-OCaml one it
 already covers), which is what would let a future `coqc`-build-time

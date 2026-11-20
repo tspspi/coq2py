@@ -737,6 +737,8 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""flt"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
   | EFLe e1 e2 =>
       "{""tag"":""fle"",""lhs"":" ++ print_expr e1 ++ ",""rhs"":" ++ print_expr e2 ++ "}"
+  | EFOpp e1 =>
+      "{""tag"":""fopp"",""value"":" ++ print_expr e1 ++ "}"
   | ERepeat n x body init =>
       "{""tag"":""repeat"",""count"":" ++ nat_to_string n
         ++ ",""name"":" ++ quote_string x
@@ -821,7 +823,7 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | EAdd e1 e2 | ESub e1 e2 | EMul e1 e2
   | EEq e1 e2 | ELt e1 e2 | ELe e1 e2
   | EAnd e1 e2 | EOr e1 e2 | EPair e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
-  | ENot e1 | EFst e1 | ESnd e1 => S (expr_fuel e1)
+  | ENot e1 | EFst e1 | ESnd e1 | EFOpp e1 => S (expr_fuel e1)
   | EIf c e1 e2 => S (Nat.max (expr_fuel c) (Nat.max (expr_fuel e1) (expr_fuel e2)))
   | ELet _ e1 e2 => S (Nat.max (expr_fuel e1) (expr_fuel e2))
   | EFAdd e1 e2 | EFSub e1 e2 | EFMul e1 e2 | EFDiv e1 e2
@@ -1285,6 +1287,17 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
                     end
                 | None => None
                 end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""fopp"",""value"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect "}" s2 with
+            | Some s3 => Some (EFOpp e1, s3)
             | None => None
             end
         | None => None
@@ -1835,7 +1848,7 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -2174,6 +2187,7 @@ Proof.
       | e1 e2                 (* EFEq *)
       | e1 e2                 (* EFLt *)
       | e1 e2                 (* EFLe *)
+      | e1                    (* EFOpp *)
       | rep_n x body init     (* ERepeat *)
       | e1 e2                 (* EDiv *)
       | e1 e2                 (* EMod *)
@@ -2441,6 +2455,12 @@ Proof.
     rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hv1 fuel' Hf1). simpl.
     repeat rewrite string_append_assoc.
     rewrite ((IHn (expr_fuel e2) Hlt2 e2 (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EFOpp *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hvalid fuel' Hf1). reflexivity.
   - (* ERepeat *)
     simpl in Hn.
     assert (Hlt1 : (expr_fuel body < n)%nat) by lia.

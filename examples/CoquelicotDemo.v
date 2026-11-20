@@ -220,3 +220,40 @@ Proof. vm_compute. reflexivity. Qed.
 
 Compute py_function "quad" (match quad_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
   (translate quad_expr_from_json).
+
+(* ------------------------------------------------------------------ *)
+(** * "ropp", and why it needed a real EFOpp, not a workaround
+
+    A Coquelicot-adjacent [Ropp] (unary negation over [R]) extracts
+    the same way [Rplus]/[Rmult] do -- an [expr:apply]/[expr:global
+    "ropp"] call -- recognized by [RealIR.v]'s [RApp1]. Translating it
+    as [EFSub (EFConst 0) e] (reusing already-existing constructors,
+    no new [Lang.v] addition) looked tempting, but is *wrong* for one
+    concrete input: IEEE-754 signed zero means [0.0 - 0.0 = +0.0]
+    while the true negation, [PrimFloat.opp 0.0], is [-0.0] -- a
+    different bit pattern, confirmed directly. [EFOpp] (and its
+    [PyLang.v] mirror, [PFOpp]) calls [PrimFloat.opp] directly instead,
+    the same way every other float operation in this project calls
+    its own primitive directly, so this is exact for every input,
+    zero included -- not an approximation with a known edge case. *)
+Example ropp_negates_three :
+  eval 5 [] (EFOpp (EFConst 3)) = Some (VFloat (-3)).
+Proof. reflexivity. Qed.
+
+(** The case a [EFSub (EFConst 0) e]-style workaround would have
+    gotten wrong: negating zero must give signed [-0.0], not [+0.0]. *)
+Example ropp_negates_zero_with_correct_sign :
+  eval 5 [] (EFOpp (EFConst 0)) = Some (VFloat (-0)).
+Proof. reflexivity. Qed.
+
+Definition ropp_ir : real_expr := RApp1 "ropp" (RRel "x").
+
+Example ropp_ir_translates :
+  real_to_expr ropp_ir = Some (EFOpp (EVar "x")).
+Proof. reflexivity. Qed.
+
+Example ropp_ir_matches_expected_value :
+  real_eval [("x", VFloat 3)] ropp_ir = Some (VFloat (-3)).
+Proof. reflexivity. Qed.
+
+Compute py_function "negate" ["x"] (translate (EFOpp (EVar "x"))).

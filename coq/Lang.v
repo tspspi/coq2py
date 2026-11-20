@@ -33,6 +33,18 @@
     [EIf]-usable float-to-bool coercion beyond that (a float condition
     gets stuck, same as any other wrong-shape value).
 
+    [EFOpp] (unary float negation) calls [PrimFloat.opp] directly, the
+    same way every other float operation here calls its own [PrimFloat]
+    primitive directly -- deliberately *not* translated as "multiply by
+    -1" or "subtract from 0" the way a recognizer without its own
+    dedicated constructor might have to: those are only *almost* the
+    same operation as [opp] under IEEE-754 signed zero ([0.0 - 0.0 =
+    +0.0], but [opp 0.0 = -0.0] -- confirmed directly), so a real,
+    dedicated [EFOpp] is what actually keeps this exact, not an
+    approximation with a known edge case (`docs/roadmap.md`'s
+    Coquelicot section used to carry this as an open gap for exactly
+    this reason, before this constructor existed).
+
     [ERepeat n x body init] is bounded iteration: evaluate [init] to a
     starting value, then apply [body] (with [x] bound to the current
     value) exactly [n] times, [n] a literal [nat] fixed at "compile
@@ -230,6 +242,7 @@ Inductive expr : Type :=
   | EFEq (e1 e2 : expr)
   | EFLt (e1 e2 : expr)
   | EFLe (e1 e2 : expr)
+  | EFOpp (e : expr)
   | ERepeat (n : nat) (x : var) (body init : expr)
   | EDiv (e1 e2 : expr)
   | EMod (e1 e2 : expr)
@@ -432,6 +445,11 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       match eval fuel' rho e1, eval fuel' rho e2 with
       | Some (VFloat f1), Some (VFloat f2) => Some (VBool (f1 <=? f2)%float)
       | _, _ => None
+      end
+  | EFOpp e1 =>
+      match eval fuel' rho e1 with
+      | Some (VFloat f1) => Some (VFloat (PrimFloat.opp f1))
+      | _ => None
       end
   | ERepeat n x body init =>
       match eval fuel' rho init with
@@ -640,6 +658,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EFEq e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFLt e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFLe e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFOpp e1 => expr_idents_valid is_valid_ident e1
   | ERepeat _ x body init =>
       andb (is_valid_ident x)
            (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident init))
