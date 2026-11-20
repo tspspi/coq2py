@@ -155,6 +155,42 @@ Fixpoint py_escape_text (s : string) : string :=
 
 Definition py_text_qstring (x : var) : string := """" ++ py_escape_text x ++ """".
 
+(** [py_escape_text]'s own comment above already claims it "mirrors"
+    [Json.v]'s [escape_text] -- true literally, not just in spirit:
+    same two characters, same escaping, same fallback case, just
+    written once more by hand. Proved here so [py_text_qstring]
+    inherits [escape_text]/[quote_text]'s own already-proven
+    [parse_qtext_print] round trip for free, instead of that claim
+    staying an unverified comment: this is genuine new verification
+    for [PyPrint.v] (a real correctness property -- the Python string
+    literal rendered for an arbitrary [EStrConst] payload, including
+    one containing a literal quote or backslash, is unambiguous and
+    reconstructs the exact original string -- not just structure-
+    preserving text formatting), reusing already-proven machinery
+    rather than opening new attack surface with a second, independent
+    escaping proof. *)
+Lemma py_escape_text_is_escape_text : forall s, py_escape_text s = escape_text s.
+Proof.
+  induction s as [| c s' IH]; simpl.
+  - reflexivity.
+  - destruct (Ascii.eqb c quote_char) eqn:Hq.
+    + apply Ascii.eqb_eq in Hq. subst. rewrite IH. reflexivity.
+    + destruct (Ascii.eqb c backslash_char) eqn:Hb; rewrite IH; reflexivity.
+Qed.
+
+Lemma py_text_qstring_is_quote_text : forall x, py_text_qstring x = quote_text x.
+Proof.
+  intro x. unfold py_text_qstring, quote_text.
+  rewrite py_escape_text_is_escape_text.
+  reflexivity.
+Qed.
+
+Theorem py_text_qstring_parses_back : forall x rest,
+  parse_qtext (py_text_qstring x ++ rest) = Some (x, rest).
+Proof.
+  intros x rest. rewrite py_text_qstring_is_quote_text. apply parse_qtext_print.
+Qed.
+
 Definition float_to_py (f : float) : string :=
   match Prim2SF f with
   | S754_zero false => "0.0"
