@@ -845,6 +845,35 @@ Fixpoint recgroup_build_bindings
   | (f, p, b) :: rest => (f, PVClosureGroup fns cenv f) :: recgroup_build_bindings rest fns cenv
   end.
 
+(** [PRecGroup]'s own [peval] case (PyLang.v) builds a [PVRecordN], not
+    an environment -- a different anonymous [fix], ending in [[]] (no
+    ambient environment appended) rather than [cenv]. Copied here the
+    same way, standalone, for the same reason. *)
+Fixpoint recgroup_build_fields
+    (gs fns : list (var * var * pyexpr)) (cenv : pyenv) : list (var * pyvalue) :=
+  match gs with
+  | [] => []
+  | (f, p, b) :: rest => (f, PVClosureGroup fns cenv f) :: recgroup_build_fields rest fns cenv
+  end.
+
+(** Identifies [recgroup_build_fields] with [PyLang.v]'s own anonymous
+    [build_fields] (its [PRecGroup] [peval] case), so a goal exposing
+    the latter (via [simpl]/[cbn [peval]]) can be rewritten into the
+    former -- the named, reusable form every other lemma above
+    actually works with. *)
+Lemma recgroup_build_fields_eq : forall gs fns cenv,
+  (fix build_fields (gs0 : list (var * var * pyexpr)) : list (var * pyvalue) :=
+     match gs0 with
+     | [] => []
+     | (f, p, b) :: rest => (f, PVClosureGroup fns cenv f) :: build_fields rest
+     end) gs
+  = recgroup_build_fields gs fns cenv.
+Proof.
+  induction gs as [| [[f p] b] rest IH]; intros fns cenv; simpl.
+  - reflexivity.
+  - f_equal. apply IH.
+Qed.
+
 (** [rename_pyexpr]'s [PRecGroup] case renames every member's own
     [param]/[body] but never its name (see this file's header) -- so
     the *list of names* a group ends up with is exactly the list it
@@ -972,6 +1001,100 @@ Proof.
   pose proof (Hbodies fns (fun f p b Hin => Hin)) as Hb.
   rewrite (recgroup_build_bindings_ext fns fns' fns' cenv' (eq_sym Hnames)) in Hb.
   exact Hb.
+Qed.
+
+(** Connects [plookup_group_fn]'s by-name lookup (how [PApp] finds
+    which member of a [PVClosureGroup] is actually being called) across
+    [rename_pyexpr]'s [PRecGroup] case: if the original side finds a
+    member (by its own, never-renamed name) with a given [param]/
+    [body], the renamed side finds the *same* member (same name) with
+    a corresponding [fresh_name]'d parameter and the correspondingly
+    renamed body -- proved the same way [recgroup_rebuild_corr] is
+    (generalizing over an arbitrary sub-list, no change to the outer
+    [fns]/[fns']/[env']), but now tracking the *specific* seed each
+    member's own parameter was assigned, not just environment
+    correspondence. *)
+
+Lemma plookup_group_fn_corr :
+  forall env0 n0 fns fns' n0',
+  rename_pyexpr env0 n0 (PRecGroup fns) = (PRecGroup fns', n0') ->
+  forall self_name param body,
+  plookup_group_fn fns self_name = Some (param, body) ->
+  exists body' sd,
+    n0 <= sd /\
+    plookup_group_fn fns' self_name = Some (fresh_name sd, body') /\
+    rename_pyexpr
+      ((param, fresh_name sd) :: List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env0)
+      (S sd) body
+    = (body', snd (rename_pyexpr
+         ((param, fresh_name sd) :: List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env0)
+         (S sd) body)).
+Proof.
+  intros env0 n0 fns fns' n0' Hren.
+  cbn [rename_pyexpr] in Hren.
+  set (envfs := map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) in Hren.
+  set (env' := List.app envfs env0) in Hren.
+  assert (Hbodies : forall fs,
+            forall seed,
+            forall self_name param body,
+            plookup_group_fn fs self_name = Some (param, body) ->
+            exists body' sd,
+              seed <= sd /\
+              plookup_group_fn
+                (fst ((fix go (gs : list (var * var * pyexpr)) (m : nat)
+                           : list (var * var * pyexpr) * nat :=
+                         match gs with
+                         | [] => ([], m)
+                         | (f, p, b) :: rest =>
+                             let yp := fresh_name m in
+                             let '(b', m0) := rename_pyexpr ((p, yp) :: env') (S m) b in
+                             let '(rest', m2) := go rest m0 in
+                             ((f, yp, b') :: rest', m2)
+                         end) fs seed)) self_name = Some (fresh_name sd, body') /\
+              rename_pyexpr ((param, fresh_name sd) :: env') (S sd) body
+                = (body', snd (rename_pyexpr ((param, fresh_name sd) :: env') (S sd) body))).
+  { induction fs as [| [[f p] b] rest IH]; intros seed self_name0 param0 body0 Hlook.
+    - simpl in Hlook. discriminate.
+    - simpl in Hlook. simpl.
+      destruct (rename_pyexpr ((p, fresh_name seed) :: env') (S seed) b) as [b' m0] eqn:Eb.
+      destruct ((fix go (gs : list (var * var * pyexpr)) (m : nat)
+                     : list (var * var * pyexpr) * nat :=
+                   match gs with
+                   | [] => ([], m)
+                   | (f0, p0, b0) :: rest0 =>
+                       let yp := fresh_name m in
+                       let '(b'0, m1) := rename_pyexpr ((p0, yp) :: env') (S m) b0 in
+                       let '(rest0', m2) := go rest0 m1 in
+                       ((f0, yp, b'0) :: rest0', m2)
+                   end) rest m0) as [rest' m2] eqn:Ego.
+      simpl.
+      destruct (string_dec f self_name0) as [Heq | Hneq].
+      + injection Hlook as Hp Hb. subst p b self_name0.
+        exists b', seed.
+        split; [lia |].
+        split; [destruct (string_dec f f) as [_|Hc]; [reflexivity | exfalso; apply Hc; reflexivity] |].
+        rewrite Eb. reflexivity.
+      + pose proof (IH m0 self_name0 param0 body0 Hlook) as [body' [sd [Hsd [Hplook Hbeq]]]].
+        exists body', sd.
+        split; [pose proof (rename_pyexpr_monotone b ((p, fresh_name seed) :: env') (S seed)) as Hm;
+                rewrite Eb in Hm; simpl in Hm; lia |].
+        split; [destruct (string_dec f self_name0) as [Hc|_]; [contradiction | rewrite Ego in Hplook; simpl in Hplook; exact Hplook] |].
+        exact Hbeq. }
+  destruct ((fix go (gs : list (var * var * pyexpr)) (m : nat)
+                 : list (var * var * pyexpr) * nat :=
+               match gs with
+               | [] => ([], m)
+               | (f, p, b) :: rest =>
+                   let yp := fresh_name m in
+                   let '(b', m0) := rename_pyexpr ((p, yp) :: env') (S m) b in
+                   let '(rest', m2) := go rest m0 in
+                   ((f, yp, b') :: rest', m2)
+               end) fns n0) as [fnsX n0X] eqn:Ego0.
+  injection Hren as Hren1 Hren2. subst fnsX.
+  intros self_name param body Hlook.
+  pose proof (Hbodies fns n0 self_name param body Hlook) as [body' [sd [Hsd [Hplook Hbeq]]]].
+  rewrite Ego0 in Hplook. simpl in Hplook.
+  exists body', sd. split; [exact Hsd | split; [exact Hplook | exact Hbeq]].
 Qed.
 
 (** The one-sided result relation [rename_pyexpr_correct] (below) is
