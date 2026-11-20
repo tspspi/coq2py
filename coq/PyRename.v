@@ -44,12 +44,13 @@
     real CPython, matches [peval]; this file closes the one gap that
     was actually a proved-wrong mismatch, not an accepted axiom. *)
 
-From Coq Require Import ZArith String List Bool.
+From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
 Require Import Lang.
 Require Import PyLang.
 Require Import Json. (* reuses z_to_string/z_of_string/z_round_trip *)
 Open Scope string_scope.
+Open Scope nat_scope.
 
 (* ------------------------------------------------------------------ *)
 (** * Fresh names *)
@@ -323,3 +324,180 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
       in
       (PRecGroup fns', n2)
   end.
+
+(* ------------------------------------------------------------------ *)
+(** * The renaming counter never goes backwards
+
+    Needed below to show every fresh name [rename_pyexpr] ever hands
+    out is actually fresh: each binder consumes the *current* counter
+    and passes a strictly larger one to everything printed after it,
+    so two different binders anywhere in one call are never assigned
+    the same seed.
+
+    Proved by *strong induction on [pyexpr_size e]*
+    ([well_founded_induction lt_wf]), mirroring [Json.v]'s own
+    [parse_print_roundtrip] proof technique (see that file's header):
+    plain structural [induction e] cannot reach a sub-[pyexpr] buried
+    inside [PRecordN]/[PRecGroup]'s own [list] field. [PRecGroup] needs
+    the strong form specifically (not the anonymous-[fix]-plus-
+    [induction on the list] shortcut [rename_pyexpr] itself uses above):
+    its body-renaming pass threads a *shared* [envfs]/[env'], computed
+    once for the whole member list, through every member -- a plain
+    [induction fns] would instead hand back an induction hypothesis
+    that *recomputes* [envfs] fresh for just the tail, which is not the
+    fact being used. A strong, size-indexed hypothesis lets the
+    [Hbodies] helper below carry [envfs]/[env'] as ordinary, externally
+    fixed parameters instead, with no such mismatch. *)
+
+Fixpoint pyexpr_size (e : pyexpr) : nat :=
+  match e with
+  | PConst _ | PBool _ | PVar _ | PNil | PFConst _ | PStrConst _ => 1
+  | PNot e1 | PFst e1 | PSnd e1 | PField _ e1 | PInl e1 | PInr e1 | PFieldN _ e1 =>
+      S (pyexpr_size e1)
+  | PAdd e1 e2 | PSub e1 e2 | PMul e1 e2 | PEq e1 e2 | PLt e1 e2 | PLe e1 e2
+  | PAnd e1 e2 | POr e1 e2 | PPair e1 e2 | PFAdd e1 e2 | PFSub e1 e2 | PFMul e1 e2
+  | PFDiv e1 e2 | PFEq e1 e2 | PFLt e1 e2 | PFLe e1 e2 | PDiv e1 e2 | PMod e1 e2
+  | PApp e1 e2 | PCons e1 e2 | PStrConcat e1 e2 | PStrEq e1 e2
+  | PLet _ e1 e2 | PRecord _ e1 _ e2 =>
+      S (pyexpr_size e1 + pyexpr_size e2)
+  | PIf c e1 e2 => S (pyexpr_size c + pyexpr_size e1 + pyexpr_size e2)
+  | PRepeat _ _ body init => S (pyexpr_size body + pyexpr_size init)
+  | PLam _ body => S (pyexpr_size body)
+  | PRec _ _ body => S (pyexpr_size body)
+  | PRecMut _ _ body1 _ _ body2 => S (pyexpr_size body1 + pyexpr_size body2)
+  | PListMatch sc nc _ _ cc => S (pyexpr_size sc + pyexpr_size nc + pyexpr_size cc)
+  | PCase sc _ c1 _ c2 => S (pyexpr_size sc + pyexpr_size c1 + pyexpr_size c2)
+  | PRecordN fields => S (fold_right (fun kv acc => pyexpr_size (snd kv) + acc) 0 fields)
+  | PRecGroup fns => S (fold_right (fun fpb acc => pyexpr_size (snd fpb) + acc) 0 fns)
+  end.
+
+Lemma pyexpr_size_in_fields :
+  forall k fe fields, In (k, fe) fields -> pyexpr_size fe < pyexpr_size (PRecordN fields).
+Proof.
+  intros k fe fields Hin.
+  induction fields as [| [k0 fe0] rest IH]; simpl in Hin.
+  - contradiction.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as -> ->. simpl. lia.
+    + specialize (IH Hin). simpl in IH |- *. lia.
+Qed.
+
+Lemma pyexpr_size_in_fns :
+  forall f p b fns, In (f, p, b) fns -> pyexpr_size b < pyexpr_size (PRecGroup fns).
+Proof.
+  intros f p b fns Hin.
+  induction fns as [| [[f0 p0] b0] rest IH]; simpl in Hin.
+  - contradiction.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as -> -> ->. simpl. lia.
+    + specialize (IH Hin). simpl in IH |- *. lia.
+Qed.
+
+Lemma rename_group_env_monotone : forall n fs, n <= snd (rename_group_env n fs).
+Proof.
+  intros n fs. revert n.
+  induction fs as [| [[f p] b] fs' IHfs]; intro n; simpl.
+  - lia.
+  - destruct (rename_group_env (S n) fs') as [restenv n1] eqn:E.
+    specialize (IHfs (S n)). rewrite E in IHfs. simpl in IHfs. simpl. lia.
+Qed.
+
+Lemma rename_pyexpr_monotone : forall e env n, n <= snd (rename_pyexpr env n e).
+Proof.
+  assert (Hstrong : forall sz e, pyexpr_size e <= sz -> forall env n, n <= snd (rename_pyexpr env n e)).
+  { induction sz as [sz IHsz] using (well_founded_induction lt_wf).
+    intros e Hsz env n.
+    destruct e as
+      [ z | b | x | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1
+      | c e1 e2 | e1 e2 | e1 | e1 | x e1 e2 | fl | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2
+      | e1 e2 | e1 e2 | k x body init | e1 e2 | e1 e2 | param body | f param body
+      | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
+      | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
+      | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns ];
+      simpl in Hsz; simpl;
+      try (
+        repeat match goal with
+        | |- context [ rename_pyexpr ?env0 ?n0 ?xx ] =>
+            let Hlt := fresh "Hlt" in
+            let H := fresh "H" in
+            assert (Hlt : pyexpr_size xx < sz) by lia;
+            pose proof (IHsz (pyexpr_size xx) Hlt xx (le_n _) env0 n0) as H;
+            destruct (rename_pyexpr env0 n0 xx) as [? ?] eqn:?;
+            simpl in H; simpl
+        end;
+        lia).
+    - (* PRecordN fields *)
+      revert Hsz n.
+      induction fields as [| [k fe] fields' IHfields]; intros Hsz n; simpl in Hsz; simpl.
+      + lia.
+      + assert (Hfe_lt : pyexpr_size fe < sz) by lia.
+        assert (Htail : pyexpr_size (PRecordN fields') <= sz) by (simpl; lia).
+        pose proof (IHsz (pyexpr_size fe) Hfe_lt fe (le_n _) env n) as Hfe.
+        destruct (rename_pyexpr env n fe) as [fe' n0] eqn:Efe. simpl in Hfe.
+        specialize (IHfields Htail n0).
+        destruct ((fix go (fs : list (var * pyexpr)) (n1 : nat) : list (var * pyexpr) * nat :=
+                     match fs with
+                     | [] => ([], n1)
+                     | (k0, fe0) :: rest =>
+                         let '(fe'0, n2) := rename_pyexpr env n1 fe0 in
+                         let '(rest', n3) := go rest n2 in
+                         ((k0, fe'0) :: rest', n3)
+                     end) fields' n0) as [fields'' n1] eqn:Efields'.
+        simpl in IHfields. simpl. lia.
+    - (* PRecGroup fns *)
+      assert (Hbodies : forall envfs env' fs,
+                (forall f p b, In (f, p, b) fs -> In (f, p, b) fns) ->
+                forall n0,
+                n0 <= snd ((fix go (fs0 : list (var * var * pyexpr)) (n1 : nat)
+                                : list (var * var * pyexpr) * nat :=
+                              match fs0 with
+                              | [] => ([], n1)
+                              | (f0, p0, b0) :: rest =>
+                                  let yf0 := rename_lookup envfs f0 in
+                                  let yp0 := fresh_name n1 in
+                                  let '(b'0, n2) := rename_pyexpr ((p0, yp0) :: env') (S n1) b0 in
+                                  let '(rest', n3) := go rest n2 in
+                                  ((yf0, yp0, b'0) :: rest', n3)
+                              end) fs n0)).
+      { intros envfs env' fs.
+        induction fs as [| [[f p] b] fs' IHfs]; intros Hsub n0; simpl.
+        - lia.
+        - assert (Hb_in : In (f, p, b) fns) by (apply Hsub; left; reflexivity).
+          assert (Hb_lt : pyexpr_size b < sz) by
+            (pose proof (pyexpr_size_in_fns f p b fns Hb_in) as Hlt0; simpl in Hlt0; lia).
+          pose proof (IHsz (pyexpr_size b) Hb_lt b (le_n _) ((p, fresh_name n0) :: env') (S n0)) as Hb.
+          destruct (rename_pyexpr ((p, fresh_name n0) :: env') (S n0) b) as [b' n1] eqn:Eb.
+          simpl in Hb.
+          assert (Hsub' : forall f0 p0 b0, In (f0, p0, b0) fs' -> In (f0, p0, b0) fns)
+            by (intros f0 p0 b0 Hin0; apply Hsub; right; exact Hin0).
+          specialize (IHfs Hsub' n1).
+          destruct ((fix go (fs0 : list (var * var * pyexpr)) (n2 : nat)
+                         : list (var * var * pyexpr) * nat :=
+                       match fs0 with
+                       | [] => ([], n2)
+                       | (f0, p0, b0) :: rest =>
+                           let yf0 := rename_lookup envfs f0 in
+                           let yp0 := fresh_name n2 in
+                           let '(b'0, n3) := rename_pyexpr ((p0, yp0) :: env') (S n2) b0 in
+                           let '(rest', n4) := go rest n3 in
+                           ((yf0, yp0, b'0) :: rest', n4)
+                       end) fs' n1) as [fs'' n2] eqn:Efs'.
+          simpl in IHfs. simpl. lia. }
+      destruct (rename_group_env n fns) as [envfs n1] eqn:Egenv.
+      pose proof (rename_group_env_monotone n fns) as Hge. rewrite Egenv in Hge. simpl in Hge.
+      pose proof (Hbodies envfs ((envfs ++ env)%list) fns (fun f p b Hin => Hin) n1) as Hb.
+      destruct ((fix go (fs0 : list (var * var * pyexpr)) (n2 : nat)
+                     : list (var * var * pyexpr) * nat :=
+                   match fs0 with
+                   | [] => ([], n2)
+                   | (f0, p0, b0) :: rest =>
+                       let yf0 := rename_lookup envfs f0 in
+                       let yp0 := fresh_name n2 in
+                       let '(b'0, n3) := rename_pyexpr ((p0, yp0) :: (envfs ++ env)%list) (S n2) b0 in
+                       let '(rest', n4) := go rest n3 in
+                       ((yf0, yp0, b'0) :: rest', n4)
+                   end) fns n1) as [fns'' n2] eqn:Efns.
+      simpl in Hb. simpl. lia.
+  }
+  intros e env n. apply (Hstrong (pyexpr_size e) e (le_n _) env n).
+Qed.
