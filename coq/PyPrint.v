@@ -272,6 +272,53 @@ Fixpoint join_comma (xs : list string) : string :=
   | x :: rest => x ++ ", " ++ join_comma rest
   end.
 
+(** Python's reserved words ([keyword.kwlist] on a real Python 3
+    interpreter -- soft keywords like [match]/[case]/[_], which *can*
+    still be used as ordinary identifiers, are deliberately excluded,
+    confirmed directly: [def match(): return 1] is valid Python).
+    [rename_function] below already protects every parameter and bound
+    variable from ever colliding with one of these -- every renamed name
+    has the shape ["v" ++ digits], never a bare reserved word -- but the
+    function's own *name*, unlike a parameter, is never renamed, and is
+    directly reachable from a real Coq [Definition]'s own name once
+    [RealIR.v]'s ingestion pipeline feeds it through (a hypothetical
+    [Definition lambda := ...] is perfectly legal Coq; every example in
+    this repository today happens to avoid this, but nothing enforced
+    that). [safe_py_name] closes the gap: if [name] is one of these
+    words, suffix it with [_] (never itself one of these words either --
+    proved below, by direct, decidable case analysis over this fixed,
+    finite list, not assumed), otherwise leave it untouched. This is a
+    real, narrow piece of *verification* in this file -- unlike the
+    rest of [PyPrint.v]'s deliberately-unproved text formatting (this
+    file's own header), "the generated function name is never a Python
+    keyword" is a genuine, checkable correctness property with its own
+    proof, not just structure-preserving output. *)
+Definition py_keywords : list string :=
+  ["False"; "None"; "True"; "and"; "as"; "assert"; "async"; "await";
+   "break"; "class"; "continue"; "def"; "del"; "elif"; "else"; "except";
+   "finally"; "for"; "from"; "global"; "if"; "import"; "in"; "is";
+   "lambda"; "nonlocal"; "not"; "or"; "pass"; "raise"; "return"; "try";
+   "while"; "with"; "yield"].
+
+Definition is_py_keyword (s : string) : bool :=
+  if in_dec string_dec s py_keywords then true else false.
+
+Definition safe_py_name (s : string) : string :=
+  if is_py_keyword s then s ++ "_" else s.
+
+Lemma safe_py_name_not_keyword : forall s, is_py_keyword (safe_py_name s) = false.
+Proof.
+  intro s. unfold safe_py_name.
+  destruct (is_py_keyword s) eqn:Hk; [| exact Hk].
+  assert (Hcheck : forallb (fun w => negb (is_py_keyword (w ++ "_"))) py_keywords = true)
+    by (vm_compute; reflexivity).
+  unfold is_py_keyword in Hk.
+  destruct (in_dec string_dec s py_keywords) as [Hin | Hnin]; [| discriminate].
+  pose proof (forallb_forall (fun w => negb (is_py_keyword (w ++ "_"))) py_keywords) as [Hf _].
+  specialize (Hf Hcheck s Hin).
+  destruct (is_py_keyword (s ++ "_")); [discriminate | reflexivity].
+Qed.
+
 Definition newline : string := String (Ascii.ascii_of_nat 10) EmptyString.
 
 (** Alpha-rename every parameter and bound variable in [body] (and the
@@ -297,5 +344,5 @@ Definition rename_function (params : list string) (body : pyexpr) : list string 
     definition. *)
 Definition py_function (name : string) (params : list string) (body : pyexpr) : string :=
   let '(params', body') := rename_function params body in
-  "def " ++ name ++ "(" ++ join_comma params' ++ "):" ++ newline
+  "def " ++ safe_py_name name ++ "(" ++ join_comma params' ++ "):" ++ newline
     ++ "    return " ++ py_expr body' ++ newline.
