@@ -51,103 +51,76 @@
     [PRecGroup] exception above is rewritten), so in principle it
     deserves the same kind of theorem the rest of the pipeline gets:
     a [rename_pyexpr_correct] proving it does not change what [peval]
-    computes. That theorem is *not yet complete* -- 44 of [pyexpr]'s
-    46 constructors are proved (everything except [PRecGroup] and the
-    matching [PVClosureGroup] case inside [PApp]) -- tracked as this
-    file's own next step, not committed here since an incomplete
-    [Admitted] theorem is a different, messier kind of trust boundary
-    than this project otherwise uses. In the meantime, correctness of
-    the *renaming itself* for the 44 proven shapes, plus the concrete
-    before/after counterexample above and the full test suite
-    (including [bounce3]'s own by-name field access), is the evidence
-    this fix is actually correct. What will still *not* be proved even
-    once that theorem is finished -- the same, smaller residual
-    boundary [PyPrint.v]'s header describes -- is that printing the
-    renamed tree as Python text, and running that text under real
-    CPython, matches [peval].
+    computes. **That theorem is now complete** -- all 46 of [pyexpr]'s
+    constructors are proved, [Qed]'d, no [Admitted]/[admit] anywhere.
+    [Print Assumptions] on it shows only [PrimFloat]'s own existing
+    primitives, the same set every other theorem in this pipeline
+    already carries -- nothing new.
 
-    All the supporting infrastructure for the remaining two cases is
-    now landed: [PRecGroup]'s own construction needs *no* new
-    [env_corr] machinery at all -- building a [PVRecordN] of
-    [PVClosureGroup]s from [fns]/[fns'] only needs the *ambient*
-    [env_corr n env cenv cenv'] already in scope, applied once per
-    member via [vcorr_recordn]/[vcorr_closuregroup], since constructing
-    the value never evaluates a member's body. The real gap was
-    [PApp]'s reconstruction step: applying a [PVClosureGroup] rebuilds
-    *every* member's own binding (each name [f_i], deliberately
-    unrenamed) into the callee's environment before evaluating the
-    matched body, and relating that reconstructed environment on both
-    sides needed [env_corr] to accept a "same name on both sides" push
-    for each [f_i] -- exactly what an earlier, abandoned [ec_cons_same]
-    attempt tried, and what [ec_cons_group] now *is*: re-examining why
-    that attempt stalled ([env_corr_rho'_absent]/[env_corr_lookup] lean
-    on every [rho']-side name being *of the [fresh_name] shape*, via
-    [fresh_name_injective], to rule out collisions, which a pushed
-    literal [f_i] isn't) showed the fix needs only a single, *local*
-    side condition carried right in the new constructor -- [f_i] is
-    never of the [fresh_name] shape -- not a blanket axiom, and
-    critically *not* a hypothesis threaded through the whole induction:
-    because [ec_cons_group]'s pushed renamed-side name always *equals*
-    its own original-side key, a lookup for any *other*, already-
-    in-scope name [x <> f_i] can be shown to avoid colliding with
-    [f_i] using nothing but [x <> f_i] itself (if [x] resolves to
-    another [ec_cons_group] entry, its renamed name is just [x] again,
-    by the same identity property) or the one local side condition (if
-    [x] resolves to an ordinary [fresh_name k]) -- no "two different
-    groups never share a member name" assumption is needed either,
-    unlike an earlier worry. [env_corr_weaken]/[env_corr_rho'_absent]/
-    [env_corr_lookup] (plus a new helper, [rename_lookup_shape]) are
-    updated for this one more constructor, fully proved. [recgroup_
-    rebuild_corr] is the lemma connecting [PApp]'s actual reconstructed
-    environment to [rename_pyexpr]'s own [PRecGroup] case's [fns]/
-    [fns'] pairing -- proved with no seed/fuel bookkeeping at all,
-    simpler than [rename_pyexpr_monotone]'s own [PRecGroup] case,
-    since [ec_cons_group] never consumes a fresh seed, so the group's
-    *entire* env-correspondence lives at one constant bound. All fully
-    proved (no axioms beyond the pre-existing [PrimFloat.float]), under
-    one explicit, checkable hypothesis ([group_names_ok fns]: no
-    member's own name is of the [fresh_name] shape -- trivial for every
-    concrete group this project runs, e.g. ["fall"]/["rise"]/
-    ["report"]; a source program that deliberately named a member [v7]
-    would fail it, which is the honest outcome for that case, not a
-    silent wrong answer).
+    Getting the last two cases ([PRecGroup] and the matching
+    [PVClosureGroup] case inside [PApp]) actually closed needed two
+    real pieces of new machinery, not just more casework, both now
+    landed:
 
-    What's still not done, now precisely scoped after actually attempting
-    the wiring (a real correction to the previous paragraph's own
-    estimate, which assumed this was a bounded, bureaucratic hypothesis-
-    threading pass -- it is not, quite): a syntactic well-formedness
-    predicate on the *current* expression alone ([pyexpr_recgroup_ok e],
-    recursing the same way [pyexpr_size] does) is not actually enough to
-    thread through [rename_pyexpr_correct]'s fuel-indexed induction,
-    because [PApp]'s closure-application cases need the fact for the
-    closure's own *captured body* -- and that body is reached through a
-    *value* already sitting in [rho] (from [vf]/[value_corr]), not
-    through a subterm of the *current* expression [PApp func arg]. No
-    amount of destructuring [pyexpr_recgroup_ok (PApp func arg)] can ever
-    produce a fact about a body that isn't syntactically present in
-    [func]/[arg] at all. So the well-formedness fact has to be carried
-    *in the value itself*: [value_corr]'s four closure constructors
-    ([vcorr_closure_lam]/[vcorr_closure_rec]/[vcorr_closuremut]/
-    [vcorr_closuregroup]) already carry an [env_corr] premise about the
-    captured environment for exactly this reason (established once, at
-    construction time; consumed later, at application time) -- a
-    [pyexpr_recgroup_ok body] (or, for [vcorr_closuremut]/
-    [vcorr_closuregroup], one per body/member) premise of the same shape
-    is what's actually missing, not a bigger hypothesis on [e]. That is
-    a real, additional change to [value_corr] (re-touching
-    [recgroup_rebuild_corr]'s own use of [vcorr_closuregroup] too), on
-    top of -- not instead of -- threading [pyexpr_recgroup_ok] through
-    the 44 already-proved cases' own [IHfuel'] calls (straightforward
-    for those: every subterm *is* syntactically present, so each call
-    site's needed fact is a plain projection out of the current case's
-    own [Hok], no [value_corr] involvement). Both pieces are needed
-    together before [PRecGroup]/[PVClosureGroup] can retire their
-    [admit.]s; neither alone suffices. Where [group_names_ok] (and now,
-    by the same argument, the closures' own body well-formedness) enters
-    as a hypothesis of whatever sits on top of [rename_pyexpr_correct]
-    is still an open call -- most likely a side condition on the actual
-    callers (e.g. [PyPrint.rename_function]), discharged per concrete
-    program the way every other partiality in this project already is. *)
+    - [env_corr] gained a new constructor, [ec_cons_group]: a binder
+      that keeps its *original* name on both sides instead of getting
+      a fresh one (needed because [PApp] reconstructs every member's
+      own binding, by its never-renamed name, into the callee's
+      environment before evaluating the matched body). Guarded by one
+      explicit, local, checkable side condition carried right in the
+      constructor -- the pushed name is never of the [fresh_name]
+      shape -- rather than a blanket axiom or a hypothesis threaded
+      through the whole induction: because the pushed renamed-side name
+      always *equals* its own original-side key, ruling out a collision
+      with any other already-in-scope name needs nothing beyond that
+      one local fact (no "two different groups never share a member
+      name" assumption either, despite an earlier worry to the
+      contrary). [env_corr_weaken]/[env_corr_rho'_absent]/
+      [env_corr_lookup] (plus a new helper, [rename_lookup_shape]) were
+      extended for this one more constructor.
+    - A syntactic well-formedness predicate, [pyexpr_recgroup_ok] (an
+      explicit, checkable hypothesis now threaded through
+      [rename_pyexpr_correct]'s own statement: every [PRecGroup]
+      anywhere inside the expression has member names avoiding the
+      [fresh_name] shape -- [group_names_ok]'s own per-group condition,
+      generalized to the whole term, trivial to discharge for every
+      concrete group this project runs, e.g. ["fall"]/["rise"]/
+      ["report"]; a source program that deliberately named a member
+      [v7] would fail it, which is the honest outcome, not a silent
+      wrong answer). A syntactic fact about the *current* expression
+      alone isn't quite enough on its own, though: [PApp]'s closure-
+      application cases need it for the closure's own *captured
+      body*, which is reached through a *value* already sitting in
+      [rho], not through a subterm of [PApp func arg] itself. So
+      [value_corr]'s four closure constructors
+      ([vcorr_closure_lam]/[vcorr_closure_rec]/[vcorr_closuremut]/
+      [vcorr_closuregroup]) now also carry a [pyexpr_recgroup_ok]
+      premise for their own captured body/bodies/group -- established
+      once at construction time (every [PLam]/[PRec]/[PRecMut]/
+      [PRecGroup] case supplies it, trivially, from its own current
+      [pyexpr_recgroup_ok] hypothesis), consumed later at application
+      time (via [inversion] on the [value_corr] witness, the same way
+      its [env_corr] premise already was).
+
+    Three more lemmas connect [rename_pyexpr]'s own [PRecGroup] case to
+    [PApp]'s actual runtime reconstruction: [recgroup_rebuild_corr]
+    (the rebuilt environment corresponds via [env_corr], keyed by the
+    group's own names -- needs no seed/fuel bookkeeping at all, since
+    [ec_cons_group] never consumes a fresh seed), [plookup_group_fn_corr]
+    (the by-name dispatch [PApp] uses to pick which member is being
+    called finds corresponding members on both sides, with the
+    renamed side's parameter/body exactly what [rename_pyexpr] itself
+    produced for that member), and two small bridging facts
+    ([recgroup_build_fields_eq]/[recgroup_build_bindings_eq],
+    [plookup_group_fn_in]) identifying [PyLang.v]'s own anonymous
+    [fix]es with named, reusable versions of the same functions.
+
+    What this theorem does *not* claim, unchanged from before: the
+    same, smaller residual boundary [PyPrint.v]'s header describes --
+    that printing the renamed tree as Python text, and running that
+    text under real CPython, matches [peval]. That remains the
+    project's documented, explicit trust boundary (`docs/duality.md`),
+    not a gap specific to this file. *)
 
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
@@ -1198,4 +1171,915 @@ Proof.
     destruct Hfv as [u' [Ef' Hu]].
     rewrite Ef'.
     apply IH; [exact Hu | exact Hf].
+Qed.
+
+Theorem rename_pyexpr_correct :
+  forall fuel e env n rho rho',
+    pyexpr_recgroup_ok e ->
+    env_corr n env rho rho' ->
+    pyval_opt_corr (peval fuel rho e) (peval fuel rho' (fst (rename_pyexpr env n e))).
+Proof.
+  induction fuel as [| fuel' IHfuel']; intros e env n rho rho' Hok Henv.
+  - simpl. exact I.
+  - destruct e as
+      [ z | b | x | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1
+      | c e1 e2 | e1 e2 | e1 | e1 | x e1 e2 | fl | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2
+      | e1 e2 | e1 e2 | k x body init | e1 e2 | e1 e2 | param body | f param body
+      | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
+      | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
+      | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns ].
+    all: simpl in Hok.
+    + (* PConst *) simpl. eexists; split; [reflexivity | constructor].
+    + (* PBool *) simpl. eexists; split; [reflexivity | constructor].
+    + (* PVar *) simpl. apply (pyval_opt_corr_lookup n env rho rho' x). exact Henv.
+    + (* PAdd *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PSub *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PMul *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PEq *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PLt *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PLe *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PAnd *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* POr *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PNot *) rename Hok into Hok1. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PIf *) destruct Hok as [HokC [Hok1 Hok2]]. simpl.
+      destruct (rename_pyexpr env n c) as [c' n0] eqn:R0.
+      destruct (rename_pyexpr env n0 e1) as [e1' n1] eqn:R1.
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho c) as [vc|] eqn:Ec; [| exact I].
+      pose proof (IHfuel' c env n rho rho' HokC Henv) as Hc.
+      rewrite Ec, R0 in Hc; simpl in Hc; destruct Hc as [vc' [Ec' Hvc]].
+      rewrite Ec'.
+      destruct vc; simpl in Hvc |- *; try exact I.
+      inversion Hvc; subst.
+      assert (Hn0 : n <= n0) by (pose proof (rename_pyexpr_monotone c env n) as Hm; rewrite R0 in Hm; exact Hm).
+      assert (Hn1 : n0 <= n1) by (pose proof (rename_pyexpr_monotone e1 env n0) as Hm; rewrite R1 in Hm; exact Hm).
+      destruct b.
+      * pose proof (IHfuel' e1 env n0 rho rho' Hok1 (env_corr_weaken n n0 env rho rho' Hn0 Henv)) as H1.
+        rewrite R1 in H1. simpl in H1. exact H1.
+      * assert (Hn0n1 : n <= n1) by lia.
+        pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn0n1 Henv)) as H2.
+        rewrite R2 in H2. simpl in H2. exact H2.
+    + (* PPair *) destruct Hok as [Hok1 Hok2]. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I].
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm).
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2.
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]].
+      rewrite E2'.
+      simpl. eexists; split; [reflexivity | constructor; [exact Hv1 | exact Hv2]].
+    + (* PFst *) rename Hok into Hok1. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      destruct v1; simpl in Hv1 |- *; try exact I.
+      inversion Hv1; subst.
+      simpl; eexists; split; [reflexivity | eassumption].
+    + (* PSnd *) rename Hok into Hok1. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      destruct v1; simpl in Hv1 |- *; try exact I.
+      inversion Hv1; subst.
+      simpl; eexists; split; [reflexivity | eassumption].
+    + (* PLet *) destruct Hok as [Hok1 Hok2]. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      destruct (rename_pyexpr ((x, fresh_name n1) :: env) (S n1) e2) as [e2' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm).
+      assert (Hext : env_corr (S n1) ((x, fresh_name n1) :: env) ((x, v1) :: rho) ((fresh_name n1, v1') :: rho'))
+        by (apply ec_cons; [lia | exact Hv1 | apply (env_corr_weaken n n1 env rho rho' Hn1 Henv)]).
+      pose proof (IHfuel' e2 ((x, fresh_name n1) :: env) (S n1) ((x, v1) :: rho) ((fresh_name n1, v1') :: rho') Hok2 Hext) as H2.
+      rewrite R2 in H2. simpl in H2. exact H2.
+    + (* PFConst *) simpl. eexists; split; [reflexivity | constructor].
+    + (* PFAdd *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFSub *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFMul *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFDiv *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFEq *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFLt *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFLe *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PRepeat *) destruct Hok as [HokBody HokInit]. simpl.
+      destruct (rename_pyexpr env n init) as [init' n1] eqn:R1.
+      destruct (rename_pyexpr ((x, fresh_name n1) :: env) (S n1) body) as [body' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho init) as [v0|] eqn:E0; [| exact I].
+      pose proof (IHfuel' init env n rho rho' HokInit Henv) as H0.
+      rewrite E0, R1 in H0; simpl in H0; destruct H0 as [v0' [E0' Hv0]].
+      rewrite E0'.
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone init env n) as Hm; rewrite R1 in Hm; exact Hm).
+      apply piterate_corr.
+      * exact Hv0.
+      * intros u u' Hu.
+        assert (Hext : env_corr (S n1) ((x, fresh_name n1) :: env) ((x, u) :: rho) ((fresh_name n1, u') :: rho'))
+          by (apply ec_cons; [lia | exact Hu | apply (env_corr_weaken n n1 env rho rho' Hn1 Henv)]).
+        pose proof (IHfuel' body ((x, fresh_name n1) :: env) (S n1) ((x, u) :: rho) ((fresh_name n1, u') :: rho') HokBody Hext) as H2.
+        rewrite R2 in H2. simpl in H2. exact H2.
+    + (* PDiv *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; destruct (Z.eqb _ 0); [exact I | eexists; split; [reflexivity | constructor]].
+    + (* PMod *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; destruct (Z.eqb _ 0); [exact I | eexists; split; [reflexivity | constructor]].
+    + (* PLam *) simpl.
+      destruct (rename_pyexpr ((param, fresh_name n) :: env) (S n) body) as [body' n1] eqn:Rb.
+      simpl. eexists; split; [reflexivity |].
+      apply (vcorr_closure_lam param body rho env n (fresh_name n) body' rho');
+        [exact Henv | exact Hok | simpl; rewrite Rb; reflexivity].
+    + (* PRec *) simpl.
+      destruct (rename_pyexpr ((param, fresh_name (S n)) :: (f, fresh_name n) :: env) (S (S n)) body)
+        as [body' n1] eqn:Rb.
+      simpl. eexists; split; [reflexivity |].
+      apply (vcorr_closure_rec f param body rho env n (fresh_name n) (fresh_name (S n)) body' rho');
+        [exact Henv | exact Hok | simpl; rewrite Rb; reflexivity].
+    + (* PRecMut *) destruct Hok as [Hok1 Hok2]. simpl.
+      destruct (rename_pyexpr
+                  ((param1, fresh_name (S (S n))) :: (f1, fresh_name (S n)) :: (f2, fresh_name n) :: env)
+                  (S (S (S (S n)))) body1) as [body1' n1] eqn:R1.
+      destruct (rename_pyexpr
+                  ((param2, fresh_name (S (S (S n)))) :: (f1, fresh_name (S n)) :: (f2, fresh_name n) :: env)
+                  n1 body2) as [body2' n2] eqn:R2.
+      simpl.
+      eexists; split; [reflexivity |].
+      constructor.
+      * apply (vcorr_closuremut f1 param1 body1 f2 param2 body2 rho false env n
+                 (fresh_name (S n)) (fresh_name (S (S n))) body1'
+                 (fresh_name n) (fresh_name (S (S (S n)))) body2' rho');
+          [exact Henv | exact Hok1 | exact Hok2 | simpl; rewrite R1, R2; reflexivity].
+      * apply (vcorr_closuremut f1 param1 body1 f2 param2 body2 rho true env n
+                 (fresh_name (S n)) (fresh_name (S (S n))) body1'
+                 (fresh_name n) (fresh_name (S (S (S n)))) body2' rho');
+          [exact Henv | exact Hok1 | exact Hok2 | simpl; rewrite R1, R2; reflexivity].
+    + (* PApp *) destruct Hok as [HokFunc HokArg]. simpl.
+      destruct (rename_pyexpr env n func) as [func' n1] eqn:R1.
+      destruct (rename_pyexpr env n1 arg) as [arg' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho func) as [vf|] eqn:Ef; [| exact I].
+      pose proof (IHfuel' func env n rho rho' HokFunc Henv) as H1.
+      rewrite Ef, R1 in H1; simpl in H1; destruct H1 as [vf' [Ef' Hvf]].
+      rewrite Ef'.
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone func env n) as Hm; rewrite R1 in Hm; exact Hm).
+      assert (Harg : pyval_opt_corr (peval fuel' rho arg) (peval fuel' rho' arg'))
+        by (pose proof (IHfuel' arg env n1 rho rho' HokArg (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+            rewrite R2 in H2; simpl in H2; exact H2).
+      destruct vf; simpl in Hvf |- *; try exact I.
+      * (* PVClosure *)
+        destruct self as [f|].
+        -- inversion Hvf; subst.
+           simpl in H6.
+           destruct (rename_pyexpr ((param, fresh_name (S n0)) :: (f, fresh_name n0) :: env0) (S (S n0)) body)
+             as [bb nn] eqn:Rb.
+           simpl in H6.
+           injection H6 as Hyf Hyparam Hbb.
+           subst yf yparam body'.
+           destruct (peval fuel' rho arg) as [va|] eqn:Ea; [| exact I].
+           destruct Harg as [va' [Ea' Hva]].
+           rewrite Ea'.
+           assert (Hext : env_corr (S (S n0)) ((param, fresh_name (S n0)) :: (f, fresh_name n0) :: env0)
+                             ((param, va) :: (f, PVClosure (Some f) param body cenv) :: cenv)
+                             ((fresh_name (S n0), va') :: (fresh_name n0, PVClosure (Some (fresh_name n0)) (fresh_name (S n0)) bb cenv') :: cenv')).
+           { apply ec_cons; [lia | exact Hva |].
+             apply ec_cons; [lia | | exact H4].
+             apply (vcorr_closure_rec f param body cenv env0 n0 (fresh_name n0) (fresh_name (S n0)) bb cenv').
+             - exact H4.
+             - exact H5.
+             - simpl. rewrite Rb. reflexivity. }
+           pose proof (IHfuel' body ((param, fresh_name (S n0)) :: (f, fresh_name n0) :: env0) (S (S n0))
+                         ((param, va) :: (f, PVClosure (Some f) param body cenv) :: cenv)
+                         ((fresh_name (S n0), va') :: (fresh_name n0, PVClosure (Some (fresh_name n0)) (fresh_name (S n0)) bb cenv') :: cenv') H5 Hext) as Hb.
+           rewrite Rb in Hb. simpl in Hb. exact Hb.
+        -- inversion Hvf; subst.
+           simpl in H5.
+           destruct (rename_pyexpr ((param, fresh_name n0) :: env0) (S n0) body) as [bb nn] eqn:Rb.
+           simpl in H5.
+           injection H5 as Hyparam Hbb.
+           subst yparam body'.
+           destruct (peval fuel' rho arg) as [va|] eqn:Ea; [| exact I].
+           destruct Harg as [va' [Ea' Hva]].
+           rewrite Ea'.
+           assert (Hext : env_corr (S n0) ((param, fresh_name n0) :: env0) ((param, va) :: cenv)
+                             ((fresh_name n0, va') :: cenv'))
+             by (apply ec_cons; [lia | exact Hva | exact H2]).
+           pose proof (IHfuel' body ((param, fresh_name n0) :: env0) (S n0) ((param, va) :: cenv)
+                         ((fresh_name n0, va') :: cenv') H4 Hext) as Hb.
+           rewrite Rb in Hb. simpl in Hb. exact Hb.
+      * (* PVClosureMut *)
+        inversion Hvf; subst.
+        simpl in H11.
+        destruct (rename_pyexpr
+                    ((param1, fresh_name (S (S n0))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                    (S (S (S (S n0)))) body1) as [bb1 nn1] eqn:Rb1.
+        destruct (rename_pyexpr
+                    ((param2, fresh_name (S (S (S n0)))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                    nn1 body2) as [bb2 nn2] eqn:Rb2.
+        simpl in H11.
+        injection H11 as Hyf1 Hyparam1 Hbb1 Hyf2 Hyparam2 Hbb2.
+        subst yf1 yparam1 body1' yf2 yparam2 body2'.
+        destruct (peval fuel' rho arg) as [va|] eqn:Ea; [| exact I].
+        destruct Harg as [va' [Ea' Hva]].
+        rewrite Ea'.
+        destruct which.
+        -- assert (Hext : env_corr (S (S (S (S n0))))
+                     ((param2, fresh_name (S (S (S n0)))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                     ((param2, va) :: (f1, PVClosureMut f1 param1 body1 f2 param2 body2 cenv false)
+                        :: (f2, PVClosureMut f1 param1 body1 f2 param2 body2 cenv true) :: cenv)
+                     ((fresh_name (S (S (S n0))), va')
+                        :: (fresh_name (S n0),
+                             PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                               (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' false)
+                        :: (fresh_name n0,
+                             PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                               (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' true) :: cenv')).
+           { apply ec_cons; [lia | exact Hva |].
+             apply ec_cons; [lia | | apply ec_cons; [lia | | exact H8]].
+             - apply (vcorr_closuremut f1 param1 body1 f2 param2 body2 cenv false env0 n0
+                        (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                        (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv');
+                 [exact H8 | exact H9 | exact H10 | simpl; rewrite Rb1, Rb2; reflexivity].
+             - apply (vcorr_closuremut f1 param1 body1 f2 param2 body2 cenv true env0 n0
+                        (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                        (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv');
+                 [exact H8 | exact H9 | exact H10 | simpl; rewrite Rb1, Rb2; reflexivity]. }
+           assert (Hnn1 : S (S (S (S n0))) <= nn1)
+             by (pose proof (rename_pyexpr_monotone body1
+                   ((param1, fresh_name (S (S n0))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                   (S (S (S (S n0))))) as Hm;
+                 rewrite Rb1 in Hm; exact Hm).
+           pose proof (IHfuel' body2
+                         ((param2, fresh_name (S (S (S n0)))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                         nn1
+                         ((param2, va) :: (f1, PVClosureMut f1 param1 body1 f2 param2 body2 cenv false)
+                            :: (f2, PVClosureMut f1 param1 body1 f2 param2 body2 cenv true) :: cenv)
+                         ((fresh_name (S (S (S n0))), va')
+                            :: (fresh_name (S n0),
+                                 PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                                   (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' false)
+                            :: (fresh_name n0,
+                                 PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                                   (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' true) :: cenv')
+                         H10
+                         (env_corr_weaken (S (S (S (S n0)))) nn1
+                            ((param2, fresh_name (S (S (S n0)))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                            ((param2, va) :: (f1, PVClosureMut f1 param1 body1 f2 param2 body2 cenv false)
+                               :: (f2, PVClosureMut f1 param1 body1 f2 param2 body2 cenv true) :: cenv)
+                            ((fresh_name (S (S (S n0))), va')
+                               :: (fresh_name (S n0),
+                                    PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                                      (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' false)
+                               :: (fresh_name n0,
+                                    PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                                      (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' true) :: cenv')
+                            Hnn1 Hext)) as Hb.
+           rewrite Rb2 in Hb. simpl in Hb. exact Hb.
+        -- assert (Hext : env_corr (S (S (S (S n0))))
+                     ((param1, fresh_name (S (S n0))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                     ((param1, va) :: (f1, PVClosureMut f1 param1 body1 f2 param2 body2 cenv false)
+                        :: (f2, PVClosureMut f1 param1 body1 f2 param2 body2 cenv true) :: cenv)
+                     ((fresh_name (S (S n0)), va')
+                        :: (fresh_name (S n0),
+                             PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                               (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' false)
+                        :: (fresh_name n0,
+                             PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                               (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' true) :: cenv')).
+           { apply ec_cons; [lia | exact Hva |].
+             apply ec_cons; [lia | | apply ec_cons; [lia | | exact H8]].
+             - apply (vcorr_closuremut f1 param1 body1 f2 param2 body2 cenv false env0 n0
+                        (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                        (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv');
+                 [exact H8 | exact H9 | exact H10 | simpl; rewrite Rb1, Rb2; reflexivity].
+             - apply (vcorr_closuremut f1 param1 body1 f2 param2 body2 cenv true env0 n0
+                        (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                        (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv');
+                 [exact H8 | exact H9 | exact H10 | simpl; rewrite Rb1, Rb2; reflexivity]. }
+           pose proof (IHfuel' body1
+                         ((param1, fresh_name (S (S n0))) :: (f1, fresh_name (S n0)) :: (f2, fresh_name n0) :: env0)
+                         (S (S (S (S n0))))
+                         ((param1, va) :: (f1, PVClosureMut f1 param1 body1 f2 param2 body2 cenv false)
+                            :: (f2, PVClosureMut f1 param1 body1 f2 param2 body2 cenv true) :: cenv)
+                         ((fresh_name (S (S n0)), va')
+                            :: (fresh_name (S n0),
+                                 PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                                   (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' false)
+                            :: (fresh_name n0,
+                                 PVClosureMut (fresh_name (S n0)) (fresh_name (S (S n0))) bb1
+                                   (fresh_name n0) (fresh_name (S (S (S n0)))) bb2 cenv' true) :: cenv') H9 Hext) as Hb.
+           rewrite Rb1 in Hb. simpl in Hb. exact Hb.
+      * (* PVClosureGroup *)
+        inversion Hvf; subst.
+        destruct (peval fuel' rho arg) as [va|] eqn:Ea; [| exact I].
+        destruct Harg as [va' [Ea' Hva]].
+        rewrite Ea'.
+        destruct (plookup_group_fn fns self_name) as [[param body]|] eqn:Elook; [| exact I].
+        pose proof (plookup_group_fn_corr env0 n0 fns fns' (snd (rename_pyexpr env0 n0 (PRecGroup fns)))
+                      H5 self_name param body Elook) as [body' [sd [Hsd [Hplook Hbeq]]]].
+        rewrite Hplook.
+        assert (HokBody : pyexpr_recgroup_ok body).
+        { destruct H4 as [_ Hbodies].
+          pose proof (plookup_group_fn_in fns self_name param body Elook) as Hin.
+          clear - Hbodies Hin.
+          induction fns as [| [[f0 p0] b0] rest IH]; simpl in Hin, Hbodies.
+          - contradiction.
+          - destruct Hbodies as [Hok0 Hoks].
+            destruct Hin as [Heq | Hin].
+            + injection Heq as -> -> ->. exact Hok0.
+            + apply (IH Hoks Hin). }
+        assert (Hrb : env_corr n0
+                  (List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env0)
+                  (recgroup_build_bindings fns fns cenv)
+                  (recgroup_build_bindings fns' fns' cenv'))
+          by (apply (recgroup_rebuild_corr env0 n0 cenv cenv' H2 fns fns'
+                       (snd (rename_pyexpr env0 n0 (PRecGroup fns))) H5 H4)).
+        rewrite !recgroup_build_bindings_eq.
+        assert (Hext : env_corr (S sd)
+                  ((param, fresh_name sd) :: List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env0)
+                  ((param, va) :: recgroup_build_bindings fns fns cenv)
+                  ((fresh_name sd, va') :: recgroup_build_bindings fns' fns' cenv'))
+          by (apply ec_cons; [lia | exact Hva | apply (env_corr_weaken n0 sd _ _ _ Hsd Hrb)]).
+        pose proof (IHfuel' body
+                      ((param, fresh_name sd) :: List.app (map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) env0)
+                      (S sd)
+                      ((param, va) :: recgroup_build_bindings fns fns cenv)
+                      ((fresh_name sd, va') :: recgroup_build_bindings fns' fns' cenv')
+                      HokBody Hext) as Hb.
+        rewrite Hbeq in Hb. simpl in Hb. exact Hb.
+    + (* PNil *) simpl. eexists; split; [reflexivity | constructor; constructor].
+    + (* PCons *) destruct Hok as [Hok1 Hok2]. simpl.
+      destruct (rename_pyexpr env n hd) as [hd' n1] eqn:R1.
+      destruct (rename_pyexpr env n1 tl) as [tl' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho hd) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' hd env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      destruct (peval fuel' rho tl) as [v2|] eqn:E2; [| exact I].
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone hd env n) as Hm; rewrite R1 in Hm; exact Hm).
+      pose proof (IHfuel' tl env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2.
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]].
+      rewrite E2'.
+      destruct v2; simpl in Hv2 |- *; try exact I.
+      inversion Hv2; subst.
+      simpl. eexists; split; [reflexivity | constructor; constructor; [exact Hv1 | eassumption]].
+    + (* PListMatch *) destruct Hok as [HokS [HokNc HokCc]]. simpl.
+      destruct (rename_pyexpr env n scrutinee) as [scrutinee' n0] eqn:R0.
+      destruct (rename_pyexpr env n0 nilcase) as [nilcase' n1] eqn:R1.
+      destruct (rename_pyexpr ((hd, fresh_name (S n1)) :: (tl, fresh_name n1) :: env) (S (S n1)) conscase)
+        as [conscase' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho scrutinee) as [vs|] eqn:Es; [| exact I].
+      pose proof (IHfuel' scrutinee env n rho rho' HokS Henv) as Hs.
+      rewrite Es, R0 in Hs; simpl in Hs; destruct Hs as [vs' [Es' Hvs]].
+      rewrite Es'.
+      assert (Hn0 : n <= n0) by (pose proof (rename_pyexpr_monotone scrutinee env n) as Hm; rewrite R0 in Hm; exact Hm).
+      assert (Hn1 : n0 <= n1) by (pose proof (rename_pyexpr_monotone nilcase env n0) as Hm; rewrite R1 in Hm; exact Hm).
+      destruct vs; simpl in Hvs |- *; try exact I.
+      inversion Hvs; subst.
+      match goal with
+      | H : Forall2 value_corr ?l ?l' |- _ => destruct H as [| hv hv' tvs tvs' Hhv Htl]
+      end; simpl.
+      * pose proof (IHfuel' nilcase env n0 rho rho' HokNc (env_corr_weaken n n0 env rho rho' Hn0 Henv)) as Hnc.
+        rewrite R1 in Hnc. simpl in Hnc. exact Hnc.
+      * assert (Hn0n1 : n <= n1) by lia.
+        assert (Hext : env_corr (S (S n1)) ((hd, fresh_name (S n1)) :: (tl, fresh_name n1) :: env)
+                          ((hd, hv) :: (tl, PVList tvs) :: rho)
+                          ((fresh_name (S n1), hv') :: (fresh_name n1, PVList tvs') :: rho')).
+        { apply ec_cons; [lia | exact Hhv |].
+          apply ec_cons; [lia | constructor; exact Htl | apply (env_corr_weaken n n1 env rho rho' Hn0n1 Henv)]. }
+        pose proof (IHfuel' conscase ((hd, fresh_name (S n1)) :: (tl, fresh_name n1) :: env) (S (S n1))
+                      ((hd, hv) :: (tl, PVList tvs) :: rho)
+                      ((fresh_name (S n1), hv') :: (fresh_name n1, PVList tvs') :: rho') HokCc Hext) as Hcc.
+        rewrite R2 in Hcc. simpl in Hcc. exact Hcc.
+    + (* PRecord *) destruct Hok as [Hok1 Hok2]. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I].
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm).
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2.
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]].
+      rewrite E2'.
+      simpl. eexists; split; [reflexivity | constructor; [exact Hv1 | exact Hv2]].
+    + (* PField *) rename Hok into Hok1. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      destruct v1; simpl in Hv1 |- *; try exact I.
+      inversion Hv1; subst.
+      simpl.
+      destruct (String.eqb name k1); [eexists; split; [reflexivity | eassumption] |].
+      destruct (String.eqb name k2); [eexists; split; [reflexivity | eassumption] | exact I].
+    + (* PInl *) rename Hok into Hok1. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'. simpl. eexists; split; [reflexivity | constructor; exact Hv1].
+    + (* PInr *) rename Hok into Hok1. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'. simpl. eexists; split; [reflexivity | constructor; exact Hv1].
+    + (* PCase *) destruct Hok as [HokS [Hok1 Hok2]]. simpl.
+      destruct (rename_pyexpr env n scrutinee) as [scrutinee' n0] eqn:R0.
+      destruct (rename_pyexpr ((x1, fresh_name n0) :: env) (S n0) case1) as [case1' n1] eqn:R1.
+      destruct (rename_pyexpr ((x2, fresh_name n1) :: env) (S n1) case2) as [case2' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho scrutinee) as [vs|] eqn:Es; [| exact I].
+      pose proof (IHfuel' scrutinee env n rho rho' HokS Henv) as Hs.
+      rewrite Es, R0 in Hs; simpl in Hs; destruct Hs as [vs' [Es' Hvs]].
+      rewrite Es'.
+      assert (Hn0 : n <= n0) by (pose proof (rename_pyexpr_monotone scrutinee env n) as Hm; rewrite R0 in Hm; exact Hm).
+      assert (Hn1 : n0 <= n1) by (pose proof (rename_pyexpr_monotone case1 ((x1, fresh_name n0) :: env) (S n0)) as Hm; rewrite R1 in Hm; simpl in Hm; lia).
+      destruct vs; simpl in Hvs |- *; try exact I.
+      * inversion Hvs; subst.
+        assert (Hext : env_corr (S n0) ((x1, fresh_name n0) :: env) ((x1, vs) :: rho) ((fresh_name n0, v') :: rho'))
+          by (apply ec_cons; [lia | eassumption | apply (env_corr_weaken n n0 env rho rho' Hn0 Henv)]).
+        pose proof (IHfuel' case1 ((x1, fresh_name n0) :: env) (S n0) ((x1, vs) :: rho) ((fresh_name n0, v') :: rho') Hok1 Hext) as H1.
+        rewrite R1 in H1. simpl in H1. exact H1.
+      * inversion Hvs; subst.
+        assert (Hn0n1 : n <= n1) by lia.
+        assert (Hext : env_corr (S n1) ((x2, fresh_name n1) :: env) ((x2, vs) :: rho) ((fresh_name n1, v') :: rho'))
+          by (apply ec_cons; [lia | eassumption | apply (env_corr_weaken n n1 env rho rho' Hn0n1 Henv)]).
+        pose proof (IHfuel' case2 ((x2, fresh_name n1) :: env) (S n1) ((x2, vs) :: rho) ((fresh_name n1, v') :: rho') Hok2 Hext) as H2.
+        rewrite R2 in H2. simpl in H2. exact H2.
+    + (* PStrConst *) simpl. eexists; split; [reflexivity | constructor].
+    + (* PStrConcat *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PStrEq *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PRecordN *) simpl.
+      assert (Haux : forall flds,
+        (fix fok (fs : list (var * pyexpr)) : Prop :=
+           match fs with [] => True | (_, fe) :: rest => pyexpr_recgroup_ok fe /\ fok rest end) flds ->
+        forall n0, env_corr n0 env rho rho' ->
+        pyval_optlist_corr
+          ((fix peval_fields (fs : list (var * pyexpr)) : option (list (var * pyvalue)) :=
+              match fs with
+              | [] => Some []
+              | (k0, fe0) :: rest =>
+                  match peval fuel' rho fe0, peval_fields rest with
+                  | Some v0, Some vs => Some ((k0, v0) :: vs)
+                  | _, _ => None
+                  end
+              end) flds)
+          ((fix peval_fields (fs : list (var * pyexpr)) : option (list (var * pyvalue)) :=
+              match fs with
+              | [] => Some []
+              | (k0, fe0) :: rest =>
+                  match peval fuel' rho' fe0, peval_fields rest with
+                  | Some v0, Some vs => Some ((k0, v0) :: vs)
+                  | _, _ => None
+                  end
+              end)
+             (fst ((fix go (fs : list (var * pyexpr)) (n1 : nat) : list (var * pyexpr) * nat :=
+                      match fs with
+                      | [] => ([], n1)
+                      | (k0, fe0) :: rest =>
+                          let '(fe'0, n2) := rename_pyexpr env n1 fe0 in
+                          let '(rest', n3) := go rest n2 in
+                          ((k0, fe'0) :: rest', n3)
+                      end) flds n0)))).
+      { induction flds as [| [k0 fe0] rest IHr]; intros Hokf n0 Henv0.
+        - simpl. eexists; split; [reflexivity | constructor].
+        - destruct Hokf as [HokFe0 HokRest].
+          destruct (rename_pyexpr env n0 fe0) as [fe0' n1] eqn:R0.
+          destruct ((fix go (fs : list (var * pyexpr)) (n1 : nat) : list (var * pyexpr) * nat :=
+                       match fs with
+                       | [] => ([], n1)
+                       | (k1, fe1) :: rest' =>
+                           let '(fe1', n2) := rename_pyexpr env n1 fe1 in
+                           let '(rest'', n3) := go rest' n2 in
+                           ((k1, fe1') :: rest'', n3)
+                       end) rest n1) as [rest'' n3] eqn:Rgo.
+          simpl.
+          destruct (peval fuel' rho fe0) as [v0|] eqn:E0; [| exact I].
+          pose proof (IHfuel' fe0 env n0 rho rho' HokFe0 Henv0) as H0.
+          rewrite E0, R0 in H0; simpl in H0; destruct H0 as [v0' [E0' Hv0]].
+          rewrite E0'.
+          assert (Hn1 : n0 <= n1) by (pose proof (rename_pyexpr_monotone fe0 env n0) as Hm; rewrite R0 in Hm; exact Hm).
+          pose proof (IHr HokRest n1 (env_corr_weaken n0 n1 env rho rho' Hn1 Henv0)) as IH.
+          rewrite Rgo in IH. simpl in IH.
+          destruct ((fix peval_fields (fs : list (var * pyexpr)) : option (list (var * pyvalue)) :=
+                       match fs with
+                       | [] => Some []
+                       | (k1, fe1) :: rest' =>
+                           match peval fuel' rho fe1, peval_fields rest' with
+                           | Some v1, Some vs => Some ((k1, v1) :: vs)
+                           | _, _ => None
+                           end
+                       end) rest) as [vs|] eqn:Erest; [| exact I].
+          destruct IH as [vs' [Erest' Hvs]].
+          rewrite Erest'.
+          simpl. eexists; split; [reflexivity | constructor; [split; [reflexivity | exact Hv0] | exact Hvs]]. }
+      destruct ((fix go (fs : list (var * pyexpr)) (n1 : nat) : list (var * pyexpr) * nat :=
+                   match fs with
+                   | [] => ([], n1)
+                   | (k0, fe0) :: rest =>
+                       let '(fe0', n2) := rename_pyexpr env n1 fe0 in
+                       let '(rest', n3) := go rest n2 in
+                       ((k0, fe0') :: rest', n3)
+                   end) fields n) as [fields'' n1] eqn:Rgo.
+      simpl.
+      destruct ((fix peval_fields (fs : list (var * pyexpr)) : option (list (var * pyvalue)) :=
+                   match fs with
+                   | [] => Some []
+                   | (k0, fe0) :: rest =>
+                       match peval fuel' rho fe0, peval_fields rest with
+                       | Some v0, Some vs => Some ((k0, v0) :: vs)
+                       | _, _ => None
+                       end
+                   end) fields) as [vs|] eqn:Efields; [| exact I].
+      pose proof (Haux fields Hok n Henv) as HA.
+      rewrite Efields, Rgo in HA. simpl in HA.
+      destruct HA as [vs' [Efields' Hvs]].
+      rewrite Efields'.
+      simpl. eexists; split; [reflexivity | constructor; exact Hvs].
+    + (* PFieldN *) rename Hok into Hok1. simpl.
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1.
+      simpl.
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I].
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1.
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]].
+      rewrite E1'.
+      destruct v1; simpl in Hv1 |- *; try exact I.
+      inversion Hv1; subst.
+      simpl. apply pvrecordn_field_corr. eassumption.
+    + (* PRecGroup *)
+      destruct (rename_pyexpr env n (PRecGroup fns)) as [erg n'] eqn:Rg0.
+      assert (Hren : rename_pyexpr env n (PRecGroup fns) = (erg, n')) by exact Rg0.
+      cbn [rename_pyexpr] in Rg0.
+      set (envfs := map (fun fpb => (fst (fst fpb), fst (fst fpb))) fns) in Rg0.
+      set (env' := List.app envfs env) in Rg0.
+      destruct ((fix go (fs : list (var * var * pyexpr)) (n0 : nat) : list (var * var * pyexpr) * nat :=
+                   match fs with
+                   | [] => ([], n0)
+                   | (f, p, b) :: rest =>
+                       let yp := fresh_name n0 in
+                       let '(b', n1) := rename_pyexpr ((p, yp) :: env') (S n0) b in
+                       let '(rest', n2) := go rest n1 in
+                       ((f, yp, b') :: rest', n2)
+                   end) fns n) as [fns' n''] eqn:Ego.
+      injection Rg0 as Hrg1 Hrg2. subst erg n'.
+      assert (Hren2 : rename_pyexpr env n (PRecGroup fns)
+                      = (PRecGroup fns', snd (rename_pyexpr env n (PRecGroup fns))))
+        by (rewrite Hren; reflexivity).
+      simpl.
+      rewrite !recgroup_build_fields_eq.
+      assert (Hbf : forall fs,
+                (forall f p b, In (f, p, b) fs -> In (f, p, b) fns) ->
+                forall n1,
+                Forall2 (fun kv kv' => fst kv = fst kv' /\ value_corr (snd kv) (snd kv'))
+                  (recgroup_build_fields fs fns rho)
+                  (recgroup_build_fields
+                     (fst ((fix go (gs1 : list (var * var * pyexpr)) (m : nat)
+                                : list (var * var * pyexpr) * nat :=
+                              match gs1 with
+                              | [] => ([], m)
+                              | (f, p, b) :: rest =>
+                                  let yp := fresh_name m in
+                                  let '(b', m0) := rename_pyexpr ((p, yp) :: env') (S m) b in
+                                  let '(rest', m2) := go rest m0 in
+                                  ((f, yp, b') :: rest', m2)
+                              end) fs n1))
+                     fns' rho')).
+      { induction fs as [| [[f p] b] fs' IHfs]; intros Hsub n1; simpl.
+        - constructor.
+        - assert (Hin : In (f, p, b) fns) by (apply Hsub; left; reflexivity).
+          assert (Hsub' : forall f0 p0 b0, In (f0, p0, b0) fs' -> In (f0, p0, b0) fns)
+            by (intros f0 p0 b0 Hin0; apply Hsub; right; exact Hin0).
+          destruct (rename_pyexpr ((p, fresh_name n1) :: env') (S n1) b) as [b' m0] eqn:Eb.
+          destruct ((fix go (gs1 : list (var * var * pyexpr)) (m : nat)
+                         : list (var * var * pyexpr) * nat :=
+                       match gs1 with
+                       | [] => ([], m)
+                       | (f0, p0, b0) :: rest =>
+                           let yp := fresh_name m in
+                           let '(b'0, m1) := rename_pyexpr ((p0, yp) :: env') (S m) b0 in
+                           let '(rest', m2) := go rest m1 in
+                           ((f0, yp, b'0) :: rest', m2)
+                       end) fs' m0) as [fs'' m2] eqn:Ego2.
+          cbn [recgroup_build_fields fst snd].
+          constructor.
+          + split; [reflexivity |].
+            apply (vcorr_closuregroup fns rho f env n fns').
+            * exact Henv.
+            * exact Hok.
+            * exact Hren2.
+          + pose proof (IHfs Hsub' m0) as IH2. rewrite Ego2 in IH2. simpl in IH2. exact IH2. }
+      pose proof (Hbf fns (fun f p b H => H) n) as Hb.
+      rewrite Ego in Hb. simpl in Hb.
+      eexists; split; [reflexivity | constructor; exact Hb].
 Qed.
