@@ -605,18 +605,51 @@ IEEE-754 binary64 round-to-nearest relative-error model (`fl(x+y) =
 uses for "does `PrimFloat.float` arithmetic actually match IEEE-754" and
 for `SF2Prim_Prim2SF` itself — assumed and named, not silently elided.
 
-Still not done: actually extending `RealIR.v`'s recognizer to use this
-bridge — a new `real_expr` fragment for `R` literals and `Rplus`/
-`Rmult`/`Rminus`/`Ropp` by intrinsic name, translating into the existing
-`EFConst`/`EFAdd`/`EFMul`/`EFSub` (`PrimFloat`, already in `Lang.v`), with
-`real_to_expr_preserves_semantics`'s extended case invoking the two
-rounding axioms above exactly where `+`/`*` is translated — plus working
-the captured `quad` JSON above into a `RealJson.v`-ingested example the
-same way `examples/NaturalCoq.v` already does for every other recognized
-shape. `coq-coquelicot`/`coq-mathcomp-ssreflect` are now installed in
-this dev environment (via `coq-released`) so further real captures are
-possible, but neither is a build dependency of `coq2py` itself — they
-only produce example *source* `.v` files to extract from, the same
+**Done** (a first, narrow extension): `RealIR.v`'s `real_expr` gained
+`RFLit`/`RApp2`'s new `"rplus"`/`"rmult"` cases, recognizing exactly
+the `quad` shape above and translating into the existing `EFConst`/
+`EFAdd`/`EFMul` (`PrimFloat`, already in `Lang.v`); `real_to_expr_
+preserves_semantics` is extended for both, fully proved, no new axioms
+(`Print Assumptions` shows only the pre-existing `PrimFloat` primitives
+— the same set every other `PrimFloat`-backed theorem in this project
+already carries). Deliberately **not** the same trust move `RZLit`
+makes for `Z`: Coq's `Rplus`/`Rmult` have no computational content at
+all (confirmed above), so there's no "Coq's own stdlib function,
+called directly" option here — this fragment's `real_eval` models
+`"rplus"`/`"rmult"` *directly* as `PrimFloat` arithmetic instead (the
+same trust category as every other `PrimFloat`-backed operation
+already in this project, not a new kind of assumption), with the
+correspondence to the *original*, classical-`R` source semantics
+tracked separately, and only approximately, by the `R_of_float`
+bridge above — composing the two into one *general, compositional*
+"translating a Coquelicot-authored function preserves its
+mathematical meaning up to a stated rounding bound" theorem is
+deliberately not attempted: doing that for arbitrarily nested
+arithmetic needs real error-propagation tracking (how do two already-
+approximate sub-results' errors combine under a further `+`/`*`?),
+which is exactly the Flocq-scale work the bridge's own section above
+already declines to re-derive — not a new boundary. `examples/
+CoquelicotDemo.v`'s `quad_ir`/`quad_expr` is the worked instance,
+checked end to end: the captured JSON above, hand-encoded, translated,
+and run as real Python (`def quad(v0): return ((v0 * v0) + (...2.0**-52
+decomposition of 1.0...))`), with a concrete-instance correspondence
+check (`quad(3) = 10`, exact — no rounding error to propagate for this
+one input) standing in for the general theorem the paragraph above
+explains is not yet in scope.
+
+Still not done: a `RealJson.v`-ingested version of this same example
+(parsing the real JSON *text*, not just the hand-built `real_expr`
+term the way `examples/NaturalCoq.v`'s own instances now go beyond);
+recognizing any Coquelicot-adjacent shape beyond this one (`Rminus`/
+`Ropp`/`Rdiv`, `R` literals other than small-integer `iZR`, anything
+nested deeper where the error-propagation question above would
+actually start to matter); and the general compositional correspondence
+theorem itself, if ever prioritized -- which the paragraph above
+already scopes as Flocq-scale work, not a bounded next step.
+`coq-coquelicot`/`coq-mathcomp-ssreflect` are installed in this dev
+environment (via `coq-released`) so further real captures are possible,
+but neither is a build dependency of `coq2py` itself — they only
+produce example *source* `.v` files to extract from, the same
 "devtime-only" role `coqc` itself already plays for every other
 `RealJson.v` capture.
 

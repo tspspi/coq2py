@@ -149,7 +149,58 @@
     needs an extra `S` for those two, and the proof needs a second
     [destruct fuel] step to match. *)
 
+(** [RFLit]/[RApp2]'s new ["rplus"]/["rmult"] cases: a first, narrow
+    step into Coquelicot-adjacent code (`docs/roadmap.md`'s own
+    section on this, and `coq/RealBridge.v`'s header), confirmed
+    directly against a real extracted Coquelicot-proven function:
+
+      Definition quad (x : R) : R := x * x + 1.
+      Lemma quad_is_derive : forall x, is_derive quad x (2 * x).
+      Proof. intro x. unfold quad. auto_derive; auto. ring. Qed.
+
+    extracts [quad]'s own body as [rplus (rmult x x) (iZR (Zpos XH))]
+    -- a plain named-global-call shape, exactly like [Z.add]/[Z.ltb]
+    already are, confirmed by actually installing [coq-coquelicot]
+    (via the [coq-released] opam repo) and running [coqc] on it, not
+    assumed. [quad_is_derive] itself never appears in the extracted
+    JSON at all -- Coquelicot's calculus lemmas are [Prop]-sorted and
+    erase to nothing, exactly as `docs/duality.md`'s model predicts.
+
+    The trust boundary here is deliberately *not* the same one [RZLit]
+    draws for [Z]: Coq's own [Rplus]/[Rmult] have no computational
+    content at all (`coq/RealBridge.v`'s header spells out why --
+    extracting them pulls in [ClassicalDedekindReals]'s internal cut
+    representation, not runnable code), so there is no "Coq's own
+    stdlib function, called directly" move available for ["rplus"]/
+    ["rmult"] the way there is for ["add"]/["ltb"]. Instead, this
+    fragment's [real_eval] models them *directly* as [PrimFloat]
+    arithmetic ([VFloat]'s own [PrimFloat.add]/[PrimFloat.mul]) -- the
+    same trust category as every other [PrimFloat]-backed operation
+    already in this project (`docs/roadmap.md`'s own ["PrimFloat.float
+    is wired in"] section), not a new kind of assumption. What this
+    does *not* claim: that this matches the *original*, classical-[R]
+    source semantics [quad_is_derive] was stated about -- that
+    correspondence (necessarily approximate, since [R] is exact and
+    [PrimFloat] rounds) is tracked separately, honestly, and not yet
+    proved end-to-end, by [RealBridge.v]'s [R_of_float]/
+    [R_of_float_add_rounded]/[R_of_float_mul_rounded]. Composing that
+    bridge with this file's own [real_to_expr_preserves_semantics] --
+    i.e. a genuine "translating a Coquelicot-authored [R]-valued
+    function preserves its *mathematical* meaning up to a stated,
+    bounded rounding error" theorem -- is deliberately not attempted
+    here: doing it *compositionally*, for arbitrarily nested
+    arithmetic, needs real error-propagation tracking (how do two
+    already-approximate sub-results' errors combine under a further
+    [+]/[*]?) -- exactly the Flocq-scale numerical-analysis work this
+    project's dependency policy avoids re-deriving, the same boundary
+    [RealBridge.v]'s own header already draws, not a new one. A
+    concrete-instance correspondence (checked for one specific input,
+    where the arithmetic involved happens to be exact, no rounding
+    error to propagate) is still honestly within reach, and is exactly
+    what the worked example below does. *)
+
 From Coq Require Import ZArith String List Bool Lia.
+From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
 Require Import Lang.
 Open Scope Z_scope.
@@ -173,7 +224,8 @@ Inductive real_expr : Type :=
   | RRecord3 (e1 e2 e3 : real_expr)
   | RProj3_1 (scrutinee : real_expr)
   | RProj3_2 (scrutinee : real_expr)
-  | RProj3_3 (scrutinee : real_expr).
+  | RProj3_3 (scrutinee : real_expr)
+  | RFLit (f : PrimFloat.float).
 
 (** The reference semantics: not a reimplementation of [Z.add]/
     [Z.ltb]/etc, but a direct call to Coq's own, so this file's trust
@@ -208,6 +260,10 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VBool b1), Some (VBool b2) =>
           if string_dec fn "andb" then Some (VBool (andb b1 b2))
           else if string_dec fn "orb" then Some (VBool (orb b1 b2))
+          else None
+      | Some (VFloat f1), Some (VFloat f2) =>
+          if string_dec fn "rplus" then Some (VFloat (PrimFloat.add f1 f2))
+          else if string_dec fn "rmult" then Some (VFloat (PrimFloat.mul f1 f2))
           else None
       | _, _ => None
       end
@@ -271,6 +327,7 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VPair _ (VPair _ v3)) => Some v3
       | _ => None
       end
+  | RFLit f => Some (VFloat f)
   end.
 
 (** The translator: recognize each intrinsic by the exact unqualified
@@ -301,6 +358,8 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           else if string_dec fn "leb" then Some (ELe e1 e2)
           else if string_dec fn "andb" then Some (EAnd e1 e2)
           else if string_dec fn "orb" then Some (EOr e1 e2)
+          else if string_dec fn "rplus" then Some (EFAdd e1 e2)
+          else if string_dec fn "rmult" then Some (EFMul e1 e2)
           else None
       | _, _ => None
       end
@@ -361,6 +420,7 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | Some e => Some (ESnd (ESnd e))
       | None => None
       end
+  | RFLit f => Some (EFConst f)
   end.
 
 (** [real_expr] has no closures/recursion at all (that is exactly what
@@ -393,6 +453,7 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RProj3_1 scrutinee => S (real_expr_depth scrutinee)
   | RProj3_2 scrutinee => S (S (real_expr_depth scrutinee))
   | RProj3_3 scrutinee => S (S (real_expr_depth scrutinee))
+  | RFLit _ => O
   end.
 
 Theorem real_to_expr_preserves_semantics :
@@ -471,6 +532,16 @@ Proof.
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
        reflexivity|].
     destruct (string_dec fn "orb") as [Heq|Hne8];
+      [inversion Htrans; subst; simpl; rewrite IH1, IH2;
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
+       reflexivity|].
+    destruct (string_dec fn "rplus") as [Heq|Hne9];
+      [inversion Htrans; subst; simpl; rewrite IH1, IH2;
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
+       reflexivity|].
+    destruct (string_dec fn "rmult") as [Heq|Hne10];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
        destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c]|];
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c]|];
@@ -627,6 +698,9 @@ Proof.
     assert (Hd1 : (real_expr_depth re < fuel2)%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel2 rho Hd1).
     destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|]; reflexivity.
+  - (* RFLit *)
+    inversion Htrans; subst.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|]. reflexivity.
 Qed.
 
 (** [real_to_expr_ctx]: [real_to_expr] again, case for case, but
@@ -729,6 +803,7 @@ Fixpoint real_to_expr_ctx (self : option var) (re : real_expr) : option expr :=
       | Some e => Some (ESnd (ESnd e))
       | None => None
       end
+  | RFLit f => Some (EFConst f)
   end.
 
 (** [real_fix_decl]: [real_decl]'s cousin for a single self-recursive

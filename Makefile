@@ -23,6 +23,7 @@ examples:
 	cd coq && coqc -Q . "" -Q ../examples "" ../examples/Kinematics.v
 	cd coq && coqc -Q . "" -Q ../examples "" ../examples/NaturalCoq.v
 	cd coq && coqc -Q . "" -Q ../examples "" ../examples/Thermodynamics.v
+	cd coq && coqc -Q . "" -Q ../examples "" ../examples/CoquelicotDemo.v
 
 # examples/physics/ is a reusable collection of modules for a larger
 # worked example (see docs/roadmap.md); it may grow to depend on the
