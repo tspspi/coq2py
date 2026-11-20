@@ -7,7 +7,7 @@
 
 COQC = coqc -Q . ""
 
-VFILES = Lang.v PyLang.v Translate.v Json.v PyRename.v PyPrint.v RealIR.v RealJson.v
+VFILES = Lang.v PyLang.v Translate.v Json.v PyRename.v PyPrint.v RealIR.v RealJson.v RealBridge.v
 VOFILES = $(VFILES:.v=.vo)
 
 .PHONY: all extract clean
@@ -37,6 +37,9 @@ PyRename.vo: PyRename.v PyLang.vo Json.vo
 
 PyPrint.vo: PyPrint.v PyLang.vo Json.vo PyRename.vo
 	$(COQC) PyPrint.v
+
+RealBridge.vo: RealBridge.v
+	$(COQC) RealBridge.v
 
 extract: all Extract.v
 	$(COQC) Extract.v

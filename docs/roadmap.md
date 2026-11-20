@@ -531,42 +531,94 @@ minimum:
   question (same array semantics, plus autodiff — a further, separate
   formalization question about what the generated code's gradients mean).
 
-## Coquelicot support -- gated on the `R`-vs-float item above, not independent
+## Coquelicot support -- the `R`-vs-float bridge is landed; the recognizer isn't yet
 
 A real request: extend `RealIR.v`/`RealJson.v`'s recognized fragment to
 cover code built on [Coquelicot](http://coquelicot.saclay.inria.fr/)
 (derivatives, limits, series, integrals over Coq's classical `R`). This
 is *not* a small addition to the existing ingestion recognizer the way
-`RCase`/`RRecord3` were — it is blocked on the still-open "formalization
-of `R` and its correspondence to IEEE-754 floats" item directly above,
-for a structural reason worth spelling out:
+`RCase`/`RRecord3` were — it was blocked on a "formalization of `R` and
+its correspondence to IEEE-754 floats" prerequisite, for a structural
+reason confirmed directly (not just argued) this session, by actually
+installing Coquelicot (`opam install coq-coquelicot`, which needed the
+`coq-released` repo added; it also needs `Require Coq.extraction.Extraction.`
+stated explicitly before `Extraction Language JSON.` once Coquelicot is
+loaded, since loading it otherwise leaves the extraction plugin's
+vernacular grammar extension unavailable — a new, empirically-confirmed
+wrinkle, not a hypothetical one) and extracting a genuine, Coquelicot-
+proven function:
+
+```coq
+Definition quad (x : R) : R := x * x + 1.
+Lemma quad_is_derive : forall x, is_derive quad x (2 * x).
+Proof. intro x. unfold quad. auto_derive; auto. ring. Qed.
+```
 
 - Coq's `R` is axiomatic (Dedekind-cut/Cauchy-style, not a computable
-  representation); `Extraction` of `R`'s own operations
-  (`Rplus`/`Rmult`/...) produces *axioms to realize*, not runnable code
-  — the same "R has no computational content" gap this roadmap's float
-  section already describes resolving for `PrimFloat` by replacing `R`
-  with floats entirely at the *source* language level. Coquelicot is
-  built *on top of* `R`, so it inherits this exactly, with no shortcut.
+  representation); extracting `quad` confirms this directly — the JSON
+  output is 350KB, dominated by `ClassicalDedekindReals`'s own internal
+  cut representation (`rabst`/`rrepr`/`rquot1`/`rquot2`/...) and an
+  axiom-to-realize (`sig_forall_dec`), versus a few bytes for the
+  equivalent `Z` function.
+- But — also confirmed directly, and good news — `quad`'s own extracted
+  *body* is clean: `rplus (rmult x x) (iZR (Zpos XH))`, i.e. a plain
+  named-global-call shape, exactly the `RApp2`-style intrinsic pattern
+  `RealIR.v` already recognizes for `Z.add`/`Z.ltb`. `R`'s own
+  operations extracting to call sites this recognizable — not buried
+  inside the cut machinery — was the open empirical question; it's
+  answered. The same "ignore a well-known intrinsic's own extracted
+  body, recognize only the call" move `RealIR.v` already makes for `Z`
+  carries over to `R` unchanged.
 - Coquelicot's own calculus lemmas (continuity, differentiability,
   `is_derive`, limits, integrals) are `Prop`-sorted *statements about*
   such functions, not themselves computational — under this project's
   own erasure model (`docs/duality.md`), a proof using them contributes
-  nothing to extracted code either way, which is correct and expected,
-  not a gap to close.
+  nothing to extracted code either way (confirmed above: `quad_is_derive`
+  does not appear anywhere in `quad`'s own extracted JSON), which is
+  correct and expected, not a gap to close.
 - So the actually computational part of a Coquelicot-based `Definition`
   is whatever real-valued *function* it names (built from `R`'s
-  operations) — and that is precisely, unavoidably, the open
-  `R`-vs-float correspondence item above, not a new, separate problem.
+  operations) — and translating that needs the `R`-vs-float
+  correspondence below.
 
-The right first step, if this is prioritized, is therefore *not* to
-touch `RealIR.v` at all yet: it is choosing and formalizing that `R`
-model (most likely: a computable `expr`-level real/float type with an
-explicit, stated-not-assumed axiomatic correspondence to `R`, mirroring
-how `PrimFloat` already relates to `Lang.v`'s `VFloat`), then
-re-examining what a Coquelicot-based source definition's extracted JSON
-actually looks like (empirically, the same way every other `RealIR.v`
-shape was confirmed) before writing any new recognizer.
+**Done**: `coq/RealBridge.v` is that correspondence, as a first,
+explicit step, in the same spirit as the `PrimFloat`-to-`VFloat`
+relationship: `R_of_float : PrimFloat.float -> R`, a genuine
+`Definition` (not an axiom) interpreting a finite float's own
+`Prim2SF` decomposition (`(-1)^sign * mantissa * 2^exponent`, `Json.v`'s
+own convention, reused verbatim) as the real number it exactly denotes
+— exact arithmetic, nothing to assume for that direction. Negation and
+absolute value (sign-bit flip/clear in IEEE-754) correspond to `R`'s own
+`Ropp`/`Rabs` *exactly*, proved outright (`R_of_float_opp`/
+`R_of_float_abs`, no new axiom — `Print Assumptions` shows only
+`PrimFloat`'s own existing primitives and `R`'s inherent classical axioms,
+which any use of `Reals` already carries). For `+`/`*`, real rounding is
+unavoidably involved; proving the standard relative-error bound from
+`SpecFloat`'s own rounding definitions is exactly what Flocq exists to
+do, and re-deriving Flocq-scale numerical-analysis machinery here would
+be a new, nontrivial dependency this project's policy (see the `Z`/
+`PrimFloat` sections above) deliberately avoids repeating — so
+`R_of_float_add_rounded`/`R_of_float_mul_rounded` state the textbook
+IEEE-754 binary64 round-to-nearest relative-error model (`fl(x+y) =
+(x+y)(1+delta)`, `|delta| <= 2^-53`) as two explicit, honestly-scoped
+`Axiom`s, in the same trust-boundary category `docs/duality.md` already
+uses for "does `PrimFloat.float` arithmetic actually match IEEE-754" and
+for `SF2Prim_Prim2SF` itself — assumed and named, not silently elided.
+
+Still not done: actually extending `RealIR.v`'s recognizer to use this
+bridge — a new `real_expr` fragment for `R` literals and `Rplus`/
+`Rmult`/`Rminus`/`Ropp` by intrinsic name, translating into the existing
+`EFConst`/`EFAdd`/`EFMul`/`EFSub` (`PrimFloat`, already in `Lang.v`), with
+`real_to_expr_preserves_semantics`'s extended case invoking the two
+rounding axioms above exactly where `+`/`*` is translated — plus working
+the captured `quad` JSON above into a `RealJson.v`-ingested example the
+same way `examples/NaturalCoq.v` already does for every other recognized
+shape. `coq-coquelicot`/`coq-mathcomp-ssreflect` are now installed in
+this dev environment (via `coq-released`) so further real captures are
+possible, but neither is a build dependency of `coq2py` itself — they
+only produce example *source* `.v` files to extract from, the same
+"devtime-only" role `coqc` itself already plays for every other
+`RealJson.v` capture.
 
 ## Electromagnetism example: symmetry, Maxwell's equations, the wave equation
 
