@@ -125,6 +125,29 @@
     standard, not a gap specific to [RSelf]. See examples/NaturalCoq.v's
     [any_true_expr_matches_real_definition]. *)
 
+(** [RCall fname arg]: [RSelf]'s generalization to *general*
+    mutually-recursive fixgroups ([Fixpoint ... with ...], more than
+    one member) -- confirmed directly against a real extracted
+    [Fixpoint is_even (n : nat) : bool := match n with O => true | S
+    n' => is_odd n' end with is_odd (n : nat) : bool := match n with O
+    => false | S n' => is_even n' end.]: the whole declaration is one
+    [decl:fixgroup] whose [fixlist] now has *two* [fixgroup:item]s, and
+    a call to *either* member -- [is_even]'s own call to [is_odd], or
+    [is_odd]'s call back to [is_even] -- is an ordinary [expr:apply] of
+    [expr:global <name>], the exact same shape a self-call or an
+    unrelated intrinsic call would have, distinguishable only by
+    knowing the *whole group's* declared names, not just one. [RSelf]
+    itself is deliberately left untouched (still exactly the
+    single-function, one-name case it always was, so every existing
+    proof about it keeps working unchanged) -- [RCall] is a new,
+    additive sibling for when the enclosing group has more than one
+    name to check against, recording *which* member was called since,
+    unlike [RSelf], it is no longer always "this same function". Like
+    [RSelf], deliberately not interpreted by [real_eval]/[real_to_expr]
+    (both [None] unconditionally): resolving it needs the enclosing
+    group's full member list, which only [real_to_expr_ctx]/
+    [real_fix_group_decl] below carry. *)
+
 (** [RRecord3]/[RProj3_1]/[RProj3_2]/[RProj3_3]: a real, human-written
     *3*-field [Record] -- confirmed directly against a real extracted
     [Record point3 := mkpoint3 { px : Z; py : Z; pz : Z }.]: just like
@@ -244,6 +267,7 @@ Inductive real_expr : Type :=
   | RProj2 (scrutinee : real_expr)
   | RCase (scrutinee : real_expr) (x1 : var) (case1 : real_expr) (x2 : var) (case2 : real_expr)
   | RSelf (arg : real_expr)
+  | RCall (fname : var) (arg : real_expr)
   | RRecord3 (e1 e2 e3 : real_expr)
   | RProj3_1 (scrutinee : real_expr)
   | RProj3_2 (scrutinee : real_expr)
@@ -336,6 +360,7 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | _ => None
       end
   | RSelf _ => None
+  | RCall _ _ => None
   | RRecord3 e1 e2 e3 =>
       match real_eval rho e1, real_eval rho e2, real_eval rho e3 with
       | Some v1, Some v2, Some v3 => Some (VPair v1 (VPair v2 v3))
@@ -433,6 +458,7 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | _, _, _ => None
       end
   | RSelf _ => None
+  | RCall _ _ => None
   | RRecord3 e1 e2 e3 =>
       match real_to_expr e1, real_to_expr e2, real_to_expr e3 with
       | Some e1', Some e2', Some e3' => Some (EPair e1' (EPair e2' e3'))
@@ -478,6 +504,7 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RCase scrutinee _ case1 _ case2 =>
       S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth case1) (real_expr_depth case2)))
   | RSelf arg => S (real_expr_depth arg)
+  | RCall _ arg => S (real_expr_depth arg)
   | RRecord3 e1 e2 e3 =>
       (* translates to the nested [EPair e1' (EPair e2' e3')] -- [e2]/
          [e3] sit one [EPair] dispatch deeper than [e1], so they need
@@ -690,6 +717,9 @@ Proof.
   - (* RSelf: [real_to_expr] gives it [None] unconditionally (see this
        file's header), so the hypothesis [Htrans] is vacuous here. *)
     discriminate Htrans.
+  - (* RCall: same as RSelf -- [real_to_expr] gives it [None]
+       unconditionally, so [Htrans] is vacuous here too. *)
+    discriminate Htrans.
   - (* RRecord3: translates to the nested [EPair e1 (EPair e2 e3)],
        so [e2]/[e3] need one more fuel level than [e1] -- the first
        case in this file needing two [destruct fuel] steps, not one.
@@ -764,13 +794,13 @@ Qed.
     case is untouched (just threads [self] through unchanged), and
     keeping [real_to_expr] itself exactly as proved above means
     nothing above this line needed re-proving to add this. *)
-Fixpoint real_to_expr_ctx (self : option var) (re : real_expr) : option expr :=
+Fixpoint real_to_expr_ctx (self : option var) (siblings : list var) (re : real_expr) : option expr :=
   match re with
   | RRel name => Some (EVar name)
   | RZLit z => Some (EConst z)
   | RBoolLit b => Some (EBool b)
   | RApp1 fn arg =>
-      match real_to_expr_ctx self arg with
+      match real_to_expr_ctx self siblings arg with
       | Some e1 =>
           if string_dec fn "negb" then Some (ENot e1)
           else if string_dec fn "fst" then Some (EFst e1)
@@ -779,7 +809,7 @@ Fixpoint real_to_expr_ctx (self : option var) (re : real_expr) : option expr :=
       | None => None
       end
   | RApp2 fn a1 a2 =>
-      match real_to_expr_ctx self a1, real_to_expr_ctx self a2 with
+      match real_to_expr_ctx self siblings a1, real_to_expr_ctx self siblings a2 with
       | Some e1, Some e2 =>
           if string_dec fn "add" then Some (EAdd e1 e2)
           else if string_dec fn "sub" then Some (ESub e1 e2)
@@ -793,64 +823,72 @@ Fixpoint real_to_expr_ctx (self : option var) (re : real_expr) : option expr :=
       | _, _ => None
       end
   | RIfBool c t e =>
-      match real_to_expr_ctx self c, real_to_expr_ctx self t, real_to_expr_ctx self e with
+      match real_to_expr_ctx self siblings c, real_to_expr_ctx self siblings t, real_to_expr_ctx self siblings e with
       | Some ec, Some et, Some ee => Some (EIf ec et ee)
       | _, _, _ => None
       end
   | RNil => Some ENil
   | RCons hd tl =>
-      match real_to_expr_ctx self hd, real_to_expr_ctx self tl with
+      match real_to_expr_ctx self siblings hd, real_to_expr_ctx self siblings tl with
       | Some eh, Some et => Some (ECons eh et)
       | _, _ => None
       end
   | RListMatch scrutinee nilcase hd tl conscase =>
-      match real_to_expr_ctx self scrutinee, real_to_expr_ctx self nilcase,
-            real_to_expr_ctx self conscase with
+      match real_to_expr_ctx self siblings scrutinee, real_to_expr_ctx self siblings nilcase,
+            real_to_expr_ctx self siblings conscase with
       | Some es, Some en, Some ec => Some (EListMatch es en hd tl ec)
       | _, _, _ => None
       end
   | RPair e1 e2 =>
-      match real_to_expr_ctx self e1, real_to_expr_ctx self e2 with
+      match real_to_expr_ctx self siblings e1, real_to_expr_ctx self siblings e2 with
       | Some e1', Some e2' => Some (EPair e1' e2')
       | _, _ => None
       end
   | RProj1 scrutinee =>
-      match real_to_expr_ctx self scrutinee with
+      match real_to_expr_ctx self siblings scrutinee with
       | Some e => Some (EFst e)
       | None => None
       end
   | RProj2 scrutinee =>
-      match real_to_expr_ctx self scrutinee with
+      match real_to_expr_ctx self siblings scrutinee with
       | Some e => Some (ESnd e)
       | None => None
       end
   | RCase scrutinee x1 case1 x2 case2 =>
-      match real_to_expr_ctx self scrutinee, real_to_expr_ctx self case1, real_to_expr_ctx self case2 with
+      match real_to_expr_ctx self siblings scrutinee, real_to_expr_ctx self siblings case1, real_to_expr_ctx self siblings case2 with
       | Some es, Some ec1, Some ec2 => Some (ECase es x1 ec1 x2 ec2)
       | _, _, _ => None
       end
   | RSelf arg =>
-      match self, real_to_expr_ctx self arg with
+      match self, real_to_expr_ctx self siblings arg with
       | Some f, Some arg' => Some (EApp (EVar f) arg')
       | _, _ => None
       end
+  | RCall fname arg =>
+      match real_to_expr_ctx self siblings arg with
+      | Some arg' =>
+          if List.existsb (fun s => if string_dec fname s then true else false) siblings
+          then Some (EApp (EVar fname) arg')
+          else None
+      | None => None
+      end
   | RRecord3 e1 e2 e3 =>
-      match real_to_expr_ctx self e1, real_to_expr_ctx self e2, real_to_expr_ctx self e3 with
+      match real_to_expr_ctx self siblings e1, real_to_expr_ctx self siblings e2, real_to_expr_ctx self siblings e3 with
       | Some e1', Some e2', Some e3' => Some (EPair e1' (EPair e2' e3'))
       | _, _, _ => None
       end
   | RProj3_1 scrutinee =>
-      match real_to_expr_ctx self scrutinee with
+      match real_to_expr_ctx self siblings scrutinee with
       | Some e => Some (EFst e)
       | None => None
       end
   | RProj3_2 scrutinee =>
-      match real_to_expr_ctx self scrutinee with
+      match real_to_expr_ctx self siblings scrutinee with
       | Some e => Some (EFst (ESnd e))
       | None => None
       end
   | RProj3_3 scrutinee =>
-      match real_to_expr_ctx self scrutinee with
+      match real_to_expr_ctx self siblings scrutinee with
       | Some e => Some (ESnd (ESnd e))
       | None => None
       end
@@ -868,7 +906,7 @@ Record real_fix_decl : Type := mk_real_fix_decl {
 }.
 
 Definition real_fix_decl_to_expr (rfd : real_fix_decl) : option expr :=
-  match real_to_expr_ctx (Some rfd.(rfd_name)) rfd.(rfd_body) with
+  match real_to_expr_ctx (Some rfd.(rfd_name)) [] rfd.(rfd_body) with
   | Some body => Some (ERec rfd.(rfd_name) rfd.(rfd_param) body)
   | None => None
   end.
@@ -882,6 +920,54 @@ Definition real_fix_decl_to_expr (rfd : real_fix_decl) : option expr :=
     direct induction on the argument against the real Gallina
     [Fixpoint], per declaration -- see examples/NaturalCoq.v's
     [any_true_expr_matches_real_definition] for a worked instance. *)
+
+(** [real_fix_group_decl]: the *general*, N-way mutually-recursive
+    generalization of [real_fix_decl] -- a real [Fixpoint ... with
+    ...] group of two or more single-argument functions, each
+    possibly calling any member (including itself) by name. Mirrors
+    [Lang.v]'s own [ERecGroup fns]'s representation almost exactly: a
+    list of [(name, param, body)] triples, one per group member, in
+    declaration order. *)
+Record real_fix_group_decl : Type := mk_real_fix_group_decl {
+  rfgd_fns : list (var * var * real_expr)
+}.
+
+(** Translating a member's own body uses [self := None]/[siblings :=
+    every member's name]: within an N-way group, *every* call to a
+    group member -- including a self-call -- was parsed as [RCall],
+    never [RSelf] (see [RealJson.v]'s [decl_fixgroup_of_json]), so
+    there is no distinguished "self" name to pass here the way
+    [real_fix_decl_to_expr] passes one. Builds [ERecGroup], the exact
+    target [eval]'s own [EApp]/[VClosureGroup] case already expects
+    for a group member's closure (Lang.v) -- already proven there, so
+    nothing above this line needed re-proving to add this. *)
+Definition real_fix_group_decl_to_expr (rfgd : real_fix_group_decl) : option expr :=
+  let names := List.map (fun x => fst (fst x)) rfgd.(rfgd_fns) in
+  match
+    (fix go (fns : list (var * var * real_expr)) : option (list (var * var * expr)) :=
+       match fns with
+       | [] => Some []
+       | (f, p, b) :: rest =>
+           match real_to_expr_ctx None names b, go rest with
+           | Some b', Some rest' => Some ((f, p, b') :: rest')
+           | _, _ => None
+           end
+       end) rfgd.(rfgd_fns)
+  with
+  | Some fns' => Some (ERecGroup fns')
+  | None => None
+  end.
+
+(** Like [real_fix_decl], deliberately no generic preservation
+    theorem: an N-way group's recursion depth is just as
+    argument-dependent as a single [Fixpoint]'s, for the same reason
+    (this file's [real_fix_decl] comment just above). The right proof
+    shape is the same concrete-instance style, now one induction per
+    member that's actually exercised by the check -- see
+    examples/NaturalCoq.v's [is_even_expr_matches_real_definition] for
+    a worked instance (an actual 2-way cross-call, confirmed against
+    the real Gallina [is_even]/[is_odd] pair, not just analogous to
+    [any_true]'s single-function case). *)
 
 (** [real_decl]: models the [decl:term]/[expr:lambda] wrapper around a
     whole real, human-written multi-argument [Definition] -- not just

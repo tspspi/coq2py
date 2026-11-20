@@ -348,7 +348,7 @@ Definition is_rel_named (bodyj : jvalue) (x : string) : bool :=
   | _ => false
   end.
 
-Fixpoint real_expr_of_json (self : option var) (fuel : nat) (j : jvalue) {struct fuel} : option real_expr :=
+Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat) (j : jvalue) {struct fuel} : option real_expr :=
   match fuel with
   | O => None
   | S fuel' =>
@@ -373,19 +373,19 @@ Fixpoint real_expr_of_json (self : option var) (fuel : nat) (j : jvalue) {struct
           | Some "False", Some (JArray []) => Some (RBoolLit false)
           | Some "Nil", Some (JArray []) => Some RNil
           | Some "Cons", Some (JArray [h; t]) =>
-              match real_expr_of_json self fuel' h, real_expr_of_json self fuel' t with
+              match real_expr_of_json self siblings fuel' h, real_expr_of_json self siblings fuel' t with
               | Some h', Some t' => Some (RCons h' t')
               | _, _ => None
               end
           | Some "Pair", Some (JArray [a; b]) =>
-              match real_expr_of_json self fuel' a, real_expr_of_json self fuel' b with
+              match real_expr_of_json self siblings fuel' a, real_expr_of_json self siblings fuel' b with
               | Some a', Some b' => Some (RPair a' b')
               | _, _ => None
               end
           | _, Some (JArray [a; b; c]) =>
               (* a 3-argument record constructor, any name -- RRecord3 *)
-              match real_expr_of_json self fuel' a, real_expr_of_json self fuel' b,
-                    real_expr_of_json self fuel' c with
+              match real_expr_of_json self siblings fuel' a, real_expr_of_json self siblings fuel' b,
+                    real_expr_of_json self siblings fuel' c with
               | Some a', Some b', Some c' => Some (RRecord3 a' b' c')
               | _, _, _ => None
               end
@@ -402,14 +402,14 @@ Fixpoint real_expr_of_json (self : option var) (fuel : nat) (j : jvalue) {struct
                       if string_dec fname sname then
                         match args with
                         | [a] =>
-                            match real_expr_of_json self fuel' a with
+                            match real_expr_of_json self siblings fuel' a with
                             | Some a' => Some (RSelf a')
                             | None => None
                             end
                         | _ => None
                         end
-                      else real_app_of_json self fuel' fname args
-                  | None => real_app_of_json self fuel' fname args
+                      else real_call_or_app self siblings fuel' fname args
+                  | None => real_call_or_app self siblings fuel' fname args
                   end
               | _, _ => None
               end
@@ -418,9 +418,9 @@ Fixpoint real_expr_of_json (self : option var) (fuel : nat) (j : jvalue) {struct
       | Some "expr:case" =>
           match jfield fs "expr", jfield fs "cases" with
           | Some scrutinee_j, Some (JArray cases) =>
-              match real_expr_of_json self fuel' scrutinee_j with
+              match real_expr_of_json self siblings fuel' scrutinee_j with
               | Some scrutinee =>
-                  real_case_of_json self fuel' scrutinee cases
+                  real_case_of_json self siblings fuel' scrutinee cases
               | None => None
               end
           | _, _ => None
@@ -431,10 +431,35 @@ Fixpoint real_expr_of_json (self : option var) (fuel : nat) (j : jvalue) {struct
   end
   end
 
+(** Dispatch an [expr:apply] whose [func] is a plain [expr:global] and
+    isn't [self]: a call to a *sibling* in the enclosing N-way
+    mutually-recursive fixgroup (recognized as [RCall], by membership
+    in [siblings] -- the whole group's own declared names, known to
+    the caller before any member's body is parsed, since [coqc]'s own
+    [decl:fixgroup] lists every member up front) takes priority over
+    an ordinary intrinsic call, the same way a [self]-call already
+    does. *)
+with real_call_or_app (self : option var) (siblings : list var) (fuel : nat) (fname : string) (args : list jvalue)
+    {struct fuel} : option real_expr :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+  if List.existsb (fun s => if string_dec fname s then true else false) siblings then
+    match args with
+    | [a] =>
+        match real_expr_of_json self siblings fuel' a with
+        | Some a' => Some (RCall fname a')
+        | None => None
+        end
+    | _ => None
+    end
+  else real_app_of_json self siblings fuel' fname args
+  end
+
 (** Dispatch an [expr:apply] whose [func] is a plain [expr:global] --
     an intrinsic call ([RApp1]/[RApp2]), arity read off [args]'s own
     length, never guessed. *)
-with real_app_of_json (self : option var) (fuel : nat) (fname : string) (args : list jvalue)
+with real_app_of_json (self : option var) (siblings : list var) (fuel : nat) (fname : string) (args : list jvalue)
     {struct fuel} : option real_expr :=
   match fuel with
   | O => None
@@ -447,12 +472,12 @@ with real_app_of_json (self : option var) (fuel : nat) (fname : string) (args : 
         | None => None
         end
       else
-        match real_expr_of_json self fuel' a with
+        match real_expr_of_json self siblings fuel' a with
         | Some a' => Some (RApp1 fname a')
         | None => None
         end
   | [a; b] =>
-      match real_expr_of_json self fuel' a, real_expr_of_json self fuel' b with
+      match real_expr_of_json self siblings fuel' a, real_expr_of_json self siblings fuel' b with
       | Some a', Some b' => Some (RApp2 fname a' b')
       | _, _ => None
       end
@@ -468,7 +493,7 @@ with real_app_of_json (self : option var) (fuel : nat) (fname : string) (args : 
     projection extracts to) is [RProj1]/[RProj2]/[RProj3_1]/
     [RProj3_2]/[RProj3_3]; a single-case, 2-name [Cons]/[Nil] pair is
     [RListMatch]. *)
-with real_case_of_json (self : option var) (fuel : nat) (scrutinee : real_expr) (cases : list jvalue)
+with real_case_of_json (self : option var) (siblings : list var) (fuel : nat) (scrutinee : real_expr) (cases : list jvalue)
     {struct fuel} : option real_expr :=
   match fuel with
   | O => None
@@ -506,22 +531,22 @@ with real_case_of_json (self : option var) (fuel : nat) (scrutinee : real_expr) 
           | Some (JObject p1), Some b1, Some (JObject p2), Some b2 =>
               match jname p1, jfield p1 "argnames", jname p2, jfield p2 "argnames" with
               | Some "True", Some (JArray []), Some "False", Some (JArray []) =>
-                  match real_expr_of_json self fuel' b1, real_expr_of_json self fuel' b2 with
+                  match real_expr_of_json self siblings fuel' b1, real_expr_of_json self siblings fuel' b2 with
                   | Some t, Some e => Some (RIfBool scrutinee t e)
                   | _, _ => None
                   end
               | Some "Inl", Some (JArray [JString x1]), Some "Inr", Some (JArray [JString x2]) =>
-                  match real_expr_of_json self fuel' b1, real_expr_of_json self fuel' b2 with
+                  match real_expr_of_json self siblings fuel' b1, real_expr_of_json self siblings fuel' b2 with
                   | Some c1', Some c2' => Some (RCase scrutinee x1 c1' x2 c2')
                   | _, _ => None
                   end
               | Some "Nil", Some (JArray []), Some "Cons", Some (JArray [JString h; JString t]) =>
-                  match real_expr_of_json self fuel' b1, real_expr_of_json self fuel' b2 with
+                  match real_expr_of_json self siblings fuel' b1, real_expr_of_json self siblings fuel' b2 with
                   | Some nilc, Some consc => Some (RListMatch scrutinee nilc h t consc)
                   | _, _ => None
                   end
               | Some "Cons", Some (JArray [JString h; JString t]), Some "Nil", Some (JArray []) =>
-                  match real_expr_of_json self fuel' b2, real_expr_of_json self fuel' b1 with
+                  match real_expr_of_json self siblings fuel' b2, real_expr_of_json self siblings fuel' b1 with
                   | Some nilc, Some consc => Some (RListMatch scrutinee nilc h t consc)
                   | _, _ => None
                   end
@@ -561,7 +586,7 @@ Definition jstrings_of_json (xs : list jvalue) : option (list var) :=
 Definition real_decl_of_json (fuel : nat) (argnames : list jvalue) (bodyj : jvalue) : option real_decl :=
   match jstrings_of_json argnames with
   | Some ns =>
-      match real_expr_of_json None fuel bodyj with
+      match real_expr_of_json None [] fuel bodyj with
       | Some body => Some (mk_real_decl ns body)
       | None => None
       end
@@ -586,8 +611,8 @@ Definition decl_term_of_json (fuel : nat) (j : jvalue) : option real_decl :=
 
 (** A [fixgroup:item] node, as it appears inside a [decl:fixgroup]'s
     own [fixlist] -- a single-argument self-recursive [Fixpoint]
-    only; see [RealIR.v]'s [real_fix_decl] header for why a general
-    mutually-recursive fixgroup isn't modeled yet. *)
+    only, [self]-recognized exactly as before ([siblings := []]). For
+    the general N-way case, see [decl_fixgroup_of_json] below. *)
 Definition decl_fixgroup_item_of_json (fuel : nat) (j : jvalue) : option real_fix_decl :=
   match j with
   | JObject fs =>
@@ -595,13 +620,89 @@ Definition decl_fixgroup_item_of_json (fuel : nat) (j : jvalue) : option real_fi
       | Some "fixgroup:item", Some fname, Some (JObject vfs) =>
           match jwhat vfs, jfield vfs "argnames", jfield vfs "body" with
           | Some "expr:lambda", Some (JArray [JString param]), Some bodyj =>
-              match real_expr_of_json (Some fname) fuel bodyj with
+              match real_expr_of_json (Some fname) [] fuel bodyj with
               | Some body => Some (mk_real_fix_decl fname param body)
               | None => None
               end
           | _, _, _ => None
           end
       | _, _, _ => None
+      end
+  | _ => None
+  end.
+
+(** A single [fixgroup:item] node, parsed as *one member* of a general
+    N-way group: [self := None] ([RealIR.v]'s [real_fix_group_decl]
+    deliberately never produces [RSelf] -- see its own comment), and
+    [siblings] is the *whole* group's names, known up front from
+    [names] (every [fixgroup:item] in a [decl:fixgroup]'s [fixlist]
+    is visible before any one member's own body is parsed, so this
+    is never a chicken-and-egg problem). *)
+Definition fixgroup_item_of_json (siblings : list var) (fuel : nat) (j : jvalue)
+    : option (var * var * real_expr) :=
+  match j with
+  | JObject fs =>
+      match jwhat fs, jname fs, jfield fs "value" with
+      | Some "fixgroup:item", Some fname, Some (JObject vfs) =>
+          match jwhat vfs, jfield vfs "argnames", jfield vfs "body" with
+          | Some "expr:lambda", Some (JArray [JString param]), Some bodyj =>
+              match real_expr_of_json None siblings fuel bodyj with
+              | Some body => Some (fname, param, body)
+              | None => None
+              end
+          | _, _, _ => None
+          end
+      | _, _, _ => None
+      end
+  | _ => None
+  end.
+
+(** A [decl:fixgroup] node, as it appears directly inside
+    [declarations]: every member's own name is read off [fixlist]
+    first ([jname], not re-derived), *then* each member's body is
+    parsed against that whole list as [siblings] -- confirmed
+    directly against a real extracted [Fixpoint is_even (n : nat) :
+    bool := ... with is_odd (n : nat) : bool := ...]: [fixlist] is a
+    flat [JArray] of [fixgroup:item]s, group order preserved, no
+    separate "names" field to read instead. *)
+Definition decl_fixgroup_of_json (fuel : nat) (j : jvalue) : option real_fix_group_decl :=
+  match j with
+  | JObject fs =>
+      match jwhat fs, jfield fs "fixlist" with
+      | Some "decl:fixgroup", Some (JArray items) =>
+          match
+            (fix names_of (its : list jvalue) : option (list var) :=
+               match its with
+               | [] => Some []
+               | JObject ifs :: rest =>
+                   match jname ifs with
+                   | Some n => match names_of rest with
+                               | Some ns => Some (n :: ns)
+                               | None => None
+                               end
+                   | None => None
+                   end
+               | _ :: _ => None
+               end) items
+          with
+          | Some siblings =>
+              match
+                (fix go (its : list jvalue) : option (list (var * var * real_expr)) :=
+                   match its with
+                   | [] => Some []
+                   | it :: rest =>
+                       match fixgroup_item_of_json siblings fuel it, go rest with
+                       | Some m, Some ms => Some (m :: ms)
+                       | _, _ => None
+                       end
+                   end) items
+              with
+              | Some fns => Some (mk_real_fix_group_decl fns)
+              | None => None
+              end
+          | None => None
+          end
+      | _, _ => None
       end
   | _ => None
   end.
@@ -648,6 +749,43 @@ Definition find_decl_by_name (decls : list jvalue) (target : string) : option jv
      | _ :: rest => go rest
      end) decls.
 
+(** Like [find_decl_by_name], but for the N-way case: returns the
+    *whole* [decl:fixgroup] node containing a member named [target],
+    not that member's own [fixgroup:item] -- [decl_fixgroup_of_json]
+    needs every member, not just the one the caller happens to ask
+    for by name, to resolve any member's calls to any other. A real
+    [decl:fixgroup]'s own ["name"] field is [null] for a genuine
+    multi-member group (confirmed directly against the [is_even]/
+    [is_odd] probe), so group identity is only ever "which members'
+    names does it declare", never a name of its own. *)
+Definition find_fixgroup_by_member_name (decls : list jvalue) (target : string) : option jvalue :=
+  (fix go (ds : list jvalue) : option jvalue :=
+     match ds with
+     | [] => None
+     | JObject fs :: rest =>
+         match jwhat fs with
+         | Some "decl:fixgroup" =>
+             match jfield fs "fixlist" with
+             | Some (JArray items) =>
+                 if (fix any_named (its : list jvalue) : bool :=
+                       match its with
+                       | [] => false
+                       | JObject ifs :: rest' =>
+                           match jname ifs with
+                           | Some n => if string_dec n target then true else any_named rest'
+                           | None => any_named rest'
+                           end
+                       | _ :: rest' => any_named rest'
+                       end) items
+                 then Some (JObject fs)
+                 else go rest
+             | _ => go rest
+             end
+         | _ => go rest
+         end
+     | _ :: rest => go rest
+     end) decls.
+
 Definition module_declarations (s : string) : option (list jvalue) :=
   match parse_json s with
   | Some (JObject mfs) =>
@@ -677,6 +815,19 @@ Definition real_fix_decl_of_module_json (s target : string) : option real_fix_de
   | Some decls =>
       match find_decl_by_name decls target with
       | Some declj => decl_fixgroup_item_of_json (S (String.length s)) declj
+      | None => None
+      end
+  | None => None
+  end.
+
+(** A third entry point, for a general N-way mutually-recursive
+    [decl:fixgroup]: [target] names any *one* member (the caller's
+    point of entry), but the result carries the *whole* group. *)
+Definition real_fix_group_decl_of_module_json (s target : string) : option real_fix_group_decl :=
+  match module_declarations s with
+  | Some decls =>
+      match find_fixgroup_by_member_name decls target with
+      | Some declj => decl_fixgroup_of_json (S (String.length s)) declj
       | None => None
       end
   | None => None

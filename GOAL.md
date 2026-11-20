@@ -188,19 +188,23 @@ terms) now works mechanically, not just as hand-transcribed examples:
 `coq/RealIR.v` proves that a recognized fragment of Coq's own
 `Extraction Language JSON` output (`Z`/`bool` arithmetic and `if`,
 lists, pairs, records up to 3 fields, a whole declaration's `argnames`
-wrapper, a real single-argument self-recursive `Fixpoint`, and a real
-2-case sum — real intrinsic calls like `Z.ltb` verified against Coq's
-own semantics directly, not a reimplementation) translates into the
-existing `expr` subset with no new axioms; `coq/RealJson.v` is the
+wrapper, a real single-argument self-recursive `Fixpoint`, a real
+general N-way *mutually*-recursive `Fixpoint ... with ...` group, and a
+real 2-case sum — real intrinsic calls like `Z.ltb` verified against
+Coq's own semantics directly, not a reimplementation) translates into
+the existing `expr` subset with no new axioms; `coq/RealJson.v` is the
 JSON-*text* parser (not yet proved itself — see `docs/roadmap.md`)
 that reads an actual `coqc`-extracted module and produces that
-`real_expr`, confirmed end to end against four fresh probes
-(`clamp_nonneg`, `classify`, `swap_xz`, `any_true`), each producing
-byte-identical generated Python to the hand-built version in
+`real_expr`, confirmed end to end against five fresh probes
+(`clamp_nonneg`, `classify`, `swap_xz`, `any_true`,
+`alt_from_true`/`alt_from_false`), each producing byte-identical
+generated Python to the hand-built version in
 `examples/NaturalCoq.v`. See `docs/roadmap.md` for exactly what's
-proven versus what's still missing (recursive *groups* of more than
-one function, Coquelicot/real-number support — the latter gated on a
-separate, deliberately-deferred `R`-vs-float formalization question,
+proven versus what's still missing (recursive functions of more than
+one argument, Coquelicot/real-number support beyond the basic
+`rplus`/`rmult`/`rminus`/`rdiv`/`ropp`/`rabs` fragment already landed
+there — the general compositional rounding-error theorem is gated on
+a separate, deliberately-deferred `R`-vs-float formalization question,
 not a small addition).
 
 Decisions made along the way (superseding the "Open questions" below

@@ -148,9 +148,46 @@ an open guess.
   static size, the same reason that theorem doesn't exist for
   non-recursive `ERec` either. `examples/NaturalCoq.v`'s `any_true`
   (its real captured JSON, encoded by hand, translated, and run as
-  real Python) is the worked instance. General *mutually*-recursive
-  fixgroups, and recursive functions of more than one argument, are
-  still not modeled.
+  real Python) is the worked instance.
+- General *mutually*-recursive fixgroups (`Fixpoint ... with ...`, two
+  or more members) are recognized too, via `RealIR.v`'s `RCall`/
+  `real_fix_group_decl`: a real `decl:fixgroup`'s `fixlist` simply has
+  more than one `fixgroup:item` (confirmed directly against a real
+  `alt_from_true`/`alt_from_false` pair), and a call to *any* member --
+  self included -- is the exact same `expr:apply`/`expr:global <name>`
+  shape a self-call or an unrelated intrinsic call already has,
+  distinguishable only by knowing the *whole group's* declared names,
+  not just one. `RSelf` itself is deliberately untouched (still the
+  single-function, one-name case it always was, so every existing
+  proof about it keeps working unchanged) -- `RCall` is a new,
+  additive sibling, recording *which* member was called since it is no
+  longer always "this same function". `real_to_expr_ctx` (and
+  `RealJson.v`'s `real_expr_of_json`/`real_app_of_json`) gained one
+  new threaded parameter, `siblings : list var`, defaulting to `[]`
+  at every existing call site -- a membership check against `[]` is
+  always `false`, so the single-function path is byte-for-byte
+  unchanged, confirmed by the full test suite passing with zero other
+  edits. `real_fix_group_decl_to_expr` lands on `Lang.v`'s already-
+  proven `ERecGroup` (no new target constructor, no new evaluation
+  rule to prove). Like `real_fix_decl`, deliberately no generic
+  preservation theorem (recursion depth is argument-dependent, the
+  same reason that theorem doesn't exist for the single-function case
+  either) -- `examples/NaturalCoq.v`'s `alt_from_true`/`alt_from_false`
+  (a genuine 2-way cross-call: each member's body calls the *other*,
+  not itself) is the worked instance, checked three ways: against the
+  real Gallina definition (concrete-instance `eval`, both directions
+  of the cross-call), round-tripped through `Json.v`'s printer/parser,
+  and parsed from the real captured JSON *text* (not just hand-built,
+  the same way `quad`/`combo`/`absdiff` are in `CoquelicotDemo.v`) via
+  a new `RealJson.v` entry point, `real_fix_group_decl_of_module_json`
+  -- found starting from either member's own name, confirming
+  `find_fixgroup_by_member_name` doesn't just happen to work for
+  whichever name is listed first in a real `decl:fixgroup`'s own
+  `["name"]: null` field. `Print Assumptions` on both
+  `real_to_expr_preserves_semantics` and
+  `real_decl_to_expr_preserves_semantics` shows no new axioms. Still
+  not modeled: recursive functions of more than one argument (same
+  cap `real_fix_decl` already has).
 - A real 2-case sum (`Datatypes.sum`, Coq's own `inl`/`inr`) is
   recognized too, via `RealIR.v`'s `RCase`: a 2-case `expr:case` with
   each `pat:constructor` carrying exactly one payload argument
@@ -189,8 +226,8 @@ directly as Gallina values the way `examples/Kinematics.v` builds
 `Json.v`'s string/number lexing; tolerant of the whitespace real `coqc`
 output has that `Json.v`'s own bespoke grammar deliberately lacks) plus
 an interpreter into `real_expr`/`real_decl`/`real_fix_decl`, confirmed
-end to end against four fresh `coqc` probes (`clamp_nonneg`, `classify`,
-`swap_xz`, `any_true`) -- each mechanically parsed from real extraction
+end to end against five fresh `coqc` probes (`clamp_nonneg`, `classify`,
+`swap_xz`, `any_true`, `alt_from_true`/`alt_from_false`) -- each mechanically parsed from real extraction
 JSON produces, through the rest of the already-proven pipeline,
 byte-identical Python to the hand-built version already in
 `examples/NaturalCoq.v`. This also landed the nested `Z0`/`Zpos`/

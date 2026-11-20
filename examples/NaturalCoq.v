@@ -20,9 +20,14 @@
     [real_fix_decl], the first real recursion this file reaches (the
     first five examples are all non-recursive) -- a seventh,
     [classify]: a real 2-case sum ([Z + Z]), recognized via
-    [RealIR.v]'s [RCase] -- and an eighth, [swap_xz]: a real *3*-field
+    [RealIR.v]'s [RCase] -- an eighth, [swap_xz]: a real *3*-field
     [Record] (Example 4's [point] grown a field), recognized via
-    [RealIR.v]'s [RRecord3]/[RProj3_1]/[RProj3_2]/[RProj3_3].
+    [RealIR.v]'s [RRecord3]/[RProj3_1]/[RProj3_2]/[RProj3_3] -- and a
+    ninth, [alt_from_true]/[alt_from_false]: a real [Fixpoint ... with
+    ...] pair, genuinely *mutually* recursive (not just self-
+    recursive the way [any_true] is), recognized via [RealIR.v]'s
+    [RCall]/[real_fix_group_decl], landing on [Lang.v]'s already-proven
+    [ERecGroup].
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -41,6 +46,7 @@ Require Import Translate.
 Require Import Json.
 Require Import PyPrint.
 Require Import RealIR.
+Require Import RealJson.
 Open Scope Z_scope.
 Open Scope string_scope.
 
@@ -976,3 +982,178 @@ Compute py_function "swap_xz" ["p"] (translate swap_xz_expr).
     (3, (2, 1))
     ]]
 *)
+
+(* ----------------------------------------------------------------- *)
+(** * A ninth example: a real, genuinely mutually-recursive Fixpoint group *)
+
+(** [any_true] above is self-recursive (one [Fixpoint], calling only
+    itself); [alt_from_true]/[alt_from_false] -- "does this boolean
+    list alternate, starting from [true]?" -- is the real thing
+    [any_true]'s own header already flagged as not yet modeled: *two*
+    functions, each calling the *other*, also run through [coqc]/
+    [Extraction Language JSON] during this session. *)
+Fixpoint alt_from_true (l : list bool) : bool :=
+  match l with
+  | nil => true
+  | b :: rest => if b then alt_from_false rest else false
+  end
+with alt_from_false (l : list bool) : bool :=
+  match l with
+  | nil => true
+  | b :: rest => if b then false else alt_from_true rest
+  end.
+
+(** What Coq's real extraction emitted for it, captured verbatim: one
+    [decl:fixgroup], now with *two* [fixgroup:item]s in its [fixlist]
+    (confirmed directly -- a real [decl:fixgroup]'s own ["name"]
+    field is [null] for a genuine multi-member group, so there is no
+    group-level name to key off, only each member's own). Each
+    member's recursive call -- [alt_from_true]'s call to
+    [alt_from_false], and vice versa -- is an ordinary [expr:apply] of
+    [expr:global <sibling's name>], the exact same shape a self-call
+    ([any_true]) or an unrelated intrinsic call would have,
+    distinguishable only by knowing the *whole group's* declared
+    names (confirmed directly; [RealIR.v]'s [RCall]/[RealJson.v]'s
+    [decl_fixgroup_of_json] is the finding this motivated):
+
+    [[
+    { "what": "decl:fixgroup", "fixlist": [
+      { "what": "fixgroup:item", "name": "alt_from_true",
+        "value": { "what": "expr:lambda", "argnames": ["l"],
+          "body": { "what": "expr:case",
+            "expr": {"what":"expr:rel","name":"l"},
+            "cases": [
+              { "pat": {"name":"Nil","argnames":[]},
+                "body": {"what":"expr:constructor","name":"True","args":[]} },
+              { "pat": {"name":"Cons","argnames":["b","rest"]},
+                "body": { "what": "expr:case",
+                  "expr": {"what":"expr:rel","name":"b"},
+                  "cases": [
+                    { "pat": {"name":"True","argnames":[]},
+                      "body": { "what": "expr:apply",
+                        "func": {"what":"expr:global","name":"alt_from_false"},
+                        "args": [{"what":"expr:rel","name":"rest"}] } },
+                    { "pat": {"name":"False","argnames":[]},
+                      "body": {"what":"expr:constructor","name":"False","args":[]} }
+                  ] } } ] } } },
+      { "what": "fixgroup:item", "name": "alt_from_false",
+        "value": { "what": "expr:lambda", "argnames": ["l"],
+          "body": { (* symmetric: True-case recurses via "alt_from_true" *) } } }
+    ] }
+    ]]
+
+    [alt_from_true_ir]/[alt_from_false_ir] below are those two
+    [fixgroup:item]s' bodies, written by hand: each outer [expr:case]
+    on [l] becomes [RListMatch], the inner one on [b] becomes
+    [RIfBool], and each recursive [expr:apply]/[expr:global
+    <sibling>] becomes [RCall <sibling> ...] -- calling the *other*
+    group member, not [RSelf] (neither function ever calls itself
+    directly). *)
+Definition alt_from_true_ir : real_expr :=
+  RListMatch (RRel "l") (RBoolLit true) "b" "rest"
+    (RIfBool (RRel "b") (RCall "alt_from_false" (RRel "rest")) (RBoolLit false)).
+
+Definition alt_from_false_ir : real_expr :=
+  RListMatch (RRel "l") (RBoolLit true) "b" "rest"
+    (RIfBool (RRel "b") (RBoolLit false) (RCall "alt_from_true" (RRel "rest"))).
+
+Definition alt_from_true_false_decl : real_fix_group_decl :=
+  mk_real_fix_group_decl
+    [("alt_from_true", "l", alt_from_true_ir);
+     ("alt_from_false", "l", alt_from_false_ir)].
+
+(** Translating into our existing, already-proven [expr] subset:
+    [real_fix_group_decl_to_expr] lands on [Lang.v]'s [ERecGroup],
+    already proven there -- nothing new needed below this line. *)
+Definition alt_from_true_false_expr : expr :=
+  match real_fix_group_decl_to_expr alt_from_true_false_decl with
+  | Some e => e
+  | None => EConst 0 (* unreachable: the decl above is in the recognized fragment *)
+  end.
+
+Example alt_from_true_false_decl_translates :
+  real_fix_group_decl_to_expr alt_from_true_false_decl = Some alt_from_true_false_expr.
+Proof. reflexivity. Qed.
+
+Theorem alt_from_true_false_idents_valid :
+  expr_idents_valid is_valid_ident alt_from_true_false_expr = true.
+Proof. reflexivity. Qed.
+
+(** An individual member is picked out of the group with [EFieldN],
+    the *same* accessor a plain multi-field record already uses
+    (Kinematics.v's [bounce3_expr]/[elapsed_time_expr]) -- not a new
+    selector just for recursive groups. Checked against the real
+    [alt_from_true]/[alt_from_false] the same concrete-instance way
+    [any_true_expr_matches_real_definition] is: [[true; false; true]]
+    genuinely alternates starting from [true] ([alt_from_true] on it
+    is [true]); [[true; true]] does not ([false]). *)
+Example alt_from_true_expr_matches_real_definition :
+  eval 20 [] (EApp (EFieldN "alt_from_true" alt_from_true_false_expr)
+                (ECons (EBool true) (ECons (EBool false) (ECons (EBool true) ENil))))
+    = Some (VBool (alt_from_true [true; false; true])).
+Proof. reflexivity. Qed.
+
+Example alt_from_true_expr_rejects_non_alternating :
+  eval 20 [] (EApp (EFieldN "alt_from_true" alt_from_true_false_expr)
+                (ECons (EBool true) (ECons (EBool true) ENil)))
+    = Some (VBool (alt_from_true [true; true])).
+Proof. reflexivity. Qed.
+
+(** The *other* member, reached by [EFieldN "alt_from_false"] instead
+    -- genuinely exercising the cross-call, not just the member
+    reached directly: [alt_from_false]'s own body calls
+    [alt_from_true] on [rest], which is the group's *other* member,
+    confirming [ERecGroup]'s environment reconstruction wires up every
+    sibling, not just the one named at the call site. *)
+Example alt_from_false_expr_matches_real_definition :
+  eval 20 [] (EApp (EFieldN "alt_from_false" alt_from_true_false_expr)
+                (ECons (EBool false) (ECons (EBool true) (ECons (EBool false) ENil))))
+    = Some (VBool (alt_from_false [false; true; false])).
+Proof. reflexivity. Qed.
+
+Corollary alt_from_true_false_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate alt_from_true_false_expr)
+      = option_map value_to_pyvalue (eval fuel rho alt_from_true_false_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Compute py_function "alt_from_true_false" []
+  (translate alt_from_true_false_expr).
+
+Compute py_function "alt_from_true" ["l"]
+  (translate (EApp (EFieldN "alt_from_true" alt_from_true_false_expr) (EVar "l"))).
+
+(* ------------------------------------------------------------------ *)
+(** * Parsed from the real JSON text, not hand-built
+
+    Everything above builds [alt_from_true_false_decl] by hand,
+    matching the captured JSON only by eye -- the same way every other
+    example in this file does. [RealJson.v]'s own
+    [decl_fixgroup_of_json]/[real_fix_group_decl_of_module_json] (the
+    general-N-way counterpart to [decl_fixgroup_item_of_json]/
+    [real_fix_decl_of_module_json], landed alongside [RCall]) was
+    never exercised on a real captured N-way module in any committed
+    example before this -- closed here, for real: the literal module
+    bytes [coqc] emitted (small enough, 2.7KB, to need no raised
+    [ulimit] the way the Coquelicot module's 350KB did -- see
+    [CoquelicotDemo.v]), run through
+    [real_fix_group_decl_of_module_json], producing *the same*
+    [real_fix_group_decl] [alt_from_true_false_decl] above was
+    hand-built to match, checked by [vm_compute], not asserted. *)
+Definition alt_from_true_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": false, ""used_modules"": [], ""declarations"": [{""what"": ""decl:ind"", ""name"": ""bool"", ""argnames"": [], ""constructors"": [{""name"": ""True"", ""argtypes"": []}, {""name"": ""False"", ""argtypes"": []}]}, {""what"": ""decl:ind"", ""name"": ""list"", ""argnames"": [""A""], ""constructors"": [{""name"": ""Nil"", ""argtypes"": []}, {""name"": ""Cons"", ""argtypes"": [{""what"": ""type:var"", ""name"": ""A""}, {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:var"", ""name"": ""A""}]}]}]}, {""what"": ""decl:fixgroup"", ""fixlist"": [{""what"": ""fixgroup:item"", ""name"": ""alt_from_true"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}]}, ""right"": {""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""l""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""l""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Nil"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""True"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Cons"", ""argnames"": [""b"", ""rest""]}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""b""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""alt_from_false""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""rest""}]}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""False"", ""args"": []}}]}}]}}}, {""what"": ""fixgroup:item"", ""name"": ""alt_from_false"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}]}, ""right"": {""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""l""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""l""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Nil"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""True"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Cons"", ""argnames"": [""b"", ""rest""]}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""b""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""False"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""alt_from_true""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""rest""}]}}]}}]}}}]}]}".
+
+Definition alt_from_true_group_parsed : option real_fix_group_decl :=
+  real_fix_group_decl_of_module_json alt_from_true_module_json "alt_from_true".
+
+Example alt_from_true_group_parsed_matches_hand_built :
+  alt_from_true_group_parsed = Some alt_from_true_false_decl.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The exact same group, found starting from its *other* member's
+    name instead -- confirming [find_fixgroup_by_member_name] doesn't
+    just happen to work for whichever name is listed first. *)
+Example alt_from_false_group_parsed_matches_hand_built :
+  real_fix_group_decl_of_module_json alt_from_true_module_json "alt_from_false"
+    = Some alt_from_true_false_decl.
+Proof. vm_compute. reflexivity. Qed.
