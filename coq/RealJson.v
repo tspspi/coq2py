@@ -406,7 +406,26 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat
                             | Some a' => Some (RSelf a')
                             | None => None
                             end
-                        | _ => None
+                        | [] => None
+                        | _ =>
+                            (* more than one argument: a real
+                               multi-argument self-call, confirmed by
+                               probe (RealIR.v's header) to be one
+                               [expr:apply] with a flat [args] list,
+                               not curried. *)
+                            match (fix parse_args (js : list jvalue) : option (list real_expr) :=
+                                     match js with
+                                     | [] => Some []
+                                     | j :: rest =>
+                                         match real_expr_of_json self siblings fuel' j, parse_args rest with
+                                         | Some e', Some es' => Some (e' :: es')
+                                         | _, _ => None
+                                         end
+                                     end) args
+                            with
+                            | Some args' => Some (RSelfN args')
+                            | None => None
+                            end
                         end
                       else real_call_or_app self siblings fuel' fname args
                   | None => real_call_or_app self siblings fuel' fname args
@@ -451,7 +470,21 @@ with real_call_or_app (self : option var) (siblings : list var) (fuel : nat) (fn
         | Some a' => Some (RCall fname a')
         | None => None
         end
-    | _ => None
+    | [] => None
+    | _ =>
+        match (fix parse_args (js : list jvalue) : option (list real_expr) :=
+                 match js with
+                 | [] => Some []
+                 | j :: rest =>
+                     match real_expr_of_json self siblings fuel' j, parse_args rest with
+                     | Some e', Some es' => Some (e' :: es')
+                     | _, _ => None
+                     end
+                 end) args
+        with
+        | Some args' => Some (RCallN fname args')
+        | None => None
+        end
     end
   else real_app_of_json self siblings fuel' fname args
   end
@@ -622,6 +655,36 @@ Definition decl_fixgroup_item_of_json (fuel : nat) (j : jvalue) : option real_fi
           | Some "expr:lambda", Some (JArray [JString param]), Some bodyj =>
               match real_expr_of_json (Some fname) [] fuel bodyj with
               | Some body => Some (mk_real_fix_decl fname param body)
+              | None => None
+              end
+          | _, _, _ => None
+          end
+      | _, _, _ => None
+      end
+  | _ => None
+  end.
+
+(** A [fixgroup:item] node with *more than one* [argnames] entry --
+    [RealIR.v]'s [real_fix_decl_multi]/[RSelfN] (its header has the
+    confirmed-by-probe design). Reads the whole [argnames] list via
+    [jstrings_of_json] (already generic, reused unchanged from
+    [real_decl_of_json]), rather than requiring exactly one the way
+    [decl_fixgroup_item_of_json] does -- that function is left
+    untouched for the one-argument case, this is its additive
+    sibling. *)
+Definition decl_fixgroup_item_multi_of_json (fuel : nat) (j : jvalue) : option real_fix_decl_multi :=
+  match j with
+  | JObject fs =>
+      match jwhat fs, jname fs, jfield fs "value" with
+      | Some "fixgroup:item", Some fname, Some (JObject vfs) =>
+          match jwhat vfs, jfield vfs "argnames", jfield vfs "body" with
+          | Some "expr:lambda", Some (JArray argnames), Some bodyj =>
+              match jstrings_of_json argnames with
+              | Some params =>
+                  match real_expr_of_json (Some fname) [] fuel bodyj with
+                  | Some body => Some (mk_real_fix_decl_multi fname params body)
+                  | None => None
+                  end
               | None => None
               end
           | _, _, _ => None
@@ -815,6 +878,18 @@ Definition real_fix_decl_of_module_json (s target : string) : option real_fix_de
   | Some decls =>
       match find_decl_by_name decls target with
       | Some declj => decl_fixgroup_item_of_json (S (String.length s)) declj
+      | None => None
+      end
+  | None => None
+  end.
+
+(** Like [real_fix_decl_of_module_json], but for a self-recursive
+    [Fixpoint] of *more than one* argument. *)
+Definition real_fix_decl_multi_of_module_json (s target : string) : option real_fix_decl_multi :=
+  match module_declarations s with
+  | Some decls =>
+      match find_decl_by_name decls target with
+      | Some declj => decl_fixgroup_item_multi_of_json (S (String.length s)) declj
       | None => None
       end
   | None => None

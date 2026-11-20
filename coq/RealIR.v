@@ -148,6 +148,29 @@
     group's full member list, which only [real_to_expr_ctx]/
     [real_fix_group_decl] below carry. *)
 
+(** [RSelfN]/[RCallN]: [RSelf]/[RCall]'s generalization to a
+    recursive function of *more than one* argument -- confirmed
+    directly against a real extracted [Fixpoint sum_upto (acc n : Z)
+    (fuel : nat) : Z := match fuel with O => acc | S fuel' => sum_upto
+    (acc + n) (n - 1) fuel' end.]: the recursive call [sum_upto (acc +
+    n) (n - 1) fuel'] is *one* [expr:apply] node with a flat, 3-element
+    [args] list, not curried -- the same "direct list, not curried"
+    shape this file's own header already confirmed for an ordinary
+    [expr:lambda]'s [argnames], now confirmed for the *call* side of a
+    recursive one too. [RSelf]/[RCall] are deliberately left untouched
+    (still exactly the one-argument case they always were) --
+    [RSelfN]/[RCallN] are new, additive siblings carrying the whole
+    argument list, for when a self/sibling call has more than one.
+    Translating these needs no new [Lang.v]/[PyLang.v]/[Translate.v]/
+    [Json.v]/[PyPrint.v]/[PyRename.v] constructor at all: a recursive
+    call with [n] arguments curries into [n] nested, already-proven
+    [EApp]s (the same way a multi-argument *non-recursive* call could
+    always be curried, just never needed to be, since [real_decl]'s
+    direct [argnames] handles that case without currying) -- see
+    [real_to_expr_ctx]'s own cases below. Like [RSelf]/[RCall],
+    deliberately not interpreted by [real_eval]/[real_to_expr] (both
+    [None] unconditionally). *)
+
 (** [RRecord3]/[RProj3_1]/[RProj3_2]/[RProj3_3]: a real, human-written
     *3*-field [Record] -- confirmed directly against a real extracted
     [Record point3 := mkpoint3 { px : Z; py : Z; pz : Z }.]: just like
@@ -283,6 +306,8 @@ Inductive real_expr : Type :=
   | RCase (scrutinee : real_expr) (x1 : var) (case1 : real_expr) (x2 : var) (case2 : real_expr)
   | RSelf (arg : real_expr)
   | RCall (fname : var) (arg : real_expr)
+  | RSelfN (args : list real_expr)
+  | RCallN (fname : var) (args : list real_expr)
   | RRecord3 (e1 e2 e3 : real_expr)
   | RProj3_1 (scrutinee : real_expr)
   | RProj3_2 (scrutinee : real_expr)
@@ -377,6 +402,8 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       end
   | RSelf _ => None
   | RCall _ _ => None
+  | RSelfN _ => None
+  | RCallN _ _ => None
   | RRecord3 e1 e2 e3 =>
       match real_eval rho e1, real_eval rho e2, real_eval rho e3 with
       | Some v1, Some v2, Some v3 => Some (VPair v1 (VPair v2 v3))
@@ -476,6 +503,8 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       end
   | RSelf _ => None
   | RCall _ _ => None
+  | RSelfN _ => None
+  | RCallN _ _ => None
   | RRecord3 e1 e2 e3 =>
       match real_to_expr e1, real_to_expr e2, real_to_expr e3 with
       | Some e1', Some e2', Some e3' => Some (EPair e1' (EPair e2' e3'))
@@ -522,6 +551,18 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
       S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth case1) (real_expr_depth case2)))
   | RSelf arg => S (real_expr_depth arg)
   | RCall _ arg => S (real_expr_depth arg)
+  | RSelfN args =>
+      S ((fix list_max_depth (es : list real_expr) : nat :=
+            match es with
+            | [] => O
+            | e :: rest => Nat.max (real_expr_depth e) (list_max_depth rest)
+            end) args)
+  | RCallN _ args =>
+      S ((fix list_max_depth (es : list real_expr) : nat :=
+            match es with
+            | [] => O
+            | e :: rest => Nat.max (real_expr_depth e) (list_max_depth rest)
+            end) args)
   | RRecord3 e1 e2 e3 =>
       (* translates to the nested [EPair e1' (EPair e2' e3')] -- [e2]/
          [e3] sit one [EPair] dispatch deeper than [e1], so they need
@@ -741,6 +782,11 @@ Proof.
   - (* RCall: same as RSelf -- [real_to_expr] gives it [None]
        unconditionally, so [Htrans] is vacuous here too. *)
     discriminate Htrans.
+  - (* RSelfN: same as RSelf/RCall -- [real_to_expr] gives it [None]
+       unconditionally, so [Htrans] is vacuous here too. *)
+    discriminate Htrans.
+  - (* RCallN: same as RSelfN. *)
+    discriminate Htrans.
   - (* RRecord3: translates to the nested [EPair e1 (EPair e2 e3)],
        so [e2]/[e3] need one more fuel level than [e1] -- the first
        case in this file needing two [destruct fuel] steps, not one.
@@ -893,6 +939,33 @@ Fixpoint real_to_expr_ctx (self : option var) (siblings : list var) (re : real_e
           else None
       | None => None
       end
+  | RSelfN args =>
+      match self with
+      | Some f =>
+          (fix curry_args (es : list real_expr) (acc : expr) : option expr :=
+             match es with
+             | [] => Some acc
+             | e :: rest =>
+                 match real_to_expr_ctx self siblings e with
+                 | Some e' => curry_args rest (EApp acc e')
+                 | None => None
+                 end
+             end) args (EVar f)
+      | None => None
+      end
+  | RCallN fname args =>
+      if List.existsb (fun s => if string_dec fname s then true else false) siblings
+      then
+        (fix curry_args (es : list real_expr) (acc : expr) : option expr :=
+           match es with
+           | [] => Some acc
+           | e :: rest =>
+               match real_to_expr_ctx self siblings e with
+               | Some e' => curry_args rest (EApp acc e')
+               | None => None
+               end
+           end) args (EVar fname)
+      else None
   | RRecord3 e1 e2 e3 =>
       match real_to_expr_ctx self siblings e1, real_to_expr_ctx self siblings e2, real_to_expr_ctx self siblings e3 with
       | Some e1', Some e2', Some e3' => Some (EPair e1' (EPair e2' e3'))
@@ -917,9 +990,11 @@ Fixpoint real_to_expr_ctx (self : option var) (siblings : list var) (re : real_e
   end.
 
 (** [real_fix_decl]: [real_decl]'s cousin for a single self-recursive
-    [Fixpoint] of exactly one argument -- general mutually-recursive
-    fixgroups, and recursive functions of more than one argument, are
-    not yet modeled (see this file's header). *)
+    [Fixpoint] of exactly one argument. [real_fix_decl_multi] just
+    below is its generalization to more than one argument -- this
+    one-argument record and its own [real_fix_decl_to_expr] are left
+    exactly as they always were, so every existing proof/example
+    using them keeps working unchanged. *)
 Record real_fix_decl : Type := mk_real_fix_decl {
   rfd_name : var;
   rfd_param : var;
@@ -930,6 +1005,42 @@ Definition real_fix_decl_to_expr (rfd : real_fix_decl) : option expr :=
   match real_to_expr_ctx (Some rfd.(rfd_name)) [] rfd.(rfd_body) with
   | Some body => Some (ERec rfd.(rfd_name) rfd.(rfd_param) body)
   | None => None
+  end.
+
+(** [real_fix_decl_multi]: the general, N-argument generalization of
+    [real_fix_decl] (this file's header's [RSelfN]/[RCallN] comment
+    has the confirmed-by-probe design). [rfdm_params] must be
+    non-empty -- a 0-argument "recursive function" isn't a shape any
+    real [Fixpoint] extracts as (every [fixgroup:item] this project
+    has seen has at least one [argnames] entry), so
+    [real_fix_decl_multi_to_expr] simply gives [None] for one. For a
+    singleton [rfdm_params], this degenerates to *exactly*
+    [real_fix_decl_to_expr]'s own output ([ERec f p1 body'], no extra
+    [ELam] wrapper) -- confirmed by the [fold_left] below visiting an
+    empty tail. *)
+Record real_fix_decl_multi : Type := mk_real_fix_decl_multi {
+  rfdm_name : var;
+  rfdm_params : list var;
+  rfdm_body : real_expr
+}.
+
+(** Curry: [ERec f p1 (ELam p2 (... (ELam pn body') ...))] -- [p1] is
+    bound the same way [real_fix_decl_to_expr] already binds its one
+    parameter (via [ERec] itself), every further parameter via a
+    plain, already-proven [ELam], right-associated so [pn] is
+    innermost (closest to [body']), matching the left-to-right
+    [args]/[argnames] order a real multi-argument call/declaration
+    already carries (this file's header). *)
+Definition real_fix_decl_multi_to_expr (rfdm : real_fix_decl_multi) : option expr :=
+  match rfdm.(rfdm_params) with
+  | [] => None
+  | p1 :: rest_params =>
+      match real_to_expr_ctx (Some rfdm.(rfdm_name)) [] rfdm.(rfdm_body) with
+      | Some body =>
+          Some (ERec rfdm.(rfdm_name) p1
+                  (fold_right (fun p acc => ELam p acc) body rest_params))
+      | None => None
+      end
   end.
 
 (** [real_fix_decl] deliberately has no generic preservation theorem

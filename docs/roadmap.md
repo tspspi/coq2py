@@ -185,39 +185,44 @@ an open guess.
   whichever name is listed first in a real `decl:fixgroup`'s own
   `["name"]: null` field. `Print Assumptions` on both
   `real_to_expr_preserves_semantics` and
-  `real_decl_to_expr_preserves_semantics` shows no new axioms. Still
-  not modeled: recursive functions of more than one argument (same
-  cap `real_fix_decl` already has) -- but the design for lifting this
-  cap is now de-risked, not just a vague "someday": confirmed directly
-  against a fresh probe (`sum_upto (acc n : Z) (fuel : nat) : Z :=
-  match fuel with O => acc | S fuel' => sum_upto (acc + n) (n - 1)
-  fuel' end`) that a real multi-argument recursive self-call extracts
-  as *one* `expr:apply` node with a flat, direct `args` list (`["acc +
-  n"; "n - 1"; "fuel'"]`, 3 elements) -- not curried -- the exact same
-  "multi-arg is a direct list, not curried" shape `RealJson.v`'s
-  header already confirmed for ordinary (non-recursive) `expr:lambda`
-  declarations, now confirmed for the *call* side of a recursive one
-  too. That means the cap can be lifted with *zero* new `Lang.v`/
-  `PyLang.v`/`Translate.v`/`Json.v`/`PyPrint.v`/`PyRename.v`
-  constructors: a multi-argument `Fixpoint f (a1 ... an : T) : T' :=
-  body` curries into already-proven pieces -- `ERec f a1 (ELam a2 (...
-  (ELam an body') ...))` for the declaration, `EApp (EApp (... (EApp
-  (EVar f) arg1') arg2' ...) argn')` for every recursive call -- the
-  same way a multi-argument *non-recursive* `Definition` could always
-  be curried through nested nested `ELam`/`EApp`, just never needed to
-  be since `real_decl`'s direct `argnames` already handles that case
-  without currying. The only new work is at the `RealIR.v`/
-  `RealJson.v` *recognition* layer: generalizing `RSelf`/`RCall`'s
-  single `arg : real_expr` to a list (additively, a new `RSelfN`/
-  `RCallN` alongside the untouched originals, the same "don't touch
-  what already works" move `RCall` itself made relative to `RSelf`),
-  and `real_fix_decl`'s single `rfd_param : var` to a list, curried by
-  `real_fix_decl_to_expr` at translation time. Deliberately not
-  attempted in the same sitting as this probe: it touches the
-  `induction re` proof structure in `real_to_expr_preserves_semantics`
-  (a list of sub-expressions needs a list-indexed sub-induction, not
-  just one more bullet), and deserves its own careful pass rather than
-  being rushed in alongside other work.
+  `real_decl_to_expr_preserves_semantics` shows no new axioms.
+- **Done** (recursive functions of more than one argument, the cap
+  `real_fix_decl` always had): confirmed directly against a fresh
+  probe (`sum_upto (acc n : Z) (fuel : nat) : Z := match fuel with O
+  => acc | S fuel' => sum_upto (acc + n) (n - 1) fuel' end`) that a
+  real multi-argument recursive self-call extracts as *one*
+  `expr:apply` node with a flat, direct `args` list (3 elements) --
+  not curried -- the exact same "multi-arg is a direct list, not
+  curried" shape `RealJson.v`'s header already confirmed for ordinary
+  (non-recursive) `expr:lambda` declarations, now confirmed for the
+  *call* side of a recursive one too. That meant the cap could be
+  lifted with *zero* new `Lang.v`/`PyLang.v`/`Translate.v`/`Json.v`/
+  `PyPrint.v`/`PyRename.v` constructors: a multi-argument `Fixpoint f
+  (a1 ... an : T) : T' := body` curries into already-proven pieces --
+  `ERec f a1 (ELam a2 (... (ELam an body') ...))` for the declaration,
+  `EApp (EApp (... (EApp (EVar f) arg1') arg2' ...) argn')` for every
+  recursive call -- the same way a multi-argument *non-recursive*
+  `Definition` could always be curried through nested `ELam`/`EApp`,
+  just never needed to be since `real_decl`'s direct `argnames`
+  already handles that case without currying. The only new code is at
+  the `RealIR.v`/`RealJson.v` *recognition* layer: `RSelfN`/`RCallN`
+  (`RealIR.v`), additive new siblings carrying a whole argument list,
+  alongside the fully untouched `RSelf`/`RCall` (same "don't touch
+  what already works" move `RCall` itself made relative to `RSelf`);
+  `real_fix_decl_multi` (`rfdm_params : list var`, curried by
+  `real_fix_decl_multi_to_expr`), alongside the fully untouched
+  `real_fix_decl`; and `RealJson.v`'s matching parse-side
+  `decl_fixgroup_item_multi_of_json`/`real_fix_decl_multi_of_module_json`.
+  `examples/NaturalCoq.v`'s `all_match` (two arguments: `target` and
+  `l`) is the worked instance: checked against the real Gallina
+  definition (both a matching and a non-matching list), round-tripped,
+  parsed from the real captured JSON text, and printed to real,
+  checked Python (curried: `all_match(v0, v1)` calling a function of
+  one argument returning a function of the next, confirmed to run
+  correctly under actual Python too). `Print Assumptions` on
+  `real_to_expr_preserves_semantics` shows no new axioms -- this
+  addition needed no new primitive, only composition of already-
+  proven pieces.
 - A real 2-case sum (`Datatypes.sum`, Coq's own `inl`/`inr`) is
   recognized too, via `RealIR.v`'s `RCase`: a 2-case `expr:case` with
   each `pat:constructor` carrying exactly one payload argument

@@ -27,7 +27,11 @@
     ...] pair, genuinely *mutually* recursive (not just self-
     recursive the way [any_true] is), recognized via [RealIR.v]'s
     [RCall]/[real_fix_group_decl], landing on [Lang.v]'s already-proven
-    [ERecGroup].
+    [ERecGroup] -- and a tenth, [all_match]: a real self-recursive
+    [Fixpoint] of *two* arguments (not just one, the way [any_true]
+    is), recognized via [RealIR.v]'s [RSelfN]/[real_fix_decl_multi],
+    curried into already-proven [ERec]/[ELam]/[EApp], no new [Lang.v]
+    constructor needed at all.
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -1156,4 +1160,118 @@ Proof. vm_compute. reflexivity. Qed.
 Example alt_from_false_group_parsed_matches_hand_built :
   real_fix_group_decl_of_module_json alt_from_true_module_json "alt_from_false"
     = Some alt_from_true_false_decl.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ----------------------------------------------------------------- *)
+(** * A tenth example: a real self-recursive Fixpoint of two arguments *)
+
+(** [any_true] (Example 6) is self-recursive but of *one* argument;
+    [all_match] -- "does every element of this boolean list equal
+    [target]?" -- is a real self-recursive [Fixpoint] of *two*, also
+    run through [coqc]/[Extraction Language JSON] during this
+    session. *)
+Fixpoint all_match (target : bool) (l : list bool) : bool :=
+  match l with
+  | nil => true
+  | b :: rest =>
+      if b
+      then (if target then all_match target rest else false)
+      else (if target then false else all_match target rest)
+  end.
+
+(** What Coq's real extraction emitted for it, captured verbatim: one
+    [decl:fixgroup] wrapping a single [fixgroup:item] named
+    ["all_match"], whose own [value] is the familiar [expr:lambda]
+    wrapper -- now with a direct, *two*-element [argnames: ["target";
+    "l"]], not curried (confirmed directly, the same "multi-arg is a
+    flat list" shape [RealJson.v]'s header already confirmed for
+    non-recursive declarations). The recursive call in each branch,
+    [all_match target rest], is *one* [expr:apply] node with a flat,
+    *two*-element [args] list (confirmed directly, this is exactly
+    the probe [RealIR.v]'s own header for [RSelfN]/[RCallN] cites):
+
+    [[
+    { "what": "expr:apply",
+      "func": {"what":"expr:global","name":"all_match"},
+      "args": [{"what":"expr:rel","name":"target"},
+               {"what":"expr:rel","name":"rest"}] }
+    ]]
+
+    [all_match_ir] below is that [fixgroup:item]'s body, written by
+    hand: the outer [expr:case] on [l] becomes [RListMatch]; the two
+    inner [if]s on [b]/[target] become nested [RIfBool]; and each
+    recursive [expr:apply]/[expr:global "all_match"] -- with *two*
+    arguments -- becomes [RSelfN [RRel "target"; RRel "rest"]], not
+    [RSelf] (which only ever carries one). *)
+Definition all_match_ir : real_expr :=
+  RListMatch (RRel "l") (RBoolLit true) "b" "rest"
+    (RIfBool (RRel "b")
+       (RIfBool (RRel "target") (RSelfN [RRel "target"; RRel "rest"]) (RBoolLit false))
+       (RIfBool (RRel "target") (RBoolLit false) (RSelfN [RRel "target"; RRel "rest"]))).
+
+Definition all_match_decl : real_fix_decl_multi :=
+  mk_real_fix_decl_multi "all_match" ["target"; "l"] all_match_ir.
+
+(** Translating into our existing, already-proven [expr] subset:
+    [real_fix_decl_multi_to_expr] curries into [ERec]/[ELam], already
+    proven there -- nothing new needed below this line. *)
+Definition all_match_expr : expr :=
+  match real_fix_decl_multi_to_expr all_match_decl with
+  | Some e => e
+  | None => EConst 0 (* unreachable: the decl above is in the recognized fragment *)
+  end.
+
+Example all_match_decl_translates :
+  real_fix_decl_multi_to_expr all_match_decl = Some all_match_expr.
+Proof. reflexivity. Qed.
+
+Theorem all_match_idents_valid :
+  expr_idents_valid is_valid_ident all_match_expr = true.
+Proof. reflexivity. Qed.
+
+(** Calling a curried, two-argument recursive function is two nested
+    [EApp]s, the same way a curried *non-recursive* two-argument
+    function already would be. Checked against the real
+    [all_match] the same concrete-instance way
+    [any_true_expr_matches_real_definition] is. *)
+Example all_match_expr_matches_real_definition_true :
+  eval 20 [] (EApp (EApp all_match_expr (EBool true))
+                (ECons (EBool true) (ECons (EBool true) ENil)))
+    = Some (VBool (all_match true [true; true])).
+Proof. reflexivity. Qed.
+
+Example all_match_expr_matches_real_definition_false :
+  eval 20 [] (EApp (EApp all_match_expr (EBool true))
+                (ECons (EBool true) (ECons (EBool false) ENil)))
+    = Some (VBool (all_match true [true; false])).
+Proof. reflexivity. Qed.
+
+Corollary all_match_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate all_match_expr)
+      = option_map value_to_pyvalue (eval fuel rho all_match_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Compute py_function "all_match" ["target"; "l"]
+  (translate (EApp (EApp all_match_expr (EVar "target")) (EVar "l"))).
+
+(* ------------------------------------------------------------------ *)
+(** * Parsed from the real JSON text, not hand-built *)
+
+(** [RealJson.v]'s [decl_fixgroup_item_multi_of_json]/
+    [real_fix_decl_multi_of_module_json] (the multi-argument
+    counterpart to [decl_fixgroup_item_of_json]/
+    [real_fix_decl_of_module_json], landed alongside [RSelfN]) closed
+    here, for real: the literal module bytes [coqc] emitted, run
+    through [real_fix_decl_multi_of_module_json], producing *the
+    same* [real_fix_decl_multi] [all_match_decl] above was hand-built
+    to match, checked by [vm_compute], not asserted. *)
+Definition all_match_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": false, ""used_modules"": [], ""declarations"": [{""what"": ""decl:ind"", ""name"": ""bool"", ""argnames"": [], ""constructors"": [{""name"": ""True"", ""argtypes"": []}, {""name"": ""False"", ""argtypes"": []}]}, {""what"": ""decl:ind"", ""name"": ""list"", ""argnames"": [""A""], ""constructors"": [{""name"": ""Nil"", ""argtypes"": []}, {""name"": ""Cons"", ""argtypes"": [{""what"": ""type:var"", ""name"": ""A""}, {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:var"", ""name"": ""A""}]}]}]}, {""what"": ""decl:fixgroup"", ""fixlist"": [{""what"": ""fixgroup:item"", ""name"": ""all_match"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}]}, ""right"": {""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""target"", ""l""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""l""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Nil"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""True"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Cons"", ""argnames"": [""b"", ""rest""]}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""b""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""target""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""all_match""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""target""}, {""what"": ""expr:rel"", ""name"": ""rest""}]}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""False"", ""args"": []}}]}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""target""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""False"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""all_match""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""target""}, {""what"": ""expr:rel"", ""name"": ""rest""}]}}]}}]}}]}}}]}]}".
+
+Definition all_match_parsed : option real_fix_decl_multi :=
+  real_fix_decl_multi_of_module_json all_match_module_json "all_match".
+
+Example all_match_parsed_matches_hand_built :
+  all_match_parsed = Some all_match_decl.
 Proof. vm_compute. reflexivity. Qed.
