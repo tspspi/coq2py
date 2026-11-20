@@ -53,11 +53,8 @@
     a [rename_pyexpr_correct] proving it does not change what [peval]
     computes. That theorem is *not yet complete* -- 44 of [pyexpr]'s
     46 constructors are proved (everything except [PRecGroup] and the
-    matching [PVClosureGroup] case inside [PApp], blocked on exactly
-    the exception just described: [value_corr]/[env_corr] need a
-    principled way to state "this binder keeps its original name on
-    both sides" before those two cases can be finished) -- tracked as
-    this file's own next step, not committed here since an incomplete
+    matching [PVClosureGroup] case inside [PApp]) -- tracked as this
+    file's own next step, not committed here since an incomplete
     [Admitted] theorem is a different, messier kind of trust boundary
     than this project otherwise uses. In the meantime, correctness of
     the *renaming itself* for the 44 proven shapes, plus the concrete
@@ -67,7 +64,48 @@
     once that theorem is finished -- the same, smaller residual
     boundary [PyPrint.v]'s header describes -- is that printing the
     renamed tree as Python text, and running that text under real
-    CPython, matches [peval]. *)
+    CPython, matches [peval].
+
+    A concrete plan for the remaining two cases, worked out but not yet
+    implemented: [PRecGroup]'s own construction needs *no* new
+    [env_corr] machinery at all -- building a [PVRecordN] of
+    [PVClosureGroup]s from [fns]/[fns'] only needs the *ambient*
+    [env_corr n env cenv cenv'] already in scope, applied once per
+    member via [vcorr_recordn]/[vcorr_closuregroup], since constructing
+    the value never evaluates a member's body. The real gap is
+    [PApp]'s reconstruction step: applying a [PVClosureGroup] rebuilds
+    *every* member's own binding (each name [f_i], deliberately
+    unrenamed) into the callee's environment before evaluating the
+    matched body, and relating that reconstructed environment on both
+    sides needs [env_corr] to accept a "same name on both sides" push
+    for each [f_i] -- exactly what an earlier, abandoned [ec_cons_same]
+    attempt tried. That attempt stalled because [env_corr_rho'_absent]
+    (and so [env_corr_lookup]) lean on every [rho']-side name being
+    *of the [fresh_name] shape* (via [fresh_name_injective]) to rule
+    out collisions; a pushed literal [f_i] isn't, so nothing already
+    proved rules out [f_i] someday coinciding with some *later*
+    [fresh_name k] picked for an unrelated binder. That risk is real in
+    general (a source identifier literally spelled like ["v7"] could
+    collide) but it is *not* a reason to abandon the exception -- it is
+    a reason to make it an explicit, checkable side condition instead
+    of trying to prove it away: add a hypothesis to the would-be
+    [ec_cons_group] constructor (and thread a matching
+    [pyexpr_recgroup_names_ok] well-formedness predicate -- "no
+    [PRecGroup] member name anywhere in this term is of the
+    [fresh_name] shape" -- through [rename_pyexpr_correct]'s statement)
+    rather than an unconditional axiom. Every concrete case this
+    project actually runs (["fall"]/["rise"]/["report"], ...) discharges
+    that side condition trivially ([discriminate]/[congruence] against
+    [fresh_name]'s ["v" ++ digits] shape); only a source program that
+    deliberately names something like [v7] would fail it, and failing
+    an explicit, checkable precondition is the honest outcome for that
+    case, not a silent wrong answer. The mechanical cost making this
+    real: [pyexpr_recgroup_names_ok] has to be threaded through the
+    induction's statement, which means revisiting every one of the 44
+    already-proved cases' call to the induction hypothesis to supply
+    it -- large and mechanical, not conceptually hard, which is why it
+    is recorded here as a plan rather than attempted in the same pass
+    that found it. *)
 
 From Coq Require Import ZArith String List Bool Lia.
 Import ListNotations.
