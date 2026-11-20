@@ -187,7 +187,37 @@ an open guess.
   `real_to_expr_preserves_semantics` and
   `real_decl_to_expr_preserves_semantics` shows no new axioms. Still
   not modeled: recursive functions of more than one argument (same
-  cap `real_fix_decl` already has).
+  cap `real_fix_decl` already has) -- but the design for lifting this
+  cap is now de-risked, not just a vague "someday": confirmed directly
+  against a fresh probe (`sum_upto (acc n : Z) (fuel : nat) : Z :=
+  match fuel with O => acc | S fuel' => sum_upto (acc + n) (n - 1)
+  fuel' end`) that a real multi-argument recursive self-call extracts
+  as *one* `expr:apply` node with a flat, direct `args` list (`["acc +
+  n"; "n - 1"; "fuel'"]`, 3 elements) -- not curried -- the exact same
+  "multi-arg is a direct list, not curried" shape `RealJson.v`'s
+  header already confirmed for ordinary (non-recursive) `expr:lambda`
+  declarations, now confirmed for the *call* side of a recursive one
+  too. That means the cap can be lifted with *zero* new `Lang.v`/
+  `PyLang.v`/`Translate.v`/`Json.v`/`PyPrint.v`/`PyRename.v`
+  constructors: a multi-argument `Fixpoint f (a1 ... an : T) : T' :=
+  body` curries into already-proven pieces -- `ERec f a1 (ELam a2 (...
+  (ELam an body') ...))` for the declaration, `EApp (EApp (... (EApp
+  (EVar f) arg1') arg2' ...) argn')` for every recursive call -- the
+  same way a multi-argument *non-recursive* `Definition` could always
+  be curried through nested nested `ELam`/`EApp`, just never needed to
+  be since `real_decl`'s direct `argnames` already handles that case
+  without currying. The only new work is at the `RealIR.v`/
+  `RealJson.v` *recognition* layer: generalizing `RSelf`/`RCall`'s
+  single `arg : real_expr` to a list (additively, a new `RSelfN`/
+  `RCallN` alongside the untouched originals, the same "don't touch
+  what already works" move `RCall` itself made relative to `RSelf`),
+  and `real_fix_decl`'s single `rfd_param : var` to a list, curried by
+  `real_fix_decl_to_expr` at translation time. Deliberately not
+  attempted in the same sitting as this probe: it touches the
+  `induction re` proof structure in `real_to_expr_preserves_semantics`
+  (a list of sub-expressions needs a list-indexed sub-induction, not
+  just one more bullet), and deserves its own careful pass rather than
+  being rushed in alongside other work.
 - A real 2-case sum (`Datatypes.sum`, Coq's own `inl`/`inr`) is
   recognized too, via `RealIR.v`'s `RCase`: a 2-case `expr:case` with
   each `pat:constructor` carrying exactly one payload argument
