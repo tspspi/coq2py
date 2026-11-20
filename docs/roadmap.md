@@ -672,25 +672,42 @@ despite the four `Z`/`bool`-fragment instances this file's own header
 already claims were "confirmed" -- apparently only ever checked in
 now-discarded scratch files during an earlier session, not landed).
 
-A real, confirmed limitation surfaced doing this: parsing the *whole*
-captured module (~350KB, dominated by `ClassicalDedekindReals`'s own
-cut representation -- see above) makes `vm_compute` segfault on the
-dev machine, almost certainly a stack-depth issue in how `vm_compute`
-represents a string that large as nested `String` constructors, not a
-bug in the parsing logic itself (the same parser, fed just `quad`'s
-own `decl:term` sub-object -- still real, unedited JSON bytes, just
-not the surrounding bulk this recognizer was never going to look at
-anyway -- works immediately). `examples/CoquelicotDemo.v` uses the
-per-declaration JSON object for exactly this reason, documented rather
-than silently worked around; fixing `vm_compute`'s large-string
-behavior itself (as opposed to `Extract.v`'s existing fix for the
-*extracted OCaml* path) is tracked here as open, not attempted.
+A real limitation surfaced doing this, now root-caused rather than
+just worked around: parsing the *whole* captured module (~350KB,
+dominated by `ClassicalDedekindReals`'s own cut representation -- see
+above) made `vm_compute` segfault on the dev machine. Confirmed
+directly to actually be a shell stack-size limit, not a bug in the
+parsing logic or a fundamental `vm_compute` defect: the default
+`ulimit -s` here is 12.5MB; raising it to 128MB (`ulimit -s 131072`)
+is enough that the *same* `coqc` invocation, on the *same* 350KB
+string, no longer segfaults at all (it was still running, correctly,
+past the 60-second mark it was given before that check was cut off
+for time) -- so the underlying cause is `vm_compute` representing a
+string that large as deeply nested `String` constructors, consuming
+stack proportional to the string's length, not a `vm_compute` bug or
+a flaw in this file's own recognizer. Separately confirmed: once given
+enough stack (512MB tried), the full module *does* finish, correctly
+(`Some {| rd_argnames := ["x"]; rd_body := ... |}`, the same answer as
+the per-declaration JSON below), but takes about 90 seconds of CPU --
+consistent with this file's own header's already-documented O(n^2)
+string-scanning behavior at this scale, scaled up from the 22KB/45s
+figure already on record there. `examples/CoquelicotDemo.v` still uses
+the per-declaration JSON object, both because this recognizer was
+never going to look at the surrounding 349KB of cut-representation
+bulk anyway, and because baking a `ulimit`/90-second dependency into
+a routine `coqc` build would be a real cost for every future build,
+not a one-off probe -- the right fix for the *general* case is
+`Extract.v`'s own realizer-level string-handling speedup (already
+proven effective for the extracted OCaml path), not a bigger stack.
 
 Still not done: `"ropp"` (the signed-zero edge case above); `R`
 literals other than small-integer `iZR`; anything nested deeper where
 the error-propagation question above would actually start to matter;
-the `vm_compute`-on-a-large-string limitation just confirmed; and the
-general compositional correspondence theorem itself, if ever
+extending `Extract.v`'s own realizer-level string speedup to cover
+`vm_compute`'s in-Coq path (not just the extracted-OCaml one it
+already covers), which is what would let a future `coqc`-build-time
+tool actually parse a whole captured module this size in practice; and
+the general compositional correspondence theorem itself, if ever
 prioritized -- which the paragraph above already scopes as Flocq-scale
 work, not a bounded next step.
 `coq-coquelicot`/`coq-mathcomp-ssreflect` are installed in this dev

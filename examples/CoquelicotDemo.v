@@ -174,17 +174,22 @@ Compute py_function "quad" ["x"] (translate quad_expr).
     [probe1_quad.json] module (~350KB, dominated by
     [ClassicalDedekindReals]'s own internal cut representation --
     [RealBridge.v]'s header already explains why) makes [vm_compute]
-    segfault on this machine, confirmed directly -- almost certainly a
-    stack-depth issue in how [vm_compute] represents a string that
-    large as nested [String] constructors, not a bug in this file's
-    own parsing logic (the *same* parser, fed just [quad]'s own
-    [decl:term] sub-object -- still real, unedited JSON bytes, just
-    not the surrounding 349KB this recognizer was never going to look
-    at anyway -- works immediately, as the rest of this section shows).
-    Tracked as a real, open performance question (`RealJson.v`'s own
-    header already flags performance as a known concern, if for a
-    different cause -- [Extract.v]'s realizers speed up the *extracted
-    OCaml*, not in-Coq [vm_compute]), not silently worked around. *)
+    segfault on this machine at the shell's default stack size.
+    Root-caused, not just worked around (`docs/roadmap.md` has the
+    full account): confirmed directly to be exactly a stack-size
+    limit, not a bug here or in [vm_compute] itself -- raising
+    [ulimit -s] to 128MB is already enough for the identical [coqc]
+    invocation, on the identical 350KB string, to stop segfaulting
+    (it was still running correctly, not crashed, when a 60-second cap
+    on that check ran out); given enough stack, it does finish
+    correctly, in about 90 seconds -- consistent with this project's
+    own already-documented [vm_compute] string-handling cost at this
+    scale (`RealJson.v`'s header's 22KB/45s figure, scaled up). Using
+    the per-declaration JSON object here stays the right call anyway:
+    this recognizer was never going to look at the surrounding 349KB
+    of cut-representation bulk either way, and a routine build
+    shouldn't need a raised [ulimit] and a 90-second step for a single
+    example. *)
 
 Definition quad_decl_json : string :=
   "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""quad"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rplus""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rmult""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""x""}]}, {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""iZR""}, ""args"": [{""what"": ""expr:constructor"", ""name"": ""Zpos"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XH"", ""args"": []}]}]}]}}}]}".
