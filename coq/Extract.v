@@ -16,10 +16,13 @@ Require Import PyLang.
 Require Import Translate.
 Require Import Json.
 Require Import PyPrint.
+Require Import RealIR.
+Require Import RealJson.
 Require Extraction.
 Require Import ExtrOcamlBasic.
 Require Import ExtrOcamlNativeString.
 Require Import ExtrOcamlZInt.
+Require Import ExtrOcamlNatInt.
 Require Import ExtrOCamlInt63.
 Require Import ExtrOCamlFloats.
 
@@ -59,8 +62,118 @@ Extraction Language OCaml.
     hand -- strictly worse than taking the already-trusted stock pragma
     and its one honest linking cost. *)
 
+(** [RealJson.v] (this project's new real-[coqc]-JSON ingestion parser,
+    see that file's header) exposed a genuine performance problem in
+    *existing* [Json.v]/[nat] extraction choices that its own small,
+    hand-written test inputs never surfaced: parsing a real, 22KB
+    [coqc]-extracted module took 45 seconds before the fixes below.
+    Root-caused directly (not guessed), by a sequence of synthetic
+    benchmarks isolating each cost in turn -- the four fixes below,
+    cumulatively: 45s, then 28s, then 18s, then 15s, then *0.15s*:
+
+    - [take_while]/[expect] ([Json.v]'s two generic "scan forward
+      through a [string]" primitives, used by every parser in the
+      pipeline) recurse via [String c rest]; [ExtrOcamlNativeString]
+      realizes that pattern match by literally re-slicing the
+      remaining native OCaml string on every character consumed,
+      making one linear scan cost O(n^2).
+    - Without [ExtrOcamlNatInt], [nat] extracts as its default unary
+      Peano representation ([O]/[S n]), and every character classifier
+      in [Json.v] ([is_digit]/[is_alnum]/[RealJson.v]'s own [is_ws])
+      goes through [nat_of_ascii] plus a [Nat.leb] comparison against
+      a literal bound (48, 57, 90, 122, ...) -- *constructing and
+      structurally walking a ~100-long unary number for every single
+      character of input*.
+    - [parse_text_chars] ([Json.v]'s quoted-string body, after the
+      leading quote) has the same [String c rest] recursion as
+      [take_while], run once per quoted string -- plentiful in real
+      extraction JSON (every object's ["what"]/["name"] key and
+      value).
+    - [parse_qtext] -- the actual entry point every quoted string goes
+      through -- turned out to be the dominant cost of all four: its
+      *own*, separate one-step [match s with String a s1 => ...]
+      before ever reaching [parse_text_chars] peels the *entire
+      remaining input* off as [s1] in one slow slice, every single
+      time a quoted string starts, which is most of the time in real
+      JSON (confirmed by a synthetic, object/string-heavy benchmark
+      that stayed fast after the first three fixes and only dropped
+      from 13s to under 0.1s once this one was added too).
+
+    Each [Extract Constant] below replaces *only* the extracted OCaml
+    body with an equivalent, O(n)-per-scan implementation (one
+    index-walking loop, plain OCaml string slicing) -- the Coq-level
+    definitions, and every proof about them ([Json.v]'s
+    [take_while_app_stop], the [parse_print_roundtrip] theorem that
+    depends on it, etc.), are untouched and remain exactly as proved;
+    this is the same "trust extraction's realizer pragmas to compute
+    the same function, the same way floats/Z/int63 already do" category
+    of unverified-but-standard extraction step the rest of this file's
+    comments already describe, not a new one. *)
+Extract Constant take_while => "(fun p s ->
+  let n = String.length s in
+  let i = ref 0 in
+  while !i < n && p s.[!i] do incr i done;
+  (String.sub s 0 !i, String.sub s !i (n - !i)))".
+
+Extract Constant expect => "(fun lit s ->
+  let ll = String.length lit and ls = String.length s in
+  if ll <= ls && String.sub s 0 ll = lit then Some (String.sub s ll (ls - ll)) else None)".
+
+(** [parse_text_chars] (the body of every quoted-string literal,
+    [Json.v]'s own [quote_char]/[backslash_char] escaping) has the same
+    character-by-character [String c rest] recursion as [take_while]
+    above, called once per quoted string in the input -- plentiful in
+    real extraction JSON (every object's ["what"]/["name"] key and
+    value). [fuel] is a Coq-side termination device only ([parse_text_chars]
+    always halts on its own, at the closing quote, well before fuel
+    exhausts); the realizer below ignores it and scans directly. *)
+Extract Constant parse_text_chars => "(fun _fuel s ->
+  let n = String.length s in
+  let buf = Buffer.create 16 in
+  let rec go i =
+    if i >= n then None
+    else
+      let c = s.[i] in
+      if c = '""' then Some (Buffer.contents buf, String.sub s (i + 1) (n - i - 1))
+      else if c = '\\' then
+        (if i + 1 >= n then None
+         else (Buffer.add_char buf s.[i + 1]; go (i + 2)))
+      else (Buffer.add_char buf c; go (i + 1))
+  in go 0)".
+
+(** [parse_qtext] -- the entry point every quoted string in the input
+    actually goes through -- has its *own*, separate one-step
+    [match s with String a s1 => ...] before ever reaching
+    [parse_text_chars]: checking the leading quote by pattern-matching
+    peels the *entire remaining input* off as [s1] in one slow slice,
+    every single time a quoted string starts, which is most of the
+    time in real JSON. This was the actual dominant cost all along:
+    confirmed directly with a synthetic, 500-small-object benchmark
+    (deliberately object/string-heavy, unlike the flat-number-array
+    benchmark that stayed fast) -- 13s with every fix above already
+    in place, under 0.1s with this one additionally. Realized as a
+    single O(n) scan that checks the leading quote *and* walks the
+    content in one pass, folding [parse_text_chars]'s own job in. *)
+Extract Constant parse_qtext => "(fun s ->
+  let n = String.length s in
+  if n = 0 || s.[0] <> '""' then None
+  else
+    let buf = Buffer.create 16 in
+    let rec go i =
+      if i >= n then None
+      else
+        let c = s.[i] in
+        if c = '""' then Some (Buffer.contents buf, String.sub s (i + 1) (n - i - 1))
+        else if c = '\\' then
+          (if i + 1 >= n then None
+           else (Buffer.add_char buf s.[i + 1]; go (i + 2)))
+        else (Buffer.add_char buf c; go (i + 1))
+    in go 1)".
+
 Extraction "coq2py_core.ml"
   expr pyexpr
   print_expr parse_expr_top
   translate
-  py_function.
+  py_function
+  real_decl_of_module_json real_fix_decl_of_module_json
+  real_decl_to_expr real_fix_decl_to_expr.
