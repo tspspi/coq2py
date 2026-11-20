@@ -330,9 +330,181 @@ Definition float_of_Z (z : Z) : PrimFloat.float :=
   end.
 
 (* ------------------------------------------------------------------ *)
-(** * [jvalue] -> [real_expr]
+(** * Intrinsic name disambiguation (the "add0" problem)
 
-    [self] names the enclosing [fixgroup:item] (if any): a real,
+    Confirmed directly (`RealIR.v`'s own header already names this):
+    Coq's extraction gives an unqualified name to every declaration in
+    one extraction unit, and resolves a collision by appending a
+    disambiguating digit suffix to *whichever* of the colliding names
+    was declared later -- not deterministically to the one this
+    project cares about. A genuinely minimal probe confirms it both
+    ways: a module needing only [ZArith] extracted [Z.add] (via plain
+    [+]) as the *bare* name ["add"] in one run, but as ["add0"] in
+    another otherwise-identical run that also defined a [Fixpoint]
+    with a [nat] argument -- [positive]'s own internal [add] helper
+    (always transitively pulled in by any real use of [Z]'s own
+    arithmetic) claimed the bare name first in the second case, purely
+    because of declaration order, not anything about [Z.add] itself.
+    A hardcoded [string_dec fname "add"] is therefore only reliable by
+    accident; this is the fix.
+
+    The two colliding declarations are never the same Gallina
+    function, so they are never the same *type*: [Z.add : Z -> Z ->
+    Z], [positive]'s own internal [add] : [positive -> positive ->
+    positive] -- confirmed directly in the probe above (the module's
+    own ["add0"]/["add"] declarations carry exactly these two
+    distinct, ground types, not something requiring guesswork). So
+    the fix is not "try every digit suffix" (arbitrary, and still
+    just guessing which of several same-named candidates is the right
+    one) -- it is: strip a real call's name of any trailing digit
+    suffix, and accept that candidate as the known intrinsic ["add"]
+    only if *this module's own* declaration for that exact name has
+    [Z.add]'s expected ground type. The resolved, *canonical* name
+    (["add"], not ["add0"]) is substituted in before [RApp1]/[RApp2]
+    is ever built, so [RealIR.v]'s own [real_eval]/[real_to_expr] --
+    which only ever compare against the bare, canonical names -- need
+    no change at all to benefit from this. *)
+Fixpoint strip_trailing_digits_aux (s : string) : bool * string :=
+  match s with
+  | EmptyString => (true, EmptyString)
+  | String c rest =>
+      match strip_trailing_digits_aux rest with
+      | (true, _) => if is_digit c then (true, EmptyString) else (false, String c EmptyString)
+      | (false, rest') => (false, String c rest')
+      end
+  end.
+
+Definition strip_trailing_digits (s : string) : string :=
+  snd (strip_trailing_digits_aux s).
+
+(** The handful of ground ["type:glob"] names this project's
+    recognized fragment's intrinsics are typed over -- [z]/[bool] for
+    the [Z.v]/[Bool.v] ops, [r] for the Coquelicot-adjacent float ops
+    (`RealIR.v`'s own header). *)
+Definition jtype_is_glob (name : string) (t : jvalue) : bool :=
+  match t with
+  | JObject fs =>
+      match jwhat fs, jname fs with
+      | Some "type:glob", Some n => if string_dec n name then true else false
+      | _, _ => false
+      end
+  | _ => false
+  end.
+
+Definition jtype_is_unop (argty retty : string) (t : jvalue) : bool :=
+  match t with
+  | JObject fs =>
+      match jwhat fs, jfield fs "left", jfield fs "right" with
+      | Some "type:arrow", Some l, Some r =>
+          andb (jtype_is_glob argty l) (jtype_is_glob retty r)
+      | _, _, _ => false
+      end
+  | _ => false
+  end.
+
+Definition jtype_is_binop (argty retty : string) (t : jvalue) : bool :=
+  match t with
+  | JObject fs =>
+      match jwhat fs, jfield fs "left", jfield fs "right" with
+      | Some "type:arrow", Some l, Some (JObject rfs) =>
+          match jwhat rfs, jfield rfs "left", jfield rfs "right" with
+          | Some "type:arrow", Some l2, Some r2 =>
+              andb (jtype_is_glob argty l) (andb (jtype_is_glob argty l2) (jtype_is_glob retty r2))
+          | _, _, _ => false
+          end
+      | _, _, _ => false
+      end
+  | _ => false
+  end.
+
+(** Every top-level [decl:term]'s own name/type, and every
+    [decl:fixgroup]'s *each* [fixgroup:item]'s own name/type --
+    exactly the two places a declaration (and so a disambiguating
+    digit suffix) can originate, the same two shapes
+    [find_decl_by_name] already knows to look inside. *)
+Definition module_decl_types (decls : list jvalue) : list (string * jvalue) :=
+  (fix go (ds : list jvalue) : list (string * jvalue) :=
+     match ds with
+     | [] => []
+     | JObject fs :: rest =>
+         match jwhat fs with
+         | Some "decl:term" =>
+             match jname fs, jfield fs "type" with
+             | Some n, Some t => (n, t) :: go rest
+             | _, _ => go rest
+             end
+         | Some "decl:fixgroup" =>
+             match jfield fs "fixlist" with
+             | Some (JArray items) =>
+                 ((fix go_items (its : list jvalue) : list (string * jvalue) :=
+                     match its with
+                     | [] => []
+                     | JObject ifs :: rest' =>
+                         match jname ifs, jfield ifs "type" with
+                         | Some n, Some t => (n, t) :: go_items rest'
+                         | _, _ => go_items rest'
+                         end
+                     | _ :: rest' => go_items rest'
+                     end) items ++ go rest)%list
+             | _ => go rest
+             end
+         | _ => go rest
+         end
+     | _ :: rest => go rest
+     end) decls.
+
+Definition lookup_decl_type (types : list (string * jvalue)) (n : string) : option jvalue :=
+  (fix go (ts : list (string * jvalue)) : option jvalue :=
+     match ts with
+     | [] => None
+     | (n', t) :: rest => if string_dec n n' then Some t else go rest
+     end) types.
+
+(** Resolve a real call's own name against the module's declaration
+    table: if, after stripping any trailing digit suffix, it matches
+    one of this project's known intrinsic base names *and* this exact
+    (unstripped) name's own declared type in the module matches that
+    intrinsic's expected ground type, substitute the canonical,
+    unsuffixed name; otherwise leave [fname] untouched (the same
+    "unrecognized name" fallback [RApp1]/[RApp2]/[real_eval]/
+    [real_to_expr] already give any name this project doesn't know,
+    not a new kind of failure). Deliberately covers only the
+    arithmetic/comparison/boolean-connective/Coquelicot-float base
+    names actually confirmed subject to this collision -- not
+    ["fst"]/["snd"] (polymorphic over the pair's own element types, no
+    single ground type to check against, and never observed to
+    collide) or [RSelf]/[RCall]'s own names (resolved separately, via
+    [self]/[siblings], not this table). *)
+Definition resolve_intrinsic_name (types : list (string * jvalue)) (fname : string) : string :=
+  let base := strip_trailing_digits fname in
+  let try (expect_base : string) (check : jvalue -> bool) : option string :=
+    if string_dec base expect_base then
+      match lookup_decl_type types fname with
+      | Some t => if check t then Some expect_base else None
+      | None => None
+      end
+    else None
+  in
+  match try "add" (jtype_is_binop "z" "z") with Some b => b | None =>
+  match try "sub" (jtype_is_binop "z" "z") with Some b => b | None =>
+  match try "mul" (jtype_is_binop "z" "z") with Some b => b | None =>
+  match try "ltb" (jtype_is_binop "z" "bool") with Some b => b | None =>
+  match try "leb" (jtype_is_binop "z" "bool") with Some b => b | None =>
+  match try "eqb" (jtype_is_binop "z" "bool") with Some b => b | None =>
+  match try "andb" (jtype_is_binop "bool" "bool") with Some b => b | None =>
+  match try "orb" (jtype_is_binop "bool" "bool") with Some b => b | None =>
+  match try "negb" (jtype_is_unop "bool" "bool") with Some b => b | None =>
+  match try "ropp" (jtype_is_unop "r" "r") with Some b => b | None =>
+  match try "rabs" (jtype_is_unop "r" "r") with Some b => b | None =>
+  match try "sqrt" (jtype_is_unop "r" "r") with Some b => b | None =>
+  match try "rplus" (jtype_is_binop "r" "r") with Some b => b | None =>
+  match try "rmult" (jtype_is_binop "r" "r") with Some b => b | None =>
+  match try "rminus" (jtype_is_binop "r" "r") with Some b => b | None =>
+  match try "rdiv" (jtype_is_binop "r" "r") with Some b => b | None =>
+  fname
+  end end end end end end end end end end end end end end end end.
+
+(** [self] names the enclosing [fixgroup:item] (if any): a real,
     self-recursive call extracts as an ordinary [expr:apply] whose
     [func] is an [expr:global] naming *itself* (confirmed directly --
     not an [expr:rel], since the function is not a local binder from
@@ -348,7 +520,7 @@ Definition is_rel_named (bodyj : jvalue) (x : string) : bool :=
   | _ => false
   end.
 
-Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat) (j : jvalue) {struct fuel} : option real_expr :=
+Fixpoint real_expr_of_json (self : option var) (siblings : list var) (types : list (string * jvalue)) (fuel : nat) (j : jvalue) {struct fuel} : option real_expr :=
   match fuel with
   | O => None
   | S fuel' =>
@@ -373,19 +545,19 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat
           | Some "False", Some (JArray []) => Some (RBoolLit false)
           | Some "Nil", Some (JArray []) => Some RNil
           | Some "Cons", Some (JArray [h; t]) =>
-              match real_expr_of_json self siblings fuel' h, real_expr_of_json self siblings fuel' t with
+              match real_expr_of_json self siblings types fuel' h, real_expr_of_json self siblings types fuel' t with
               | Some h', Some t' => Some (RCons h' t')
               | _, _ => None
               end
           | Some "Pair", Some (JArray [a; b]) =>
-              match real_expr_of_json self siblings fuel' a, real_expr_of_json self siblings fuel' b with
+              match real_expr_of_json self siblings types fuel' a, real_expr_of_json self siblings types fuel' b with
               | Some a', Some b' => Some (RPair a' b')
               | _, _ => None
               end
           | _, Some (JArray [a; b; c]) =>
               (* a 3-argument record constructor, any name -- RRecord3 *)
-              match real_expr_of_json self siblings fuel' a, real_expr_of_json self siblings fuel' b,
-                    real_expr_of_json self siblings fuel' c with
+              match real_expr_of_json self siblings types fuel' a, real_expr_of_json self siblings types fuel' b,
+                    real_expr_of_json self siblings types fuel' c with
               | Some a', Some b', Some c' => Some (RRecord3 a' b' c')
               | _, _, _ => None
               end
@@ -402,7 +574,7 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat
                       if string_dec fname sname then
                         match args with
                         | [a] =>
-                            match real_expr_of_json self siblings fuel' a with
+                            match real_expr_of_json self siblings types fuel' a with
                             | Some a' => Some (RSelf a')
                             | None => None
                             end
@@ -417,7 +589,7 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat
                                      match js with
                                      | [] => Some []
                                      | j :: rest =>
-                                         match real_expr_of_json self siblings fuel' j, parse_args rest with
+                                         match real_expr_of_json self siblings types fuel' j, parse_args rest with
                                          | Some e', Some es' => Some (e' :: es')
                                          | _, _ => None
                                          end
@@ -427,8 +599,8 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat
                             | None => None
                             end
                         end
-                      else real_call_or_app self siblings fuel' fname args
-                  | None => real_call_or_app self siblings fuel' fname args
+                      else real_call_or_app self siblings types fuel' fname args
+                  | None => real_call_or_app self siblings types fuel' fname args
                   end
               | _, _ => None
               end
@@ -437,9 +609,9 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat
       | Some "expr:case" =>
           match jfield fs "expr", jfield fs "cases" with
           | Some scrutinee_j, Some (JArray cases) =>
-              match real_expr_of_json self siblings fuel' scrutinee_j with
+              match real_expr_of_json self siblings types fuel' scrutinee_j with
               | Some scrutinee =>
-                  real_case_of_json self siblings fuel' scrutinee cases
+                  real_case_of_json self siblings types fuel' scrutinee cases
               | None => None
               end
           | _, _ => None
@@ -458,7 +630,7 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (fuel : nat
     [decl:fixgroup] lists every member up front) takes priority over
     an ordinary intrinsic call, the same way a [self]-call already
     does. *)
-with real_call_or_app (self : option var) (siblings : list var) (fuel : nat) (fname : string) (args : list jvalue)
+with real_call_or_app (self : option var) (siblings : list var) (types : list (string * jvalue)) (fuel : nat) (fname : string) (args : list jvalue)
     {struct fuel} : option real_expr :=
   match fuel with
   | O => None
@@ -466,7 +638,7 @@ with real_call_or_app (self : option var) (siblings : list var) (fuel : nat) (fn
   if List.existsb (fun s => if string_dec fname s then true else false) siblings then
     match args with
     | [a] =>
-        match real_expr_of_json self siblings fuel' a with
+        match real_expr_of_json self siblings types fuel' a with
         | Some a' => Some (RCall fname a')
         | None => None
         end
@@ -476,7 +648,7 @@ with real_call_or_app (self : option var) (siblings : list var) (fuel : nat) (fn
                  match js with
                  | [] => Some []
                  | j :: rest =>
-                     match real_expr_of_json self siblings fuel' j, parse_args rest with
+                     match real_expr_of_json self siblings types fuel' j, parse_args rest with
                      | Some e', Some es' => Some (e' :: es')
                      | _, _ => None
                      end
@@ -486,13 +658,13 @@ with real_call_or_app (self : option var) (siblings : list var) (fuel : nat) (fn
         | None => None
         end
     end
-  else real_app_of_json self siblings fuel' fname args
+  else real_app_of_json self siblings types fuel' fname args
   end
 
 (** Dispatch an [expr:apply] whose [func] is a plain [expr:global] --
     an intrinsic call ([RApp1]/[RApp2]), arity read off [args]'s own
     length, never guessed. *)
-with real_app_of_json (self : option var) (siblings : list var) (fuel : nat) (fname : string) (args : list jvalue)
+with real_app_of_json (self : option var) (siblings : list var) (types : list (string * jvalue)) (fuel : nat) (fname : string) (args : list jvalue)
     {struct fuel} : option real_expr :=
   match fuel with
   | O => None
@@ -505,13 +677,13 @@ with real_app_of_json (self : option var) (siblings : list var) (fuel : nat) (fn
         | None => None
         end
       else
-        match real_expr_of_json self siblings fuel' a with
-        | Some a' => Some (RApp1 fname a')
+        match real_expr_of_json self siblings types fuel' a with
+        | Some a' => Some (RApp1 (resolve_intrinsic_name types fname) a')
         | None => None
         end
   | [a; b] =>
-      match real_expr_of_json self siblings fuel' a, real_expr_of_json self siblings fuel' b with
-      | Some a', Some b' => Some (RApp2 fname a' b')
+      match real_expr_of_json self siblings types fuel' a, real_expr_of_json self siblings types fuel' b with
+      | Some a', Some b' => Some (RApp2 (resolve_intrinsic_name types fname) a' b')
       | _, _ => None
       end
   | _ => None
@@ -526,7 +698,7 @@ with real_app_of_json (self : option var) (siblings : list var) (fuel : nat) (fn
     projection extracts to) is [RProj1]/[RProj2]/[RProj3_1]/
     [RProj3_2]/[RProj3_3]; a single-case, 2-name [Cons]/[Nil] pair is
     [RListMatch]. *)
-with real_case_of_json (self : option var) (siblings : list var) (fuel : nat) (scrutinee : real_expr) (cases : list jvalue)
+with real_case_of_json (self : option var) (siblings : list var) (types : list (string * jvalue)) (fuel : nat) (scrutinee : real_expr) (cases : list jvalue)
     {struct fuel} : option real_expr :=
   match fuel with
   | O => None
@@ -564,22 +736,22 @@ with real_case_of_json (self : option var) (siblings : list var) (fuel : nat) (s
           | Some (JObject p1), Some b1, Some (JObject p2), Some b2 =>
               match jname p1, jfield p1 "argnames", jname p2, jfield p2 "argnames" with
               | Some "True", Some (JArray []), Some "False", Some (JArray []) =>
-                  match real_expr_of_json self siblings fuel' b1, real_expr_of_json self siblings fuel' b2 with
+                  match real_expr_of_json self siblings types fuel' b1, real_expr_of_json self siblings types fuel' b2 with
                   | Some t, Some e => Some (RIfBool scrutinee t e)
                   | _, _ => None
                   end
               | Some "Inl", Some (JArray [JString x1]), Some "Inr", Some (JArray [JString x2]) =>
-                  match real_expr_of_json self siblings fuel' b1, real_expr_of_json self siblings fuel' b2 with
+                  match real_expr_of_json self siblings types fuel' b1, real_expr_of_json self siblings types fuel' b2 with
                   | Some c1', Some c2' => Some (RCase scrutinee x1 c1' x2 c2')
                   | _, _ => None
                   end
               | Some "Nil", Some (JArray []), Some "Cons", Some (JArray [JString h; JString t]) =>
-                  match real_expr_of_json self siblings fuel' b1, real_expr_of_json self siblings fuel' b2 with
+                  match real_expr_of_json self siblings types fuel' b1, real_expr_of_json self siblings types fuel' b2 with
                   | Some nilc, Some consc => Some (RListMatch scrutinee nilc h t consc)
                   | _, _ => None
                   end
               | Some "Cons", Some (JArray [JString h; JString t]), Some "Nil", Some (JArray []) =>
-                  match real_expr_of_json self siblings fuel' b2, real_expr_of_json self siblings fuel' b1 with
+                  match real_expr_of_json self siblings types fuel' b2, real_expr_of_json self siblings types fuel' b1 with
                   | Some nilc, Some consc => Some (RListMatch scrutinee nilc h t consc)
                   | _, _ => None
                   end
@@ -616,10 +788,10 @@ Definition jstrings_of_json (xs : list jvalue) : option (list var) :=
      | _ => None
      end) xs.
 
-Definition real_decl_of_json (fuel : nat) (argnames : list jvalue) (bodyj : jvalue) : option real_decl :=
+Definition real_decl_of_json (types : list (string * jvalue)) (fuel : nat) (argnames : list jvalue) (bodyj : jvalue) : option real_decl :=
   match jstrings_of_json argnames with
   | Some ns =>
-      match real_expr_of_json None [] fuel bodyj with
+      match real_expr_of_json None [] types fuel bodyj with
       | Some body => Some (mk_real_decl ns body)
       | None => None
       end
@@ -627,14 +799,14 @@ Definition real_decl_of_json (fuel : nat) (argnames : list jvalue) (bodyj : jval
   end.
 
 (** A [decl:term] node, as it appears directly inside [declarations]. *)
-Definition decl_term_of_json (fuel : nat) (j : jvalue) : option real_decl :=
+Definition decl_term_of_json (types : list (string * jvalue)) (fuel : nat) (j : jvalue) : option real_decl :=
   match j with
   | JObject fs =>
       match jwhat fs, jfield fs "value" with
       | Some "decl:term", Some (JObject vfs) =>
           match jwhat vfs, jfield vfs "argnames", jfield vfs "body" with
           | Some "expr:lambda", Some (JArray argnames), Some bodyj =>
-              real_decl_of_json fuel argnames bodyj
+              real_decl_of_json types fuel argnames bodyj
           | _, _, _ => None
           end
       | _, _ => None
@@ -646,14 +818,14 @@ Definition decl_term_of_json (fuel : nat) (j : jvalue) : option real_decl :=
     own [fixlist] -- a single-argument self-recursive [Fixpoint]
     only, [self]-recognized exactly as before ([siblings := []]). For
     the general N-way case, see [decl_fixgroup_of_json] below. *)
-Definition decl_fixgroup_item_of_json (fuel : nat) (j : jvalue) : option real_fix_decl :=
+Definition decl_fixgroup_item_of_json (types : list (string * jvalue)) (fuel : nat) (j : jvalue) : option real_fix_decl :=
   match j with
   | JObject fs =>
       match jwhat fs, jname fs, jfield fs "value" with
       | Some "fixgroup:item", Some fname, Some (JObject vfs) =>
           match jwhat vfs, jfield vfs "argnames", jfield vfs "body" with
           | Some "expr:lambda", Some (JArray [JString param]), Some bodyj =>
-              match real_expr_of_json (Some fname) [] fuel bodyj with
+              match real_expr_of_json (Some fname) [] types fuel bodyj with
               | Some body => Some (mk_real_fix_decl fname param body)
               | None => None
               end
@@ -672,7 +844,7 @@ Definition decl_fixgroup_item_of_json (fuel : nat) (j : jvalue) : option real_fi
     [decl_fixgroup_item_of_json] does -- that function is left
     untouched for the one-argument case, this is its additive
     sibling. *)
-Definition decl_fixgroup_item_multi_of_json (fuel : nat) (j : jvalue) : option real_fix_decl_multi :=
+Definition decl_fixgroup_item_multi_of_json (types : list (string * jvalue)) (fuel : nat) (j : jvalue) : option real_fix_decl_multi :=
   match j with
   | JObject fs =>
       match jwhat fs, jname fs, jfield fs "value" with
@@ -681,7 +853,7 @@ Definition decl_fixgroup_item_multi_of_json (fuel : nat) (j : jvalue) : option r
           | Some "expr:lambda", Some (JArray argnames), Some bodyj =>
               match jstrings_of_json argnames with
               | Some params =>
-                  match real_expr_of_json (Some fname) [] fuel bodyj with
+                  match real_expr_of_json (Some fname) [] types fuel bodyj with
                   | Some body => Some (mk_real_fix_decl_multi fname params body)
                   | None => None
                   end
@@ -701,7 +873,7 @@ Definition decl_fixgroup_item_multi_of_json (fuel : nat) (j : jvalue) : option r
     [names] (every [fixgroup:item] in a [decl:fixgroup]'s [fixlist]
     is visible before any one member's own body is parsed, so this
     is never a chicken-and-egg problem). *)
-Definition fixgroup_item_of_json (siblings : list var) (fuel : nat) (j : jvalue)
+Definition fixgroup_item_of_json (siblings : list var) (types : list (string * jvalue)) (fuel : nat) (j : jvalue)
     : option (var * var * real_expr) :=
   match j with
   | JObject fs =>
@@ -709,7 +881,7 @@ Definition fixgroup_item_of_json (siblings : list var) (fuel : nat) (j : jvalue)
       | Some "fixgroup:item", Some fname, Some (JObject vfs) =>
           match jwhat vfs, jfield vfs "argnames", jfield vfs "body" with
           | Some "expr:lambda", Some (JArray [JString param]), Some bodyj =>
-              match real_expr_of_json None siblings fuel bodyj with
+              match real_expr_of_json None siblings types fuel bodyj with
               | Some body => Some (fname, param, body)
               | None => None
               end
@@ -728,7 +900,7 @@ Definition fixgroup_item_of_json (siblings : list var) (fuel : nat) (j : jvalue)
     bool := ... with is_odd (n : nat) : bool := ...]: [fixlist] is a
     flat [JArray] of [fixgroup:item]s, group order preserved, no
     separate "names" field to read instead. *)
-Definition decl_fixgroup_of_json (fuel : nat) (j : jvalue) : option real_fix_group_decl :=
+Definition decl_fixgroup_of_json (types : list (string * jvalue)) (fuel : nat) (j : jvalue) : option real_fix_group_decl :=
   match j with
   | JObject fs =>
       match jwhat fs, jfield fs "fixlist" with
@@ -754,7 +926,7 @@ Definition decl_fixgroup_of_json (fuel : nat) (j : jvalue) : option real_fix_gro
                    match its with
                    | [] => Some []
                    | it :: rest =>
-                       match fixgroup_item_of_json siblings fuel it, go rest with
+                       match fixgroup_item_of_json siblings types fuel it, go rest with
                        | Some m, Some ms => Some (m :: ms)
                        | _, _ => None
                        end
@@ -867,7 +1039,7 @@ Definition real_decl_of_module_json (s target : string) : option real_decl :=
   match module_declarations s with
   | Some decls =>
       match find_decl_by_name decls target with
-      | Some declj => decl_term_of_json (S (String.length s)) declj
+      | Some declj => decl_term_of_json (module_decl_types decls) (S (String.length s)) declj
       | None => None
       end
   | None => None
@@ -877,7 +1049,7 @@ Definition real_fix_decl_of_module_json (s target : string) : option real_fix_de
   match module_declarations s with
   | Some decls =>
       match find_decl_by_name decls target with
-      | Some declj => decl_fixgroup_item_of_json (S (String.length s)) declj
+      | Some declj => decl_fixgroup_item_of_json (module_decl_types decls) (S (String.length s)) declj
       | None => None
       end
   | None => None
@@ -889,7 +1061,7 @@ Definition real_fix_decl_multi_of_module_json (s target : string) : option real_
   match module_declarations s with
   | Some decls =>
       match find_decl_by_name decls target with
-      | Some declj => decl_fixgroup_item_multi_of_json (S (String.length s)) declj
+      | Some declj => decl_fixgroup_item_multi_of_json (module_decl_types decls) (S (String.length s)) declj
       | None => None
       end
   | None => None
@@ -902,7 +1074,7 @@ Definition real_fix_group_decl_of_module_json (s target : string) : option real_
   match module_declarations s with
   | Some decls =>
       match find_fixgroup_by_member_name decls target with
-      | Some declj => decl_fixgroup_of_json (S (String.length s)) declj
+      | Some declj => decl_fixgroup_of_json (module_decl_types decls) (S (String.length s)) declj
       | None => None
       end
   | None => None

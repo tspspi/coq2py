@@ -50,11 +50,42 @@ an open guess.
   to a disambiguated suffix. A name-based intrinsic recognizer that
   hardcodes `"add"` would silently fail to recognize `Z.add` the moment
   anything else in the same extracted module also defines (or itself
-  transitively needs) an `add`. This is exactly the "extraction-internal
-  detail, not a stable, documented one" risk flagged below in sharper,
-  now-confirmed form -- not yet solved, since solving it needs either
-  controlling what else shares the extraction unit or matching
-  structurally rather than by name, and `RealIR.v` does neither yet.
+  transitively needs) an `add`.
+
+  **Done**: `RealJson.v`'s `resolve_intrinsic_name` fixes this, not by
+  controlling the extraction unit or interpreting the colliding
+  declaration's full body, but by using the one thing that reliably
+  distinguishes the two colliding declarations: their *type*.
+  `Pos.add : positive -> positive -> positive` and `Z.add : Z -> Z ->
+  Z` are never the same type, confirmed directly (the module's own
+  declaration table carries both, side by side, with exactly these
+  ground types) -- so `resolve_intrinsic_name` strips a call's name of
+  any trailing digit suffix, and accepts the stripped candidate as a
+  known intrinsic only if *this module's own* declaration for the
+  exact (unstripped) name has that intrinsic's expected ground type
+  (`module_decl_types` builds the name/type table once per module from
+  every `decl:term`/`fixgroup:item`'s own `"type"` field, already
+  present in the captured JSON and previously never read at all). The
+  canonical, unsuffixed name is substituted in *before* `RApp1`/`RApp2`
+  is built, so `RealIR.v`'s own `real_eval`/`real_to_expr` -- which only
+  ever compare against the bare, canonical names -- needed zero
+  changes to benefit. Covers the confirmed-collision-prone base names
+  (`add`/`sub`/`mul`/`ltb`/`leb`/`eqb`/`andb`/`orb`/`negb`, and the
+  Coquelicot float fragment's `ropp`/`rabs`/`sqrt`/`rplus`/`rmult`/
+  `rminus`/`rdiv`) -- deliberately not `fst`/`snd` (polymorphic over
+  the pair's own element types, no single ground type to check against,
+  and never observed to collide). `examples/NaturalCoq.v`'s `sum_list`
+  is the worked instance: a real module where `Z.add` genuinely
+  extracts as `"add0"` (confirmed directly, `positive`'s own `add`
+  claims the bare name in *this* module's declaration order), parsed
+  through `real_fix_decl_multi_of_module_json`, correctly resolving to
+  the canonical `RApp2 "add" ...` RealIR.v's unmodified dispatch
+  already recognizes -- `sum_list 0 [1;2;3] = 6`, checked against the
+  real Gallina definition and confirmed running correctly under actual
+  Python. `Print Assumptions` shows no new axioms (this is a parse-time
+  text transformation, not a new semantic primitive). Full test suite
+  passes with zero other edits, confirming the fallback (no module-
+  level collision found) is exactly today's behavior.
 - `coq/RealIR.v` is that recognizer, as a first proven step: `real_expr`
   models exactly this fragment (variables, `Z`/`bool` literals, named
   unary/binary intrinsic calls, a 2-case boolean `if`), `real_eval`'s
@@ -282,11 +313,10 @@ roughly the order they'd be needed next:
   recognizer that works for *any* field count, not one more fixed
   arity at a time the way `RRecord3` above is one more instance of the
   nested-pair workaround); `option`, per `RCase`'s own note above.
-- Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
-  disambiguation above -- e.g. by controlling the extraction unit so
-  only the intrinsics themselves are ever extracted (no competing
-  declaration to force a rename), rather than matching an unstable
-  textual name.
+- ~~Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
+  disambiguation~~ -- **done**, see this section's own entry above
+  (`resolve_intrinsic_name`, type-based, not by controlling the
+  extraction unit).
 
 ## The N-field-record/mutual-recursion arity caps are liftable -- landed
 
