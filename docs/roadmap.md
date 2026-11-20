@@ -727,6 +727,34 @@ the same `vm_compute`-stack reason as `quad`'s), parsed, translated,
 evaluated (`(10 - 4) / (-4) = -1.5` exactly), and printed to real,
 checked Python (`def combo(v0, v1): return ((v0 - v1) / (-v1))`).
 
+**Done** (`"rabs"`, including the same signed-zero edge case `"ropp"`
+had): a fresh probe, `absdiff (x y : R) := Rabs (x - y)`, actually run
+through `coqc` with `coq-coquelicot` installed, confirms `Rabs`
+extracts as a plain unary `expr:apply`/`expr:global "rabs"` call --
+despite `Rabs`'s own Gallina definition being a decidability case
+split (`Rcase_abs`/`total_order_T`), not anything resembling a single
+primitive -- so the extraction-shape bet already made for `"ropp"`
+holds here too, confirmed rather than assumed by analogy. Translating
+`"rabs"` as an `EIf`-based workaround (`EIf (EFLt e (EFConst 0))
+(EFOpp e) e`, built from already-existing constructors) would be
+*wrong* at `e = -0.0`: `-0.0 < 0.0` is `false` under IEEE-754, so the
+`else` branch returns `-0.0` unchanged, while `PrimFloat.abs (-0.0) =
+0.0` -- confirmed directly, including in real Python
+(`math.copysign(1, abs(-0.0)) == 1.0`). So a real, dedicated `EFAbs`
+landed in `Lang.v` (and its mirror, `PFAbs`, in `PyLang.v`), calling
+`PrimFloat.abs` directly, the same move `EFOpp` already made for
+`"ropp"` -- threaded through every layer (`Translate.v`, `Json.v`'s
+`"fabs"` tag plus parser/round-trip proof, `PyPrint.v`'s `abs(...)`
+rendering, `PyRename.v`'s `rename_pyexpr_correct` case, `RealIR.v`'s
+`RApp1` dispatch and its own preservation proof). `Print Assumptions`
+across every touched theorem shows only `PrimFloat.abs` joining the
+pre-existing `PrimFloat` axiom set -- no new kind of trust boundary.
+`examples/CoquelicotDemo.v`'s `absdiff_decl_json` is the real captured
+JSON (`rabs (rminus x y)`), parsed, translated, evaluated (`|4 - 10| =
+6` exactly), and printed to real, checked Python (`def absdiff(v0,
+v1): return abs((v0 - v1))`, confirmed to run correctly under actual
+Python too).
+
 Still not done: `R` literals other than small-integer `iZR`; anything
 nested deeper where the error-propagation question above would
 actually start to matter;

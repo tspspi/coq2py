@@ -322,3 +322,86 @@ Proof. vm_compute. reflexivity. Qed.
 
 Compute py_function "combo" (match combo_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
   (translate combo_expr).
+
+(* ------------------------------------------------------------------ *)
+(** * "rabs", and why it needed a real EFAbs too
+
+    A fresh probe, run the same way [probe2_combo.json] was:
+
+    [[
+    Definition absdiff (x y : R) : R := Rabs (x - y).
+
+    Extraction Language JSON.
+    Extraction "probe3_absdiff.json" absdiff.
+    ]]
+
+    confirms [Rabs] extracts the same way [Ropp] does: a plain unary
+    [expr:apply]/[expr:global "rabs"] call, despite [Rabs]'s own
+    Gallina definition being a decidability case split
+    ([Rcase_abs]/[total_order_T]) rather than anything resembling a
+    single primitive -- this project's extraction-shape bet already
+    made for ["ropp"] holds for ["rabs"] too, confirmed rather than
+    assumed by analogy.
+
+    The same signed-zero trap ["ropp"] had applies here: an
+    [EIf]-based workaround ([EIf (EFLt e (EFConst 0)) (EFOpp e) e])
+    is *wrong* at [e = -0.0], because [-0.0 < 0.0] is [false] under
+    IEEE-754, so the [else] branch returns [-0.0] unchanged, while
+    [PrimFloat.abs (-0.0) = 0.0] -- a different, incorrect result. So
+    ["rabs"] translates to a real, dedicated [EFAbs] (added to
+    [Lang.v] alongside [EFOpp]), calling [PrimFloat.abs] directly, the
+    same move as ["ropp"]/[EFOpp]. *)
+Example rabs_abs_of_negative_three :
+  eval 5 [] (EFAbs (EFConst (-3))) = Some (VFloat 3).
+Proof. reflexivity. Qed.
+
+(** The case an [EIf]-based workaround would have gotten wrong:
+    [abs] of signed [-0.0] must give [+0.0], not [-0.0] unchanged. *)
+Example rabs_abs_of_negative_zero_is_positive_zero :
+  eval 5 [] (EFAbs (EFConst (-0))) = Some (VFloat 0).
+Proof. reflexivity. Qed.
+
+Definition rabs_ir : real_expr := RApp1 "rabs" (RRel "x").
+
+Example rabs_ir_translates :
+  real_to_expr rabs_ir = Some (EFAbs (EVar "x")).
+Proof. reflexivity. Qed.
+
+Example rabs_ir_matches_expected_value :
+  real_eval [("x", VFloat (-3))] rabs_ir = Some (VFloat 3).
+Proof. reflexivity. Qed.
+
+Compute py_function "absval" ["x"] (translate (EFAbs (EVar "x"))).
+
+(** [absdiff]'s own real captured JSON, [rabs (rminus x y)] -- parsed
+    from text, not hand-built, the same way [quad_decl_json]/
+    [combo_decl_json] were: *)
+Definition absdiff_decl_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""absdiff"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rabs""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rminus""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""y""}]}]}}}]}".
+
+Definition absdiff_decl_parsed : option real_decl := real_decl_of_module_json absdiff_decl_json "absdiff".
+
+Example absdiff_decl_parsed_shape :
+  absdiff_decl_parsed
+  = Some {| rd_argnames := ["x"; "y"];
+            rd_body := RApp1 "rabs" (RApp2 "rminus" (RRel "x") (RRel "y")) |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition absdiff_expr : expr :=
+  match absdiff_decl_parsed with
+  | Some rd =>
+      match real_to_expr rd.(rd_body) with
+      | Some e => e
+      | None => EFConst 0%float
+      end
+  | None => EFConst 0%float
+  end.
+
+(** [|4 - 10| = 6] exactly -- no rounding, the same honest
+    concrete-instance scoping used throughout this file. *)
+Example absdiff_expr_matches_expected_value :
+  eval 10 [("x", VFloat 4); ("y", VFloat 10)] absdiff_expr = Some (VFloat 6).
+Proof. vm_compute. reflexivity. Qed.
+
+Compute py_function "absdiff" (match absdiff_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
+  (translate absdiff_expr).

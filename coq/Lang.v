@@ -45,6 +45,20 @@
     Coquelicot section used to carry this as an open gap for exactly
     this reason, before this constructor existed).
 
+    [EFAbs] (absolute value) calls [PrimFloat.abs] directly, for the
+    same reason [EFOpp] does: a workaround built from existing pieces
+    (e.g. [EIf (EFLt e (EFConst 0)) (EFOpp e) e]) is only *almost*
+    right -- IEEE-754 equality doesn't distinguish signed zero
+    ([-0.0 < 0.0] is [false], since [-0.0 = 0.0]), so that [EIf] takes
+    the "else" branch and returns [-0.0] unchanged, while
+    [PrimFloat.abs (-0.0) = 0.0] (confirmed directly) clears the sign
+    unconditionally. Coquelicot's own [Rabs] is the motivating case:
+    it extracts as a plain named [rabs] global call (confirmed
+    directly), the same recognizable-intrinsic shape every other
+    [R]-operation here already has, even though [Rabs]'s own Gallina
+    definition is a decidability case split ([Rcase_abs]/[total_order_T])
+    this project has no interest in extracting literally.
+
     [ERepeat n x body init] is bounded iteration: evaluate [init] to a
     starting value, then apply [body] (with [x] bound to the current
     value) exactly [n] times, [n] a literal [nat] fixed at "compile
@@ -243,6 +257,7 @@ Inductive expr : Type :=
   | EFLt (e1 e2 : expr)
   | EFLe (e1 e2 : expr)
   | EFOpp (e : expr)
+  | EFAbs (e : expr)
   | ERepeat (n : nat) (x : var) (body init : expr)
   | EDiv (e1 e2 : expr)
   | EMod (e1 e2 : expr)
@@ -449,6 +464,11 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
   | EFOpp e1 =>
       match eval fuel' rho e1 with
       | Some (VFloat f1) => Some (VFloat (PrimFloat.opp f1))
+      | _ => None
+      end
+  | EFAbs e1 =>
+      match eval fuel' rho e1 with
+      | Some (VFloat f1) => Some (VFloat (PrimFloat.abs f1))
       | _ => None
       end
   | ERepeat n x body init =>
@@ -659,6 +679,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EFLt e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFLe e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFOpp e1 => expr_idents_valid is_valid_ident e1
+  | EFAbs e1 => expr_idents_valid is_valid_ident e1
   | ERepeat _ x body init =>
       andb (is_valid_ident x)
            (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident init))

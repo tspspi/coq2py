@@ -261,6 +261,7 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PFLt e1 e2 => "(" ++ py_expr e1 ++ " < " ++ py_expr e2 ++ ")"
   | PFLe e1 e2 => "(" ++ py_expr e1 ++ " <= " ++ py_expr e2 ++ ")"
   | PFOpp e1 => "(-" ++ py_expr e1 ++ ")"
+  | PFAbs e1 => "abs(" ++ py_expr e1 ++ ")"
   | PRepeat n x body init =>
       "((" ++ x ++ " := " ++ py_expr init ++ ")"
         ++ py_repeat_steps n x (py_expr body) ++ ", " ++ x ++ ")[-1]"

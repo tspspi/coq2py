@@ -61,6 +61,7 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EFLt e1 e2 => PFLt (translate e1) (translate e2)
   | EFLe e1 e2 => PFLe (translate e1) (translate e2)
   | EFOpp e1 => PFOpp (translate e1)
+  | EFAbs e1 => PFAbs (translate e1)
   | ERepeat n x body init => PRepeat n x (translate body) (translate init)
   | EDiv e1 e2 => PDiv (translate e1) (translate e2)
   | EMod e1 e2 => PMod (translate e1) (translate e2)
@@ -347,6 +348,7 @@ Proof.
       | e1 e2                       (* EFLt *)
       | e1 e2                       (* EFLe *)
       | e1                          (* EFOpp *)
+      | e1                          (* EFAbs *)
       | n x body init               (* ERepeat *)
       | e1 e2                       (* EDiv *)
       | e1 e2                       (* EMod *)
@@ -447,6 +449,8 @@ Proof.
       destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1|cg1a cg1b cg1c]|];
         destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2|cg2a cg2b cg2c]|]; reflexivity.
     + (* EFOpp *) rewrite (IHfuel e1 rho).
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1|cg1a cg1b cg1c]|]; reflexivity.
+    + (* EFAbs *) rewrite (IHfuel e1 rho).
       destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1|cg1a cg1b cg1c]|]; reflexivity.
     + (* ERepeat *) rewrite (IHfuel init rho).
       destruct (eval fuel' rho init) as [v0|].
