@@ -243,7 +243,22 @@
     so the [else] branch returns [-0.0] unchanged, while
     [PrimFloat.abs (-0.0) = 0.0]. So ["rabs"] translates to a real,
     dedicated [EFAbs] (added to [Lang.v] alongside [EFOpp]), calling
-    [PrimFloat.abs] directly -- the same move as ["ropp"]/[EFOpp]. *)
+    [PrimFloat.abs] directly -- the same move as ["ropp"]/[EFOpp].
+
+    ["sqrt"] (Coq's own [Reals.R_sqrt.sqrt], the function Coquelicot's
+    own calculus lemmas about square roots are stated over) is the
+    simplest case of all three float unary ops here: there isn't even
+    an *almost*-right workaround to reject, since nothing already in
+    this fragment ([+]/[-]/[*]/[/]) can compute a square root at all --
+    a dedicated primitive is not an exactness refinement the way
+    [EFOpp]/[EFAbs] are, it is the only way to support this operation.
+    Confirmed directly against a real probe ([sqrt (x * x + y * y)]):
+    [sqrt] extracts as a plain unary global call, the same shape
+    ["ropp"]/["rabs"] already have, even though its own Gallina
+    definition goes through [Rsqrt_exists] and a classical
+    completeness argument. Translates to a real, dedicated [EFSqrt]
+    (added to [Lang.v] alongside [EFOpp]/[EFAbs]), calling
+    [PrimFloat.sqrt] directly. *)
 
 From Coq Require Import ZArith String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -295,6 +310,7 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VFloat f) =>
           if string_dec fn "ropp" then Some (VFloat (PrimFloat.opp f))
           else if string_dec fn "rabs" then Some (VFloat (PrimFloat.abs f))
+          else if string_dec fn "sqrt" then Some (VFloat (PrimFloat.sqrt f))
           else None
       | _ => None
       end
@@ -400,6 +416,7 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           else if string_dec fn "snd" then Some (ESnd e1)
           else if string_dec fn "ropp" then Some (EFOpp e1)
           else if string_dec fn "rabs" then Some (EFAbs e1)
+          else if string_dec fn "sqrt" then Some (EFSqrt e1)
           else None
       | None => None
       end
@@ -551,6 +568,10 @@ Proof.
        destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|];
        reflexivity|].
     destruct (string_dec fn "rabs") as [Heq|Hne5];
+      [inversion Htrans; subst; simpl; rewrite IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|];
+       reflexivity|].
+    destruct (string_dec fn "sqrt") as [Heq|Hne6];
       [inversion Htrans; subst; simpl; rewrite IH1;
        destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc]|];
        reflexivity|].

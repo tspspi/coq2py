@@ -405,3 +405,79 @@ Proof. vm_compute. reflexivity. Qed.
 
 Compute py_function "absdiff" (match absdiff_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
   (translate absdiff_expr).
+
+(* ------------------------------------------------------------------ *)
+(** * "sqrt", the one float op with no workaround to reject at all
+
+    A fresh probe, the same way [probe3_absdiff.json] was:
+
+    [[
+    Definition hyp_len (x y : R) : R := sqrt (x * x + y * y).
+
+    Extraction Language JSON.
+    Extraction "probe_sqrt.json" hyp_len.
+    ]]
+
+    confirms [sqrt] (Coq's own [Reals.R_sqrt.sqrt]) extracts the same
+    way [ropp]/[rabs] do: a plain unary [expr:apply]/[expr:global
+    "sqrt"] call, despite its own Gallina definition going through
+    [Rsqrt_exists] and a classical completeness argument, not
+    anything resembling a single primitive.
+
+    Unlike ["ropp"]/["rabs"], there is not even an *almost*-right
+    workaround to reject here: nothing already in [expr] -- built
+    only from [+]/[-]/[*]/[/] -- can compute a square root at all, so
+    a dedicated [EFSqrt] (calling [PrimFloat.sqrt] directly) is not an
+    exactness refinement, it is the only way to support this
+    operation. Printing it needs no new [Lang.v]/[Translate.v]/
+    [PyRename.v] feature once [EFSqrt] exists, but a real printing
+    choice: Python's [math.sqrt] needs [math] imported, and
+    [py_function] emits a bare [def] with no header to put an import
+    in, so [PyPrint.v] renders it as the self-contained *expression*
+    [__import__("math").sqrt(...)] -- confirmed directly to compute
+    the exact same bits as [math.sqrt] (sign of zero included;
+    [x ** 0.5], the importless alternative, was confirmed *wrong* for
+    [x = -0.0]: it gives [+0.0], not [-0.0]). *)
+Example sqrt_hyp_len_three_four_five :
+  eval 10 [] (EFSqrt (EFAdd (EFMul (EFConst 3) (EFConst 3)) (EFMul (EFConst 4) (EFConst 4)))) = Some (VFloat 5).
+Proof. reflexivity. Qed.
+
+Definition sqrt_ir : real_expr := RApp1 "sqrt" (RRel "x").
+
+Example sqrt_ir_translates :
+  real_to_expr sqrt_ir = Some (EFSqrt (EVar "x")).
+Proof. reflexivity. Qed.
+
+Compute py_function "root" ["x"] (translate (EFSqrt (EVar "x"))).
+
+(** [hyp_len]'s own real captured JSON, [sqrt (rplus (rmult x x) (rmult
+    y y))] -- parsed from text, not hand-built. [[3; 4; 5]] is a real
+    Pythagorean triple, so [hyp_len 3 4 = 5] exactly, no rounding. *)
+Definition hyp_len_decl_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""hyp_len"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""sqrt""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rplus""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rmult""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""x""}]}, {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rmult""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""y""}, {""what"": ""expr:rel"", ""name"": ""y""}]}]}]}}}]}".
+
+Definition hyp_len_decl_parsed : option real_decl := real_decl_of_module_json hyp_len_decl_json "hyp_len".
+
+Example hyp_len_decl_parsed_matches_hand_built :
+  hyp_len_decl_parsed
+  = Some {| rd_argnames := ["x"; "y"];
+            rd_body := RApp1 "sqrt" (RApp2 "rplus" (RApp2 "rmult" (RRel "x") (RRel "x"))
+                                            (RApp2 "rmult" (RRel "y") (RRel "y"))) |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition hyp_len_expr : expr :=
+  match hyp_len_decl_parsed with
+  | Some rd =>
+      match real_to_expr rd.(rd_body) with
+      | Some e => e
+      | None => EFConst 0%float
+      end
+  | None => EFConst 0%float
+  end.
+
+Example hyp_len_expr_matches_expected_value :
+  eval 10 [("x", VFloat 3); ("y", VFloat 4)] hyp_len_expr = Some (VFloat 5).
+Proof. vm_compute. reflexivity. Qed.
+
+Compute py_function "hyp_len" (match hyp_len_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
+  (translate hyp_len_expr).

@@ -59,6 +59,19 @@
     definition is a decidability case split ([Rcase_abs]/[total_order_T])
     this project has no interest in extracting literally.
 
+    [EFSqrt] (square root) calls [PrimFloat.sqrt] directly -- here
+    there is not even an *almost*-right workaround to reject the way
+    [EFOpp]/[EFAbs] each had one: nothing already in this [expr] --
+    built only from [+]/[-]/[*]/[/] -- can compute a square root at
+    all, so a dedicated primitive is not just more exact, it is the
+    only option. Confirmed directly against a real Coquelicot-adjacent
+    probe (["sqrt (x * x + y * y)"]): Coq's own [Reals.R_sqrt.sqrt]
+    extracts as a plain named [sqrt] global call, the same shape
+    [rplus]/[rmult]/[ropp]/[rabs] already have, even though its own
+    Gallina definition goes through [Rsqrt_exists] and a classical
+    completeness argument this project has no interest in extracting
+    literally.
+
     [ERepeat n x body init] is bounded iteration: evaluate [init] to a
     starting value, then apply [body] (with [x] bound to the current
     value) exactly [n] times, [n] a literal [nat] fixed at "compile
@@ -258,6 +271,7 @@ Inductive expr : Type :=
   | EFLe (e1 e2 : expr)
   | EFOpp (e : expr)
   | EFAbs (e : expr)
+  | EFSqrt (e : expr)
   | ERepeat (n : nat) (x : var) (body init : expr)
   | EDiv (e1 e2 : expr)
   | EMod (e1 e2 : expr)
@@ -471,6 +485,11 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       | Some (VFloat f1) => Some (VFloat (PrimFloat.abs f1))
       | _ => None
       end
+  | EFSqrt e1 =>
+      match eval fuel' rho e1 with
+      | Some (VFloat f1) => Some (VFloat (PrimFloat.sqrt f1))
+      | _ => None
+      end
   | ERepeat n x body init =>
       match eval fuel' rho init with
       | Some v0 => iterate n (fun v => eval fuel' ((x, v) :: rho) body) v0
@@ -680,6 +699,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EFLe e1 e2 => andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | EFOpp e1 => expr_idents_valid is_valid_ident e1
   | EFAbs e1 => expr_idents_valid is_valid_ident e1
+  | EFSqrt e1 => expr_idents_valid is_valid_ident e1
   | ERepeat _ x body init =>
       andb (is_valid_ident x)
            (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident init))

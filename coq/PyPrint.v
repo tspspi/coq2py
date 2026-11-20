@@ -262,6 +262,19 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PFLe e1 e2 => "(" ++ py_expr e1 ++ " <= " ++ py_expr e2 ++ ")"
   | PFOpp e1 => "(-" ++ py_expr e1 ++ ")"
   | PFAbs e1 => "abs(" ++ py_expr e1 ++ ")"
+  (* [abs]/unary [-] are Python builtins, no import needed, but square
+     root isn't: [math.sqrt] needs [math] imported, and [py_function]
+     emits a bare [def] with no header/import line to put one in (this
+     file's own pretty-printer has no notion of a statement, only
+     expressions) -- confirmed directly that the tempting import-free
+     alternative, [x ** 0.5], is *wrong* for the same reason [EFOpp]/
+     [EFAbs]'s own workarounds were: [(-0.0) ** 0.5 = 0.0] in real
+     Python, while IEEE-754 sqrt (and [PrimFloat.sqrt]) preserves the
+     sign of zero, giving [-0.0]. [__import__("math").sqrt(...)] is a
+     single self-contained *expression* -- no new statement, no
+     [py_function] header to invent -- confirmed directly to compute
+     the exact same bits as [math.sqrt], sign of zero included. *)
+  | PFSqrt e1 => "__import__(""math"").sqrt(" ++ py_expr e1 ++ ")"
   | PRepeat n x body init =>
       "((" ++ x ++ " := " ++ py_expr init ++ ")"
         ++ py_repeat_steps n x (py_expr body) ++ ", " ++ x ++ ")[-1]"

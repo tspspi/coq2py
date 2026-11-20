@@ -831,6 +831,39 @@ JSON (`rabs (rminus x y)`), parsed, translated, evaluated (`|4 - 10| =
 v1): return abs((v0 - v1))`, confirmed to run correctly under actual
 Python too).
 
+**Done** (`"sqrt"`, Coq's own `Reals.R_sqrt.sqrt`): a fresh probe,
+`hyp_len (x y : R) := sqrt (x * x + y * y)`, confirms `sqrt` extracts
+as a plain unary `expr:apply`/`expr:global "sqrt"` call, the same
+shape `"ropp"`/`"rabs"` already have, even though its own Gallina
+definition goes through `Rsqrt_exists` and a classical completeness
+argument. Unlike `"ropp"`/`"rabs"`, there was not even an
+*almost*-right workaround to reject: nothing already in `expr` --
+built only from `+`/`-`/`*`/`/` -- can compute a square root at all,
+so a dedicated `EFSqrt` (calling `PrimFloat.sqrt` directly) is the
+only way to support this operation, not an exactness refinement.
+Threaded through every layer the same way `EFOpp`/`EFAbs` were
+(`Lang.v`/`PyLang.v`, `Translate.v`, `Json.v`'s `"fsqrt"` tag plus
+parser/round-trip proof, `PyRename.v`'s `rename_pyexpr_correct` case,
+`RealIR.v`'s `RApp1` dispatch and its own preservation proof), with
+one new printing wrinkle specific to this operation: Python's
+`math.sqrt` needs `math` imported, and `py_function` emits a bare
+`def` with no header to put an import in (`PyPrint.v`'s printer has
+no notion of a statement, only expressions), so `PyPrint.v` renders
+`EFSqrt` as the self-contained expression `__import__("math").sqrt(...)`
+instead -- confirmed directly to compute the exact same bits as
+`math.sqrt`, sign of zero included (the importless alternative,
+`x ** 0.5`, was confirmed *wrong* at `x = -0.0`: it gives `+0.0`, not
+`-0.0`, in real Python, while `PrimFloat.sqrt (-0.0) = -0.0` matches
+IEEE-754's sign-preserving sqrt-of-zero rule). `Print Assumptions`
+across every touched theorem shows only `PrimFloat.sqrt` joining the
+pre-existing `PrimFloat` axiom set. `examples/CoquelicotDemo.v`'s
+`hyp_len_decl_json` is the real captured JSON (`sqrt (rplus (rmult x
+x) (rmult y y))`), parsed, translated, evaluated (`hyp_len 3 4 = 5`
+exactly -- a real Pythagorean triple, no rounding), and printed to
+real, checked Python (`def hyp_len(v0, v1): return
+__import__("math").sqrt(((v0 * v0) + (v1 * v1)))`, confirmed to run
+correctly under actual Python too).
+
 Still not done: `R` literals other than small-integer `iZR`; anything
 nested deeper where the error-propagation question above would
 actually start to matter;
