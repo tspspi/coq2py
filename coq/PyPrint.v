@@ -36,6 +36,30 @@
     still-live closure depends on under a different meaning. [py_function]
     below applies it; nothing in this file's own printing logic changed.
 
+    A second CPython-specific evaluation-order question, checked and
+    confirmed *not* to be a second instance of the same class of bug:
+    [PAnd]/[POr] print as Python's own [and]/[or], which short-circuit
+    (skip evaluating the right operand once the left already decides
+    the result) -- while [peval]'s own [PAnd]/[POr] (PyLang.v) are
+    strict, evaluating *both* operands unconditionally and requiring
+    both to succeed. These are not the same evaluation order, but
+    unlike the walrus/closure case above, the mismatch cannot silently
+    change a *result*: whenever [peval] proves [PAnd e1 e2]/[POr e1 e2]
+    evaluates to [Some (VBool b)], both [e1] and [e2] are already known
+    to evaluate to definite booleans, and [andb]/[orb]'s value agrees
+    with what short-circuit evaluation would have produced from the
+    same two (already-known-to-exist) values -- short-circuiting only
+    changes whether Python's runtime *bothers* to evaluate the already-
+    proven-safe right operand, never what boolean it would get if it
+    did. So there is no reachable case where the theorem's premise
+    holds (this pipeline proved the expression evaluates to [v]) and
+    real Python, running the printed [and]/[or] text, computes a
+    *different* [v] -- confirmed by this argument, not left as an
+    unchecked assumption, precisely because a second silent "printing
+    changes what the program computes" bug is exactly what this file's
+    own walrus-scoping fix above exists to rule out, and is worth
+    checking for deliberately rather than assuming away.
+
     Pairs render as real Python tuples ([(a, b)], [e[0]], [e[1]]), and
     booleans as Python's capitalized [True]/[False] literals.
 

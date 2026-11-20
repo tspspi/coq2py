@@ -389,6 +389,24 @@ boundary explicitly declines to attempt for this file -- it's the
 largest *bounded* slice of "verification where possible" that doesn't
 require one.
 
+Also checked, as a second CPython-specific evaluation-order question
+alongside the walrus/closure-capture one the header above already
+fixes: `PAnd`/`POr` print as Python's own `and`/`or`, which
+short-circuit, while `peval`'s own `PAnd`/`POr` are strict (both
+operands evaluated unconditionally, both required to succeed). Unlike
+the walrus case, this is confirmed *not* to be a second instance of
+the same "printing silently changes the result" bug class: whenever
+`peval` proves `PAnd`/`POr` evaluates to `Some (VBool b)`, both
+operands are already known to evaluate to definite booleans, and
+`andb`/`orb`'s value agrees with what short-circuit evaluation would
+have produced from the same two values -- short-circuiting only
+changes whether Python's runtime *bothers* to evaluate the
+already-proven-safe right operand, never what boolean it would
+compute if it did. So there is no reachable case where this pipeline
+proves an expression evaluates to `v` and real Python, running the
+printed `and`/`or` text, computes a *different* `v`. See `PyPrint.v`'s
+header for the full argument.
+
 ## Narrow source and target subsets
 
 `expr`/`pyexpr` currently cover: integer, boolean, and float constants,
