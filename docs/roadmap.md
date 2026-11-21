@@ -35,6 +35,54 @@ existing convention):
    shape, validate the induction/fuel approach in an isolated prototype
    the way `ERecordN` was first proven in a throwaway file before
    touching `Lang.v`/`Translate.v`/`Json.v` for real).
+
+   **Sub-step done** (isolated prototype, not committed to `coq/` — a
+   throwaway file, same convention as `ERecordN`'s own first validation):
+   a minimal standalone source/target pair (`EArrConst (es : list expr)`/
+   `EArrGet (arr idx : expr)`/`EArrSet (arr idx val : expr)`, a
+   `VArray (vs : list value)` backed by McCarthy-style functional
+   get/set — deliberately *not* real aliasing/mutation, which stays
+   explicitly out of scope per the paragraph above) confirms the
+   strong-induction-on-`expr_size`/`well_founded_induction lt_wf`
+   technique `ERecordN`/`RRecordN` already established scales cleanly to
+   an indexed (not just structural Nil/Cons) list-backed construct, and
+   that `translate`'s preservation proof for it needs **zero new
+   axioms** (confirmed: `Print Assumptions` reports "Closed under the
+   global context") — unsurprising since `EArrGet`/`EArrSet` are pure
+   list manipulation (`nth_error`/`firstn`/`skipn`), not a new numeric
+   primitive. One proof wrinkle worth recording: `simpl`/`cbn` one-step-
+   unfolds `skipn (S n) l` into a bare `match l with ... end` (the exact
+   "simpl over-unfolds a recursive call" gotcha
+   `coq_rewrite_anonymous_fix_mismatch` already documents for a
+   different function) — fixed with a one-line refold lemma
+   (`match l with [] => [] | _::l' => skipn n l' end = skipn (S n) l`,
+   by `destruct l; reflexivity`) rather than fighting `simpl`'s
+   unfolding depth a second way.
+
+   **What this does *not* yet de-risk, confirmed by inspection before
+   starting the real multi-file landing** (so the next session doesn't
+   rediscover this the hard way): every past `expr`/`pyexpr`-growing
+   feature "touched every layer" for a structural reason, not a
+   stylistic one — `expr` is matched exhaustively in `Lang.v` (`eval`,
+   `expr_idents_valid`), `Translate.v` (`translate`), and `Json.v`
+   (`print_expr`, plus `parse_expr`'s own grammar and the
+   `parse_print_roundtrip` theorem that is historically the single
+   hardest proof per past feature, per this file's own history); growing
+   `pyexpr`/`pyvalue` additionally ripples into `PyPrint.v` (`py_expr`),
+   and — the real cost center for *this* feature specifically —
+   `PyRename.v`, which is not small (`rename_pyexpr`, `pyexpr_size`,
+   `pyexpr_recgroup_ok`, and a multi-thousand-line
+   `rename_pyexpr_correct` theorem with its own `value_corr`/
+   `pyval_opt_corr` family). `ENone`/`ESome`'s own landing is the
+   closest precedent: growing `value`/`pyvalue` by two constructors
+   there needed fixing "~90 existing value-destructuring proof
+   patterns across `Translate.v`/`RealIR.v`" (see this file's `option`
+   entry below) — a new array value shape should expect a comparable
+   ripple through `PyRename.v`'s own value-shaped hypotheses, on top of
+   its own new rendering/renaming/size cases. None of this blocks
+   starting; it sizes the next real commit honestly so it isn't
+   attempted as a quick addition and abandoned half-done partway
+   through a file that must stay fully proving.
 2. **RealIR.v ingestion-side gaps**: extend the real-`coqc`-JSON
    recognizer to modules/typeclasses, then coinductives — the same
    incremental, confirm-directly-against-a-fresh-probe methodology every
