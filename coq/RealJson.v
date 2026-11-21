@@ -1639,6 +1639,34 @@ Definition resolve_intrinsic_name (types : list (string * jvalue)) (fname : stri
     not an [expr:rel], since the function is not a local binder from
     the body's own point of view), recognized here as [RSelf] only
     when that name matches [self]. *)
+(** [find_record_field_name]: scans a [pat:constructor]'s raw
+    [argnames] list (as [jvalue]s, expected all [JString]) for the
+    *one* non-["_"] entry, requiring every other entry to be ["_"] --
+    the general, any-length version of the fixed-arity ["_"]/[x]
+    shapes [real_case_of_json]'s own 2- and 3-field patterns already
+    match literally. Returns the field's own name, its 0-indexed
+    position ([nskip], directly usable by [RProjN]), and whether it
+    is the list's *last* entry. [None] if the list isn't shaped this
+    way at all (no non-["_"] entry, more than one, or a non-[JString]
+    member). *)
+Fixpoint all_underscore (js : list jvalue) : bool :=
+  match js with
+  | [] => true
+  | JString "_" :: rest => all_underscore rest
+  | _ => false
+  end.
+
+Fixpoint find_record_field_name (idx : nat) (js : list jvalue) : option (string * nat * bool) :=
+  match js with
+  | [] => None
+  | JString "_" :: rest => find_record_field_name (S idx) rest
+  | JString y :: rest =>
+      if all_underscore rest
+      then Some (y, idx, match rest with [] => true | _ => false end)
+      else None
+  | _ => None
+  end.
+
 Definition is_rel_named (bodyj : jvalue) (x : string) : bool :=
   match bodyj with
   | JObject fs =>
@@ -1689,11 +1717,32 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (types : li
               | Some a' => Some (RSome a')
               | None => None
               end
-          | _, Some (JArray [a; b; c]) =>
-              (* a 3-argument record constructor, any name -- RRecord3 *)
-              match real_expr_of_json self siblings types fuel' a, real_expr_of_json self siblings types fuel' b,
-                    real_expr_of_json self siblings types fuel' c with
-              | Some a', Some b', Some c' => Some (RRecord3 a' b' c')
+          | _, Some (JArray (a :: b :: rest)) =>
+              (* a genuinely N-ary record constructor (N >= 2 fields),
+                 any name not already recognized above -- RRecordN,
+                 the general replacement for the old "exactly 3"
+                 RRecord3 fallback, which *also* fixes a real gap the
+                 2-arg case above had: a real 2-field [Record]'s own
+                 constructor is *not* named "Pair" the way a genuine
+                 tuple's is (confirmed directly -- a real [Record
+                 point := mkpoint { px py : Z }.] extracts its
+                 constructor literally named ["Mkpoint"]), so before
+                 this fallback existed, any 2-field [Record] whose
+                 constructor happened not to be named "Pair" was
+                 silently unrecognized. *)
+              match real_expr_of_json self siblings types fuel' a,
+                    real_expr_of_json self siblings types fuel' b,
+                    (fix go (js : list jvalue) : option (list real_expr) :=
+                       match js with
+                       | [] => Some []
+                       | j' :: rest' =>
+                           match real_expr_of_json self siblings types fuel' j', go rest' with
+                           | Some e', Some es' => Some (e' :: es')
+                           | _, _ => None
+                           end
+                       end) rest
+              with
+              | Some a', Some b', Some rest' => Some (RRecordN (a' :: b' :: rest'))
               | _, _, _ => None
               end
           | _, _ => None
@@ -1863,6 +1912,17 @@ with real_case_of_json (self : option var) (siblings : list var) (types : list (
                   if is_rel_named bodyj x then Some (RProj3_2 scrutinee) else None
               | Some _, Some (JArray [JString "_"; JString "_"; JString x]) =>
                   if is_rel_named bodyj x then Some (RProj3_3 scrutinee) else None
+              | Some _, Some (JArray args) =>
+                  (* genuinely N-ary field access (N >= 2, any field
+                     position), any name not already matched by the
+                     fixed-arity cases above -- RProjN, the general
+                     replacement for RProj1/RProj2/RProj3_1/RProj3_2/
+                     RProj3_3's own one-arity-at-a-time pattern. *)
+                  match find_record_field_name 0 args with
+                  | Some (x, nskip, last) =>
+                      if is_rel_named bodyj x then Some (RProjN nskip last scrutinee) else None
+                  | None => None
+                  end
               | _, _ => None
               end
           | _, _ => None

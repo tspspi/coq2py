@@ -353,11 +353,11 @@ proven claim that real `coqc`-extracted terms actually print through
 What `RealIR.v`/`RealJson.v` deliberately does *not* yet do, in
 roughly the order they'd be needed next:
 
-- Broaden the recognized intrinsic set further: genuinely *N-ary*
-  `Record`s/mutual-recursion groups specifically (an `ERecordN`-style
-  recognizer that works for *any* field count, not one more fixed
-  arity at a time the way `RRecord3` above is one more instance of the
-  nested-pair workaround).
+- ~~Broaden the recognized intrinsic set further: genuinely *N-ary*
+  `Record`s/mutual-recursion groups specifically~~ -- **done**, see
+  this section's own entry below (`RRecordN`/`RProjN`, plus a real
+  3-member `decl:fixgroup` confirming the mutual-recursion side of
+  this was never actually capped).
 - ~~Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
   disambiguation~~ -- **done**, see this section's own entry above
   (`resolve_intrinsic_name`, type-based, not by controlling the
@@ -397,6 +397,87 @@ Python (`def default_zero(v0): return (0 if (v0)[0] == "none" else
 ((v1 := (v0)[1]), v1)[-1])`, `def wrap_positive(v0): return (("none",)
 if (v0 < 0) else ("some", v0))`), confirmed to run correctly under
 actual Python too.
+
+**Done** (genuinely N-ary records in the *real* recognizer): `RRecordN
+(es : list real_expr)`/`RProjN (nskip : nat) (last : bool) (scrutinee
+: real_expr)` generalize `RRecord3`/`RProj3_1`/`RProj3_2`/`RProj3_3`
+(and the 2-field `RPair`/`RProj1`/`RProj2`) to *any* field count,
+confirmed directly still working unchanged at 5 fields (a real
+`Record point5 := mkpoint5 { ... 5 Z fields ... }.`): construction is
+still a plain N-arg `expr:constructor` (just more args), and field
+access is still a 1-case `expr:case` with an N-name `argnames` list,
+all but one `"_"`. `RProjN`'s own `nskip`/`last` are exactly `RProj3_1`/
+`RProj3_2`/`RProj3_3`/`RProj1`/`RProj2`'s own shapes generalized (one
+`ESnd` skip per field position before the target, one final `EFst`
+unless it's the list's last field) -- confirmed by recomputing each of
+those four by hand against the general formula before trusting it.
+Translating this needed no new `Lang.v`/`PyLang.v`/`Translate.v`/
+`Json.v`/`PyPrint.v`/`PyRename.v` constructor at all: `RRecordN`/
+`RProjN` translate into the same `EPair`/`EFst`/`ESnd` nested-pair
+chain `RRecord3` already built, just over a list instead of 3 fixed
+fields -- a `RealIR.v`-only change. The one genuine proof wrinkle:
+`induction re`'s auto-generated induction hypothesis has nothing at
+all to say about a nested `list real_expr` field's own elements
+(confirmed directly by inspecting the open goal -- no `Forall`-shaped
+hypothesis, just the list itself), the same obstacle the `Lang.v`-level
+`ERecordN`/`ERecGroup` work (next section) already solved once via an
+*outer* strong induction on a fuel/depth measure -- but wrapping
+`real_to_expr_preserves_semantics` in that same `Hstrong`/
+`well_founded_induction lt_wf` shell broke all ~30 of its *other*,
+already-proven bullets at once (confirmed directly: introducing the
+depth bound before `induction re` made `induction re` revert it back
+into every bullet's own `IHre`, changing its type), so this proof
+reaches for a different, less invasive tool instead: `fix SELF 1`,
+Coq's tactic-mode self-reference (the equivalent of writing this
+theorem as a `Fixpoint`), opened once at the very top and otherwise
+inert -- every pre-existing bullet keeps using its own untouched
+`induction re`-supplied IH exactly as before, and only `RRecordN`'s
+new bullet reaches for `SELF` on each list element in turn (via a
+fresh, local induction over the list), relying on `fix`'s own
+guardedness check being more permissive than a plain `Fixpoint`'s
+anonymous nested `fix` for this exact "element reached through a
+separate nested list induction" shape (confirmed directly: the same
+shape that blocked `real_eval`/`real_to_expr`/`real_expr_depth`'s own
+`RRecordN` cases, which *do* need the mutual-helper/guard workarounds
+the next section's own bullet points describe, is accepted without
+complaint for a `fix`-tactic self-reference). `Print Assumptions`
+confirms no new axioms. Along the way, fixed a real, pre-existing gap
+in the 2-field case too: the old recognizer only matched a 2-arg
+constructor literally named `"Pair"`, so a genuine 2-field `Record`
+(whose constructor is named after its own declaration, e.g.
+`"Mkpoint"`, not `"Pair"` -- confirmed directly) was silently
+unrecognized; the new, uniformly-any-arity-and-name `RRecordN`
+fallback closes that too. `examples/NaturalCoq.v`'s `mk5`/`getz5` (a
+real 5-field `Record`, the 3rd-of-5 field) are the worked instance,
+checked both ways: against the real Gallina definitions, round-tripped,
+*and* parsed from the real captured JSON text (not just hand-built IR
+matched by eye), printed to real, checked Python (`def mk5(v0, v1, v2,
+v3, v4): return (v0, (v1, (v2, (v3, v4))))`, `def getz5(v0): return
+(((v0)[1])[1])[0]`), confirmed to run correctly under actual Python.
+
+**Done** (confirming the mutual-recursion side was never actually
+capped): `RealJson.v`'s `decl_fixgroup_of_json`/
+`real_fix_group_decl_of_module_json` (landed alongside `RCall`) never
+had an arity cap in the code -- it iterates over a `decl:fixgroup`'s
+whole `fixlist`, whatever its length -- but had only ever been
+exercised, in any committed example, against a real captured *2*-member
+group (`alt_from_true`/`alt_from_false`). "The code has no hardcoded
+cap" and "a real 3+-way group has actually been run through it" are
+different claims; only the first had been checked. Closed here, for
+real: a genuine 3-way *cyclic* mutually-recursive group (`cycle_a`
+calls `cycle_b` calls `cycle_c` calls `cycle_a`), run through `coqc`/
+`Extraction Language JSON` during this session, confirmed to produce a
+real captured `decl:fixgroup` with *three* `fixgroup:item`s, each
+member's own cross-call the same ordinary `expr:apply`/`expr:global
+<next member>` shape the 2-member group already had -- parsed by
+`real_fix_group_decl_of_module_json` into exactly the hand-built
+`real_fix_group_decl` `examples/NaturalCoq.v`'s `cycle3_decl` already
+builds, found correctly starting from *any* of the three members' own
+names (not just the first one listed), and run end to end through
+`ERecGroup`/`translate`/real Python, confirmed on concrete lists both
+through the member reached directly and through a cross-call to a
+*different* member. No code changes were needed for this one -- the
+gap was in what had been checked, not in what had been built.
 
 ## The N-field-record/mutual-recursion arity caps are liftable -- landed
 

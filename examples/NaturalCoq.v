@@ -38,7 +38,15 @@
     extracts as the *disambiguated* name ["add0"], not the bare
     ["add"] every earlier Z-arithmetic example in this file happened
     to get, because [positive]'s own internal [add] claims the bare
-    name first in *this* module's declaration order.
+    name first in *this* module's declaration order. A twelfth,
+    [default_zero]/[wrap_positive]: a real Coq [option] both ways
+    (matching [None]/[Some v], and constructing either), recognized
+    via [RealIR.v]'s [RNone]/[RSome]/[ROptionMatch]. A thirteenth,
+    [point5]'s [mk5]/[getz5]: a real *5*-field [Record] (Example 8's
+    3-field [point3] grown further), recognized via [RealIR.v]'s
+    genuinely N-ary [RRecordN]/[RProjN] -- replacing [RRecord3]'s own
+    one-arity-at-a-time pattern, and along the way fixing a real gap
+    the 2-field case had (`RealJson.v`'s own header on this).
 
     [clamp_nonneg] below is not invented for this file: it is exactly
     what was typed into a throwaway [.v] file and run through
@@ -1507,4 +1515,388 @@ Definition wrap_positive_decl_parsed : option real_decl :=
 Example wrap_positive_decl_parsed_matches_hand_built :
   wrap_positive_decl_parsed
   = Some {| rd_argnames := ["x"]; rd_body := wrap_positive_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ----------------------------------------------------------------- *)
+(** * A thirteenth example: a real 5-field Record (genuinely N-ary) *)
+
+(** A thirteenth genuine, human-written Coq definition -- Example 8's
+    [point3] grown to 5 fields -- also run through [coqc]/[Extraction
+    Language JSON] during this session: *)
+Record point5 := mkpoint5 { rx5 : Z; ry5 : Z; rz5 : Z; rw5 : Z; rv5 : Z }.
+
+Definition mk5 (a b c d e : Z) : point5 := mkpoint5 a b c d e.
+Definition getz5 (p : point5) : Z := rz5 p.
+
+(** What Coq's real extraction emitted for [mk5]/[getz5], captured
+    verbatim ([point5]'s own [decl:ind] declares [Mkpoint5] with 5 [z]
+    fields, unremarkable and omitted here): construction is a plain
+    5-arg [expr:constructor] (Example 8's 3-arg [Mkpoint3] shape, just
+    with two more arguments -- confirmed directly that the encoding
+    keeps working unchanged, not just claimed), and field access
+    ([rz5 p], the 3rd of 5) is still a 1-case [expr:case] whose
+    [argnames] binds exactly the accessed field to a real name, every
+    other one to ["_"]:
+
+    [[
+    {
+      "what": "decl:term", "name": "mk5", "type": { ... 5 z's -> point5 ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["a", "b", "c", "d", "e"],
+        "body": {
+          "what": "expr:constructor", "name": "Mkpoint5",
+          "args": [
+            {"what":"expr:rel","name":"a"}, {"what":"expr:rel","name":"b"},
+            {"what":"expr:rel","name":"c"}, {"what":"expr:rel","name":"d"},
+            {"what":"expr:rel","name":"e"}
+          ]
+        }
+      }
+    }
+    {
+      "what": "decl:term", "name": "getz5", "type": { ... point5 -> z ... },
+      "value": {
+        "what": "expr:lambda", "argnames": ["p"],
+        "body": {
+          "what": "expr:case", "expr": {"what":"expr:rel","name":"p"},
+          "cases": [
+            { "pat": {"name":"Mkpoint5","argnames":["_","_","rz5","_","_"]},
+              "body": {"what":"expr:rel","name":"rz5"} }
+          ]
+        }
+      }
+    }
+    ]]
+
+    -- [mk5_ir]/[getz5_ir] are those JSON trees, written by hand:
+    [Mkpoint5]'s 5-arg construction becomes [RealIR.v]'s new, genuinely
+    N-ary [RRecordN] (not one more fixed-arity [RRecord3]/[RRecord5]
+    pair), and field access becomes [RProjN] with the field's own
+    0-indexed position as [nskip] and whether it is the list's last
+    entry as [last] -- here, [rz5] is the 3rd of 5 (0-indexed 2), not
+    the last, so [nskip := 2], [last := false]. *)
+Definition mk5_ir : real_expr :=
+  RRecordN [RRel "a"; RRel "b"; RRel "c"; RRel "d"; RRel "e"].
+
+Definition getz5_ir : real_expr :=
+  RProjN 2 false (RRel "p").
+
+Example mk5_ir_matches_real_definition :
+  forall a b c d e : Z,
+    real_eval [("a", VZ a); ("b", VZ b); ("c", VZ c); ("d", VZ d); ("e", VZ e)] mk5_ir
+      = Some (VPair (VZ a) (VPair (VZ b) (VPair (VZ c) (VPair (VZ d) (VZ e))))).
+Proof. reflexivity. Qed.
+
+Example getz5_ir_matches_real_definition :
+  forall a b c d e : Z,
+    real_eval [("p", VPair (VZ a) (VPair (VZ b) (VPair (VZ c) (VPair (VZ d) (VZ e)))))] getz5_ir
+      = Some (VZ c).
+Proof. reflexivity. Qed.
+
+Definition mk5_expr : expr :=
+  match real_to_expr mk5_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: mk5_ir is in the recognized fragment *)
+  end.
+
+Example mk5_ir_translates : real_to_expr mk5_ir = Some mk5_expr.
+Proof. reflexivity. Qed.
+
+Example mk5_expr_matches_real_definition :
+  forall a b c d e : Z,
+    eval 10 [("a", VZ a); ("b", VZ b); ("c", VZ c); ("d", VZ d); ("e", VZ e)] mk5_expr
+      = Some (VPair (VZ a) (VPair (VZ b) (VPair (VZ c) (VPair (VZ d) (VZ e))))).
+Proof.
+  intros a b c d e.
+  rewrite (real_to_expr_preserves_semantics mk5_ir mk5_expr
+             mk5_ir_translates 10
+             [("a", VZ a); ("b", VZ b); ("c", VZ c); ("d", VZ d); ("e", VZ e)]
+             ltac:(simpl; lia)).
+  apply mk5_ir_matches_real_definition.
+Qed.
+
+Definition getz5_expr : expr :=
+  match real_to_expr getz5_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: getz5_ir is in the recognized fragment *)
+  end.
+
+Example getz5_ir_translates : real_to_expr getz5_ir = Some getz5_expr.
+Proof. reflexivity. Qed.
+
+Example getz5_expr_matches_real_definition :
+  forall a b c d e : Z,
+    eval 10 [("p", VPair (VZ a) (VPair (VZ b) (VPair (VZ c) (VPair (VZ d) (VZ e)))))] getz5_expr
+      = Some (VZ c).
+Proof.
+  intros a b c d e.
+  rewrite (real_to_expr_preserves_semantics getz5_ir getz5_expr
+             getz5_ir_translates 10
+             [("p", VPair (VZ a) (VPair (VZ b) (VPair (VZ c) (VPair (VZ d) (VZ e)))))]
+             ltac:(simpl; lia)).
+  apply getz5_ir_matches_real_definition.
+Qed.
+
+Theorem mk5_idents_valid : expr_idents_valid is_valid_ident mk5_expr = true.
+Proof. reflexivity. Qed.
+
+Theorem getz5_idents_valid : expr_idents_valid is_valid_ident getz5_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr mk5_expr.
+Compute print_expr getz5_expr.
+
+Corollary mk5_json_roundtrip :
+  parse_expr_top (print_expr mk5_expr) = Some (mk5_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip mk5_expr mk5_idents_valid
+                (String.length (print_expr mk5_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H. exact H.
+Qed.
+
+Corollary getz5_json_roundtrip :
+  parse_expr_top (print_expr getz5_expr) = Some (getz5_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip getz5_expr getz5_idents_valid
+                (String.length (print_expr getz5_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H. exact H.
+Qed.
+
+Corollary mk5_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate mk5_expr)
+      = option_map value_to_pyvalue (eval fuel rho mk5_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Corollary getz5_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate getz5_expr)
+      = option_map value_to_pyvalue (eval fuel rho getz5_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+(** The generated Python: the same nested-tuple shape [swap_xz]'s own
+    3-field version already renders, two levels deeper. *)
+Compute py_function "mk5" ["a"; "b"; "c"; "d"; "e"] (translate mk5_expr).
+Compute py_function "getz5" ["p"] (translate getz5_expr).
+
+(** Run for real:
+
+    [[
+    >>> mk5(1, 2, 3, 4, 5)
+    (1, (2, (3, (4, 5))))
+    >>> getz5((1, (2, (3, (4, 5)))))
+    3
+    ]]
+*)
+
+(* ------------------------------------------------------------------ *)
+(** * Parsed from the real JSON text, not hand-built *)
+
+(** [mk5]'s own real captured JSON (the whole small module, [point5]'s
+    own [decl:ind] included this time since it is short). *)
+Definition mk5_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": false, ""used_modules"": [], ""declarations"": [{""what"": ""decl:ind"", ""name"": ""positive"", ""argnames"": [], ""constructors"": [{""name"": ""XI"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}, {""name"": ""XO"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}, {""name"": ""XH"", ""argtypes"": []}]}, {""what"": ""decl:ind"", ""name"": ""z"", ""argnames"": [], ""constructors"": [{""name"": ""Z0"", ""argtypes"": []}, {""name"": ""Zpos"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}, {""name"": ""Zneg"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}]}, {""what"": ""decl:ind"", ""name"": ""point5"", ""argnames"": [], ""constructors"": [{""name"": ""Mkpoint5"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}]}]}, {""what"": ""decl:term"", ""name"": ""mk5"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""point5"", ""args"": []}}}}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""a"", ""b"", ""c"", ""d"", ""e""], ""body"": {""what"": ""expr:constructor"", ""name"": ""Mkpoint5"", ""args"": [{""what"": ""expr:rel"", ""name"": ""a""}, {""what"": ""expr:rel"", ""name"": ""b""}, {""what"": ""expr:rel"", ""name"": ""c""}, {""what"": ""expr:rel"", ""name"": ""d""}, {""what"": ""expr:rel"", ""name"": ""e""}]}}}]}".
+
+Definition mk5_decl_parsed : option real_decl :=
+  real_decl_of_module_json mk5_module_json "mk5".
+
+Example mk5_decl_parsed_matches_hand_built :
+  mk5_decl_parsed
+  = Some {| rd_argnames := ["a"; "b"; "c"; "d"; "e"]; rd_body := mk5_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+(** [getz5]'s own real captured JSON. *)
+Definition getz5_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": false, ""used_modules"": [], ""declarations"": [{""what"": ""decl:ind"", ""name"": ""positive"", ""argnames"": [], ""constructors"": [{""name"": ""XI"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}, {""name"": ""XO"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}, {""name"": ""XH"", ""argtypes"": []}]}, {""what"": ""decl:ind"", ""name"": ""z"", ""argnames"": [], ""constructors"": [{""name"": ""Z0"", ""argtypes"": []}, {""name"": ""Zpos"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}, {""name"": ""Zneg"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""positive"", ""args"": []}]}]}, {""what"": ""decl:ind"", ""name"": ""point5"", ""argnames"": [], ""constructors"": [{""name"": ""Mkpoint5"", ""argtypes"": [{""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}]}]}, {""what"": ""decl:term"", ""name"": ""getz5"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""point5"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""p""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""p""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Mkpoint5"", ""argnames"": [""_"", ""_"", ""rz5"", ""_"", ""_""]}, ""body"": {""what"": ""expr:rel"", ""name"": ""rz5""}}]}}}]}".
+
+Definition getz5_decl_parsed : option real_decl :=
+  real_decl_of_module_json getz5_module_json "getz5".
+
+Example getz5_decl_parsed_matches_hand_built :
+  getz5_decl_parsed
+  = Some {| rd_argnames := ["p"]; rd_body := getz5_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+(* ----------------------------------------------------------------- *)
+(** * A fourteenth example: a genuine 3-way mutually-recursive group *)
+
+(** [decl_fixgroup_of_json]/[real_fix_group_decl_of_module_json] (the
+    general N-way machinery landed alongside [RCall], confirmed
+    against a real captured 2-member group above by [alt_from_true]/
+    [alt_from_false]) was never exercised on a real captured group of
+    *more than 2* members in any committed example -- nothing in the
+    code is actually capped at 2 ([decl_fixgroup_of_json] iterates
+    over the whole [fixlist], whatever its length), but "the code has
+    no hardcoded cap" and "a real 3+-way group has actually been run
+    through it" are different claims, and only the first one had been
+    checked. Closed here, for real: a genuine 3-way cyclic group, also
+    run through [coqc]/[Extraction Language JSON] during this
+    session. *)
+Fixpoint cycle_a (l : list bool) : bool :=
+  match l with
+  | nil => true
+  | b :: rest => if b then cycle_b rest else false
+  end
+with cycle_b (l : list bool) : bool :=
+  match l with
+  | nil => true
+  | b :: rest => if b then cycle_c rest else false
+  end
+with cycle_c (l : list bool) : bool :=
+  match l with
+  | nil => true
+  | b :: rest => if b then cycle_a rest else false
+  end.
+
+(** What Coq's real extraction emitted for it, captured verbatim: one
+    [decl:fixgroup] whose [fixlist] now has *three* [fixgroup:item]s
+    (not two, the way [alt_from_true]/[alt_from_false]'s own group
+    did), each member's recursive call -- [cycle_a]'s call to
+    [cycle_b], [cycle_b]'s to [cycle_c], [cycle_c]'s back to [cycle_a]
+    -- an ordinary [expr:apply] of [expr:global <the next member's
+    name>], confirming the cross-call shape generalizes past 2 members
+    exactly the way the design already claimed:
+
+    [[
+    { "what": "decl:fixgroup", "fixlist": [
+      { "what": "fixgroup:item", "name": "cycle_a", "value": { "argnames": ["l"],
+        "body": { "what": "expr:case", "expr": {"name":"l"}, "cases": [
+          {"pat": {"name":"Nil","argnames":[]}, "body": {"name":"True"}},
+          {"pat": {"name":"Cons","argnames":["b","rest"]},
+           "body": { "what": "expr:case", "expr": {"name":"b"}, "cases": [
+             {"pat": {"name":"True"}, "body": {
+                "what":"expr:apply", "func":{"name":"cycle_b"},
+                "args":[{"name":"rest"}]}},
+             {"pat": {"name":"False"}, "body": {"name":"False"}}
+           ]}}
+        ]}}},
+      { "what": "fixgroup:item", "name": "cycle_b", (* symmetric: calls cycle_c *) },
+      { "what": "fixgroup:item", "name": "cycle_c", (* symmetric: calls cycle_a *) }
+    ]}
+    ]]
+
+    -- [cycle_a_ir]/[cycle_b_ir]/[cycle_c_ir] below are those three
+    [fixgroup:item]s' bodies, written by hand: each outer [expr:case]
+    on [l] becomes [RListMatch], the inner one on [b] becomes
+    [RIfBool], and each recursive [expr:apply]/[expr:global <next
+    member>] becomes [RCall <next member> ...] -- never [RSelf],
+    since (just as with the 2-member group) no member here ever calls
+    itself directly. *)
+Definition cycle_a_ir : real_expr :=
+  RListMatch (RRel "l") (RBoolLit true) "b" "rest"
+    (RIfBool (RRel "b") (RCall "cycle_b" (RRel "rest")) (RBoolLit false)).
+
+Definition cycle_b_ir : real_expr :=
+  RListMatch (RRel "l") (RBoolLit true) "b" "rest"
+    (RIfBool (RRel "b") (RCall "cycle_c" (RRel "rest")) (RBoolLit false)).
+
+Definition cycle_c_ir : real_expr :=
+  RListMatch (RRel "l") (RBoolLit true) "b" "rest"
+    (RIfBool (RRel "b") (RCall "cycle_a" (RRel "rest")) (RBoolLit false)).
+
+Definition cycle3_decl : real_fix_group_decl :=
+  mk_real_fix_group_decl
+    [("cycle_a", "l", cycle_a_ir);
+     ("cycle_b", "l", cycle_b_ir);
+     ("cycle_c", "l", cycle_c_ir)].
+
+(** Translating into our existing, already-proven [expr] subset:
+    [real_fix_group_decl_to_expr] lands on [Lang.v]'s [ERecGroup], the
+    same target the 2-member group already used -- nothing new needed
+    below this line, and nothing about [ERecGroup]'s own proof cares
+    how many members are in the group. *)
+Definition cycle3_expr : expr :=
+  match real_fix_group_decl_to_expr cycle3_decl with
+  | Some e => e
+  | None => EConst 0 (* unreachable: the decl above is in the recognized fragment *)
+  end.
+
+Example cycle3_decl_translates :
+  real_fix_group_decl_to_expr cycle3_decl = Some cycle3_expr.
+Proof. reflexivity. Qed.
+
+Theorem cycle3_idents_valid :
+  expr_idents_valid is_valid_ident cycle3_expr = true.
+Proof. reflexivity. Qed.
+
+(** Each of the three members is picked out of the group with
+    [EFieldN], the same accessor [alt_from_true]/[alt_from_false]
+    already use -- checked against the real Gallina definitions the
+    same concrete-instance way: [[true; true; true]] cycles through
+    all three members once each before landing on [Nil], staying
+    [true]; [[true; false]] goes [cycle_a] -> [cycle_b] and stops
+    [false] there. *)
+Example cycle_a_expr_matches_real_definition :
+  eval 20 [] (EApp (EFieldN "cycle_a" cycle3_expr)
+                (ECons (EBool true) (ECons (EBool true) (ECons (EBool true) ENil))))
+    = Some (VBool (cycle_a [true; true; true])).
+Proof. reflexivity. Qed.
+
+Example cycle_a_expr_rejects_a_false :
+  eval 20 [] (EApp (EFieldN "cycle_a" cycle3_expr)
+                (ECons (EBool true) (ECons (EBool false) ENil)))
+    = Some (VBool (cycle_a [true; false])).
+Proof. reflexivity. Qed.
+
+(** The *other two* members, reached by [EFieldN "cycle_b"]/
+    [EFieldN "cycle_c"] instead -- genuinely exercising both
+    cross-calls, not just the one member reached directly, confirming
+    [ERecGroup]'s environment reconstruction wires up *every* sibling
+    for a 3-member group too, not just two. *)
+Example cycle_b_expr_matches_real_definition :
+  eval 20 [] (EApp (EFieldN "cycle_b" cycle3_expr)
+                (ECons (EBool true) (ECons (EBool true) (ECons (EBool false) ENil))))
+    = Some (VBool (cycle_b [true; true; false])).
+Proof. reflexivity. Qed.
+
+Example cycle_c_expr_matches_real_definition :
+  eval 20 [] (EApp (EFieldN "cycle_c" cycle3_expr)
+                (ECons (EBool true) (ECons (EBool true) (ECons (EBool true) ENil))))
+    = Some (VBool (cycle_c [true; true; true])).
+Proof. reflexivity. Qed.
+
+Corollary cycle3_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate cycle3_expr)
+      = option_map value_to_pyvalue (eval fuel rho cycle3_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Compute py_function "cycle3" [] (translate cycle3_expr).
+
+Compute py_function "cycle_a" ["l"]
+  (translate (EApp (EFieldN "cycle_a" cycle3_expr) (EVar "l"))).
+
+(* ----------------------------------------------------------------- *)
+(** * Parsed from the real JSON text, not hand-built *)
+
+(** [cycle_a]/[cycle_b]/[cycle_c]'s own real captured JSON -- the
+    first real, captured *3*-member [decl:fixgroup] this file's own
+    [decl_fixgroup_of_json]/[real_fix_group_decl_of_module_json] is
+    run against, closing the gap the header comment above flags. *)
+Definition cycle3_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": false, ""used_modules"": [], ""declarations"": [{""what"": ""decl:ind"", ""name"": ""bool"", ""argnames"": [], ""constructors"": [{""name"": ""True"", ""argtypes"": []}, {""name"": ""False"", ""argtypes"": []}]}, {""what"": ""decl:ind"", ""name"": ""list"", ""argnames"": [""A""], ""constructors"": [{""name"": ""Nil"", ""argtypes"": []}, {""name"": ""Cons"", ""argtypes"": [{""what"": ""type:var"", ""name"": ""A""}, {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:var"", ""name"": ""A""}]}]}]}, {""what"": ""decl:fixgroup"", ""fixlist"": [{""what"": ""fixgroup:item"", ""name"": ""cycle_a"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}]}, ""right"": {""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""l""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""l""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Nil"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""True"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Cons"", ""argnames"": [""b"", ""rest""]}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""b""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""cycle_b""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""rest""}]}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""False"", ""args"": []}}]}}]}}}, {""what"": ""fixgroup:item"", ""name"": ""cycle_b"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}]}, ""right"": {""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""l""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""l""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Nil"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""True"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Cons"", ""argnames"": [""b"", ""rest""]}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""b""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""cycle_c""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""rest""}]}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""False"", ""args"": []}}]}}]}}}, {""what"": ""fixgroup:item"", ""name"": ""cycle_c"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""list"", ""args"": [{""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}]}, ""right"": {""what"": ""type:glob"", ""name"": ""bool"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""l""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""l""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Nil"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""True"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Cons"", ""argnames"": [""b"", ""rest""]}, ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""b""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""cycle_a""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""rest""}]}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""False"", ""args"": []}}]}}]}}}]}]}".
+
+Definition cycle3_group_parsed : option real_fix_group_decl :=
+  real_fix_group_decl_of_module_json cycle3_module_json "cycle_a".
+
+Example cycle3_group_parsed_matches_hand_built :
+  cycle3_group_parsed = Some cycle3_decl.
+Proof. vm_compute. reflexivity. Qed.
+
+(** The exact same group, found starting from each of its *other* two
+    members' names instead -- confirming [find_fixgroup_by_member_name]
+    finds the whole 3-member group regardless of which member's name
+    is given, not just the first one listed. *)
+Example cycle3_group_parsed_from_b :
+  real_fix_group_decl_of_module_json cycle3_module_json "cycle_b"
+    = Some cycle3_decl.
+Proof. vm_compute. reflexivity. Qed.
+
+Example cycle3_group_parsed_from_c :
+  real_fix_group_decl_of_module_json cycle3_module_json "cycle_c"
+    = Some cycle3_decl.
 Proof. vm_compute. reflexivity. Qed.

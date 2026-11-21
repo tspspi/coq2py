@@ -212,6 +212,89 @@
     needs an extra `S` for those two, and the proof needs a second
     [destruct fuel] step to match. *)
 
+(** [RRecordN]/[RProjN]: [RRecord3]/[RProj3_1]/[RProj3_2]/[RProj3_3]
+    generalized to genuinely *any* field count, not one more hardcoded
+    arity at a time (`docs/roadmap.md`'s own "liftable" item on this).
+    Confirmed directly that the nested-pair encoding keeps working
+    unchanged at 5 fields: a real [Record point5 := mkpoint5 { rx rz
+    ry rw rv : Z }.] extracts its constructor as a plain 5-arg
+    [expr:constructor] (same shape as 2/3 fields, just more args), and
+    a field access ([rz p], the 3rd of 5) extracts as a 1-case
+    [expr:case] with a 5-name [argnames] list, four of them ["_"] and
+    one real name at the accessed position -- the exact same shape
+    [RProj3_2]'s own 3-name case already has, just longer.
+
+    [RRecordN es] represents the field list [es], meant to always
+    hold at least 2 fields -- there is no 0- or 1-field case to
+    represent here: those already go through [RNone]/[RSome] or the
+    0-arg constructors, and a would-be 1-field "record" is
+    indistinguishable from a 1-arg [Some] at this shape-matching layer
+    with no further type information to break the tie, the same
+    inherent ambiguity a literally-named user constructor could always
+    cause -- see [RealJson.v]'s own comment on this where the
+    recognizer is wired in. [real_eval]/[real_to_expr]/
+    [real_to_expr_ctx]/[real_expr_depth] each walk [es] via an
+    anonymous nested [fix] taking [es] itself as its *one* parameter
+    and pattern-matching it directly to peel off a head -- the exact
+    style [RSelfN]/[RCallN]'s own [real_expr_depth] case already uses
+    for its [list_max_depth] -- rather than a [fix] taking a separate
+    "already-peeled head" parameter alongside the remaining tail: that
+    shape is rejected by the guard checker (confirmed directly --
+    "Recursive call to real_eval has principal argument equal to ...
+    instead of ..."), since a plain parameter isn't itself one of the
+    *pattern-matched* subterms the checker tracks as guarded, only
+    something obtained by *matching* the fix's own argument is --
+    [e]/[rest] bound by [match xs with | e :: rest => ...] inside the
+    SAME fix body qualifies, a separately-threaded [e] parameter
+    doesn't, even though both ultimately hold the same values. The
+    same reasoning is why [RRecordN] carries one plain [list real_expr]
+    field instead of [(e1 e2 : real_expr) (erest : list real_expr)] (a
+    static at-least-2 guarantee that seemed cleaner at first): the
+    dispatch would then have to *reconstruct* [e1 :: e2 :: erest] to
+    hand to a list-walking helper, and a freshly reconstructed list is
+    just as unguarded as a bare extra parameter is, for the same
+    reason -- built from subterms, but not itself one. Translates to
+    the same *right-nested* [EPair e1 (EPair e2 (... (EPair e_{n-1}
+    e_n) ...))] chain [RRecord3] already builds for 3, generalized
+    over the list. [real_expr_depth]'s own list-walking [fix] adds one
+    [S] per field *including* the last one (unlike [RRecord3]'s own
+    hand-written formula, which doesn't need to wrap its own final
+    field) -- a strict-subterm bound for every element of [es] is what
+    the preservation proof below actually needs (well-founded
+    induction on depth requires a *strictly* smaller measure to
+    recurse with, and a last-field-gets-no-[S] formula would make a
+    singleton list's own depth equal, not less, blocking exactly that
+    recursion), so this is a deliberately slightly looser, not
+    tightest-possible, bound -- still obviously a valid upper bound on
+    [eval]'s own fuel need, just not numerically identical to what
+    [RRecord3]'s 3 fixed fields produce.
+
+    [RProjN nskip last scrutinee] extracts one field of that chain:
+    [nskip] is how many [ESnd] steps reach the accessed field's own
+    sub-pair (0 for the 1st field, 1 for the 2nd, ... -- i.e. one less
+    than its 1-indexed position), and [last] says whether it is the
+    *final* field (no further [EFst] needed -- it already sits bare
+    at the end of the chain, not wrapped in one more pair) or not (one
+    [EFst] after the skips). This is a faithful generalization, not a
+    new idea: [RProj3_1] is [nskip := 0, last := false] (bare [EFst]),
+    [RProj3_2] is [nskip := 1, last := false] ([EFst (ESnd _)]),
+    [RProj3_3] is [nskip := 2, last := true] ([ESnd (ESnd _)]), and
+    the 2-field [RProj1]/[RProj2] are the [n = 2] instances of the
+    same two shapes -- all four already-proven cases are literally
+    what [RProjN] produces for their own [nskip]/[last], confirmed by
+    recomputing each by hand before trusting the general formula.
+    [real_expr_depth]'s own count of [EFst]/[ESnd] *operations* --
+    [nskip] plus one more if [last] is false -- making the general
+    formula pure addition (`nskip + (if last then 0 else 1) +
+    real_expr_depth scrutinee`) rather than a recursive wrap, is the
+    same arithmetic fact that lets [RProj3_2]'s/[RProj3_3]'s existing
+    [S (S _)] stand in that form already: [Nat.iter] applied [k] times
+    is exactly [k + _], so there was never a need for the recursive
+    shape in the first place, just never written that way until now.
+    `examples/NaturalCoq.v`'s [point5]/[getz5] (an extracted,
+    hand-encoded, *and* real-JSON-parsed instance, the 3rd-of-5 field)
+    is the worked instance. *)
+
 (** [RFLit]/[RApp2]'s new ["rplus"]/["rmult"]/["rminus"]/["rdiv"]
     cases: a first, narrow step into Coquelicot-adjacent code
     (`docs/roadmap.md`'s own section on this, and
@@ -355,14 +438,69 @@ Inductive real_expr : Type :=
   | RFLit (f : PrimFloat.float)
   | RNone
   | RSome (e : real_expr)
-  | ROptionMatch (scrutinee nonecase : real_expr) (x : var) (somecase : real_expr).
+  | ROptionMatch (scrutinee nonecase : real_expr) (x : var) (somecase : real_expr)
+  | RRecordN (es : list real_expr)
+  | RProjN (nskip : nat) (last : bool) (scrutinee : real_expr).
+
+(** [value_skip_snd n v]: peel [n] [VPair]/[ESnd]-style layers off a
+    right-nested pair value, used by [RProjN]'s [real_eval] case below
+    to reach the sub-pair an accessed field sits in before (depending
+    on [last]) taking its own left component. [None] if [v] runs out
+    of [VPair] layers before [n] does -- the same "stuck, not guessed"
+    partiality every other shape mismatch in this file already gets. *)
+Fixpoint value_skip_snd (n : nat) (v : value) : option value :=
+  match n with
+  | O => Some v
+  | S n' => match v with
+            | VPair _ v2 => value_skip_snd n' v2
+            | _ => None
+            end
+  end.
+
+(** [expr_skip_snd n e]: the [expr]-level mirror of [value_skip_snd],
+    wrapping [e] in [n] nested [ESnd]s -- total, not partial, since
+    this only builds a syntax tree, it does not evaluate anything. *)
+Fixpoint expr_skip_snd (n : nat) (e : expr) : expr :=
+  match n with
+  | O => e
+  | S n' => expr_skip_snd n' (ESnd e)
+  end.
+
+(** Ties [expr_skip_snd]'s syntax to [value_skip_snd]'s semantics:
+    evaluating [n] nested [ESnd]s around [e] with fuel [fuel] is the
+    same as evaluating [e] alone with [fuel - n] (exactly how much
+    fuel [n] [ESnd] dispatches consume, one apiece, per [eval]'s own
+    [ESnd] case in `Lang.v`) and then peeling [n] [VPair] layers off
+    whatever value comes back. Proved by induction on [n] -- not on
+    [e] or [fuel] -- since [expr_skip_snd]/[value_skip_snd] both
+    recurse on their own [n] argument. *)
+Lemma eval_expr_skip_snd :
+  forall n fuel rho e,
+    (n < fuel)%nat ->
+    eval fuel rho (expr_skip_snd n e) =
+      match eval (fuel - n) rho e with
+      | Some v => value_skip_snd n v
+      | None => None
+      end.
+Proof.
+  induction n as [| n' IH]; intros fuel rho e Hn.
+  - simpl. replace (fuel - 0)%nat with fuel by lia.
+    destruct (eval fuel rho e); reflexivity.
+  - simpl expr_skip_snd.
+    rewrite (IH fuel rho (ESnd e)) by lia.
+    destruct (fuel - n')%nat as [| k] eqn:Hk; [lia|].
+    replace k with (fuel - S n')%nat by lia.
+    simpl.
+    destruct (eval (fuel - S n') rho e) as [v|]; [| reflexivity].
+    destruct v; reflexivity.
+Qed.
 
 (** The reference semantics: not a reimplementation of [Z.add]/
     [Z.ltb]/etc, but a direct call to Coq's own, so this file's trust
     boundary is exactly "Coq's standard library means what it says it
     means" -- the same category of trust as the kernel itself, not a
     new assumption this file introduces. *)
-Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
+Fixpoint real_eval (rho : env) (re : real_expr) {struct re} : option value :=
   match re with
   | RRel name => lookup rho name
   | RZLit z => Some (VZ z)
@@ -485,6 +623,31 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
       | Some (VSome v) => real_eval ((x, v) :: rho) somecase
       | _ => None
       end
+  | RRecordN es =>
+      (fix go (xs : list real_expr) : option value :=
+         match xs with
+         | [] => None
+         | [e] => real_eval rho e
+         | e :: rest =>
+             match real_eval rho e, go rest with
+             | Some v, Some vrest => Some (VPair v vrest)
+             | _, _ => None
+             end
+         end) es
+  | RProjN nskip last scrutinee =>
+      match real_eval rho scrutinee with
+      | Some v =>
+          match value_skip_snd nskip v with
+          | Some v' =>
+              if last then Some v'
+              else match v' with
+                   | VPair v1 _ => Some v1
+                   | _ => None
+                   end
+          | None => None
+          end
+      | None => None
+      end
   end.
 
 (** The translator: recognize each intrinsic by the exact unqualified
@@ -600,6 +763,22 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
       | Some es, Some en, Some em => Some (EOptionMatch es en x em)
       | _, _, _ => None
       end
+  | RRecordN es =>
+      (fix go (xs : list real_expr) : option expr :=
+         match xs with
+         | [] => None
+         | [e] => real_to_expr e
+         | e :: rest =>
+             match real_to_expr e, go rest with
+             | Some ee, Some erest' => Some (EPair ee erest')
+             | _, _ => None
+             end
+         end) es
+  | RProjN nskip last scrutinee =>
+      match real_to_expr scrutinee with
+      | Some e => Some (if last then expr_skip_snd nskip e else EFst (expr_skip_snd nskip e))
+      | None => None
+      end
   end.
 
 (** [real_expr] has no closures/recursion at all (that is exactly what
@@ -650,13 +829,80 @@ Fixpoint real_expr_depth (re : real_expr) : nat :=
   | RSome e1 => S (real_expr_depth e1)
   | ROptionMatch scrutinee nonecase _ somecase =>
       S (Nat.max (real_expr_depth scrutinee) (Nat.max (real_expr_depth nonecase) (real_expr_depth somecase)))
+  | RRecordN es =>
+      (fix go (xs : list real_expr) : nat :=
+         match xs with
+         | [] => O
+         | [e] => S (real_expr_depth e)
+         | e :: rest => S (Nat.max (real_expr_depth e) (go rest))
+         end) es
+  | RProjN nskip last scrutinee =>
+      (nskip + (if last then 0 else 1)) + real_expr_depth scrutinee
   end.
 
+(** A *named* copy of [real_expr_depth]'s own anonymous [RRecordN]
+    helper -- needed so there is something to state and prove a lemma
+    about by ordinary structural induction on the list (the same
+    "identify an anonymous [fix] with a named, reusable version"
+    technique already used elsewhere in this project, e.g.
+    [PyLang.v]'s anonymous [fix]es). *)
+Fixpoint real_expr_depth_list (es : list real_expr) : nat :=
+  match es with
+  | [] => O
+  | [e] => S (real_expr_depth e)
+  | e :: rest => S (Nat.max (real_expr_depth e) (real_expr_depth_list rest))
+  end.
+
+Lemma real_expr_depth_record_eq :
+  forall es, real_expr_depth (RRecordN es) = real_expr_depth_list es.
+Proof.
+  induction es as [| e1 es' IH].
+  - reflexivity.
+  - destruct es' as [| e2 rest].
+    + reflexivity.
+    + change (real_expr_depth_list (e1 :: e2 :: rest))
+        with (S (Nat.max (real_expr_depth e1) (real_expr_depth_list (e2 :: rest)))).
+      rewrite <- IH. reflexivity.
+Qed.
+
+(** [fix SELF 1] opens with an *explicit* self-reference (Coq's
+    tactic-mode equivalent of writing this theorem as a [Fixpoint]
+    instead of proving it via [induction]), kept purely as a backup
+    for [RRecordN] below -- every pre-existing bullet still uses its
+    own [induction re]-supplied [IHre]/[IHre1]/[IHre2] exactly as
+    before (that per-case structural IH is perfectly sufficient for
+    every non-list-carrying constructor, and confirmed directly that
+    [fix SELF 1] followed by a plain [induction re] doesn't disturb
+    that auto-generated IH at all, so there was never a reason to
+    touch those bullets). The reason [SELF] is needed at all: a first
+    attempt wrapped the whole proof in an *outer* strong induction on
+    [real_expr_depth re] instead (the [well_founded_induction lt_wf]
+    pattern `coq/RealJson.v`'s [jvalue_parse_print_roundtrip] uses) --
+    but introducing that bound *before* [induction re] made [induction
+    re] revert it back into every single bullet's own [IHre], changing
+    its type and breaking all ~30 of them at once (confirmed directly);
+    deferring the bound's introduction to *after* [induction re]
+    didn't help either, since the bound already mentions [re] in the
+    still-un-introduced goal, which [induction re] generalizes over
+    regardless of whether it has been [intro]'d yet. [fix SELF 1] sidesteps
+    this architecture problem entirely: [induction re]'s own
+    auto-generated IH for [RRecordN] is of no use here regardless
+    (confirmed directly, by inspecting the open goal: no [Forall]-
+    shaped hypothesis appears for a nested list field, only [es]
+    itself), so [RRecordN]'s own bullet reaches for [SELF] instead, on
+    each element of [es] in turn via a fresh, local induction on the
+    list -- and [fix]'s own guardedness check turns out to be more
+    permissive than a plain [Fixpoint]'s anonymous nested [fix]
+    (confirmed directly in isolation first: the exact "element reached
+    through a *separate* nested list induction" shape that blocked
+    [real_eval]/[real_to_expr]/[real_expr_depth]'s own [RRecordN] cases
+    above is accepted without complaint for [SELF]). *)
 Theorem real_to_expr_preserves_semantics :
   forall re e, real_to_expr re = Some e ->
     forall fuel rho, (real_expr_depth re < fuel)%nat ->
       eval fuel rho e = real_eval rho re.
 Proof.
+  fix SELF 1.
   induction re; intros e Htrans fuel rho Hfuel; simpl in Htrans.
   - (* RRel *) inversion Htrans; subst.
     destruct fuel as [|fuel']; [simpl in Hfuel; lia|]. reflexivity.
@@ -970,6 +1216,79 @@ Proof.
     destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs|cgsa cgsb cgsc| |sovs]|]; try reflexivity.
     + apply (IHre2 en eq_refl fuel' rho Hdn').
     + apply (IHre3 em eq_refl fuel' ((x, sovs) :: rho) Hdm').
+  - (* RRecordN: no per-case [induction re]-supplied IH at all for
+       [es]'s own elements (confirmed directly -- the open goal here
+       carries no [Forall]-shaped hypothesis, only [es] itself), so
+       this recurses by hand: a fresh, local induction on the list
+       [es] for the "walk the tail" part, reaching for [SELF] -- the
+       [fix SELF 1] self-reference this whole proof opened with,
+       usable here precisely because [fix]'s own guardedness check is
+       more permissive than a [Fixpoint]'s nested anonymous nested-fix
+       one (confirmed directly: the very same "element obtained by a
+       *separate*, nested list induction" shape that [real_eval]/
+       [real_to_expr]/[real_expr_depth] above all had to work around
+       is accepted without complaint here) -- for each list *head*'s
+       own preservation, since a head can be any [real_expr] shape,
+       not just another [RRecordN]. *)
+    rewrite real_expr_depth_record_eq in Hfuel.
+    revert e Htrans fuel rho Hfuel.
+    induction es as [| e1 es' IHes]; intros e Htrans fuel rho Hfuel;
+      simpl in Htrans, Hfuel.
+    + discriminate.
+    + destruct es' as [| e2 rest].
+      * (* es = [e1] *)
+        assert (Hf1 : (real_expr_depth e1 < fuel)%nat) by lia.
+        exact (SELF e1 e Htrans fuel rho Hf1).
+      * (* es = e1 :: e2 :: rest *)
+        destruct (real_to_expr e1) as [ee|] eqn:He1; [|discriminate].
+        destruct ((fix go (xs : list real_expr) : option expr :=
+                     match xs with
+                     | [] => None
+                     | [e0] => real_to_expr e0
+                     | e0 :: rest0 =>
+                         match real_to_expr e0 with
+                         | Some ee0 =>
+                             match go rest0 with
+                             | Some erest0 => Some (EPair ee0 erest0)
+                             | None => None
+                             end
+                         | None => None
+                         end
+                     end) (e2 :: rest)) as [erest'|] eqn:Hrest; [|discriminate].
+        inversion Htrans; subst e.
+        destruct fuel as [|fuel']; [lia|].
+        assert (Hf1 : (real_expr_depth e1 < fuel')%nat) by lia.
+        pose proof (SELF e1 ee He1 fuel' rho Hf1) as IH1.
+        assert (Hfuel' : (real_expr_depth (RRecordN (e2 :: rest)) < fuel')%nat)
+          by (rewrite real_expr_depth_record_eq; lia).
+        pose proof (IHes erest' eq_refl fuel' rho Hfuel') as IH2.
+        simpl. rewrite IH1, IH2. reflexivity.
+  - (* RProjN: unlike [RRecordN], [scrutinee] is an ordinary [real_expr]
+       field, so [induction re]'s own auto-generated [IHre] already
+       suffices -- no need for the outer [IHn] here. The only new
+       machinery needed is [eval_expr_skip_snd], turning the *variable*
+       number of [ESnd]s [expr_skip_snd nskip] builds into a single
+       fuel-arithmetic step instead of [destruct fuel] once per skip
+       (which [RProj3_2]/[RProj3_3] above could afford, fixed at
+       exactly one, but a genuinely-[n]-ary [nskip] cannot). *)
+    destruct (real_to_expr re) as [es|] eqn:Hres; [|discriminate].
+    inversion Htrans; subst e.
+    destruct last eqn:Hlast; simpl in Hfuel.
+    + (* last field: bare [expr_skip_snd nskip es], no further [EFst] *)
+      assert (Hskip : (nskip < fuel)%nat) by lia.
+      assert (Hd1 : (real_expr_depth re < fuel - nskip)%nat) by lia.
+      pose proof (IHre es eq_refl (fuel - nskip)%nat rho Hd1) as IH1.
+      simpl. rewrite (eval_expr_skip_snd nskip fuel rho es Hskip), IH1.
+      destruct (real_eval rho re) as [v|]; [| reflexivity].
+      destruct (value_skip_snd nskip v); reflexivity.
+    + (* not last: one [EFst] wraps the skip chain *)
+      destruct fuel as [|fuel'']; [lia|].
+      assert (Hskip : (nskip < fuel'')%nat) by lia.
+      assert (Hd1 : (real_expr_depth re < fuel'' - nskip)%nat) by lia.
+      pose proof (IHre es eq_refl (fuel'' - nskip)%nat rho Hd1) as IH1.
+      simpl. rewrite (eval_expr_skip_snd nskip fuel'' rho es Hskip), IH1.
+      destruct (real_eval rho re) as [v|]; [| reflexivity].
+      destruct (value_skip_snd nskip v) as [v'|]; [destruct v' | ]; reflexivity.
 Qed.
 
 (** [real_to_expr_ctx]: [real_to_expr] again, case for case, but
@@ -1119,6 +1438,22 @@ Fixpoint real_to_expr_ctx (self : option var) (siblings : list var) (re : real_e
             real_to_expr_ctx self siblings somecase with
       | Some es, Some en, Some em => Some (EOptionMatch es en x em)
       | _, _, _ => None
+      end
+  | RRecordN es =>
+      (fix go (xs : list real_expr) : option expr :=
+         match xs with
+         | [] => None
+         | [e] => real_to_expr_ctx self siblings e
+         | e :: rest =>
+             match real_to_expr_ctx self siblings e, go rest with
+             | Some ee, Some erest' => Some (EPair ee erest')
+             | _, _ => None
+             end
+         end) es
+  | RProjN nskip last scrutinee =>
+      match real_to_expr_ctx self siblings scrutinee with
+      | Some e => Some (if last then expr_skip_snd nskip e else EFst (expr_skip_snd nskip e))
+      | None => None
       end
   end.
 
