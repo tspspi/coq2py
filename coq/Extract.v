@@ -173,10 +173,27 @@ Extract Constant parse_qtext => "(fun s ->
         else (Buffer.add_char buf c; go (i + 1))
     in go 1)".
 
+(** The deployment-host CLI (ocaml/driver/main.ml) needs to ingest a
+    *real* [coqc]-extracted module, not just this project's own
+    hand-rolled [Json.v] wire format -- see docs/roadmap.md's
+    deployment entry. That means every [real_*_of_module_json]/
+    [real_*_to_expr] entry point [RealIR.v]/[RealJson.v] actually
+    proves needs to be reachable from the extracted binary, not just
+    the two ([real_decl_of_module_json]/[real_fix_decl_of_module_json])
+    this list used to name: a real multi-argument self-recursive
+    [Fixpoint] or a real N-way mutually-recursive [Fixpoint ... with
+    ...] group are both already-recognized, already-proven fragments
+    (RealIR.v's [RSelfN]/[RCallN], [ERecGroup]) that the driver
+    couldn't reach at all before this, since [Extraction]'s root list
+    only extracts the transitive dependencies of what's named here --
+    an otherwise-proven definition simply doesn't appear in the
+    generated [.ml]/[.mli] if nothing in this list depends on it. *)
 Extraction "coq2py_core.ml"
   expr pyexpr
   print_expr parse_expr_top
   translate
   py_function
   real_decl_of_module_json real_fix_decl_of_module_json
-  real_decl_to_expr real_fix_decl_to_expr.
+  real_fix_decl_multi_of_module_json real_fix_group_decl_of_module_json
+  real_decl_to_expr real_fix_decl_to_expr
+  real_fix_decl_multi_to_expr real_fix_group_decl_to_expr.

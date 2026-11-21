@@ -1376,6 +1376,68 @@ Per GOAL.md, the remote deployment host is meant to run `coqc` (already
 installed there) against proofs a theory-evaluating agent writes at
 runtime, feeding the resulting JSON IR to an already-built
 `coq2py` binary copied over from the dev machine — not to rebuild
-`coq2py` itself. That deployment packaging (what exactly ships to that
-host, how the agent invokes it, how results come back) isn't built yet;
-right now this repository only demonstrates the pipeline running locally.
+`coq2py` itself.
+
+**Done**: the packaging/invocation protocol itself — what exactly ships
+to that host, how the agent invokes it, how results come back — is now
+built and documented in full in `docs/deployment.md`; this entry just
+summarizes what that closed and what it deliberately didn't try to.
+
+A real, previously-unnoticed functional gap surfaced doing this, not
+just a documentation gap: `coq/Extract.v`'s own `Extraction "coq2py_core.ml"
+...` root list only ever named `real_decl_of_module_json`/
+`real_fix_decl_of_module_json` among the four `real_*_of_module_json`
+entry points `RealIR.v`/`RealJson.v` actually prove — Coq's `Extraction`
+only pulls in the transitive dependencies of what's named as a root, so
+`real_fix_decl_multi_of_module_json` (a real *multi*-argument
+self-recursive `Fixpoint`, `RSelfN`/`RCallN`'s own entry point) and
+`real_fix_group_decl_of_module_json` (a real N-way mutually-recursive
+group) were proven in Coq but **never reached the compiled binary at
+all**, confirmed directly by grepping the generated `.mli` before this
+fix (absent) and after (present). A theory-evaluating agent writing
+either shape of proof would have hit a wall at the OCaml layer even
+though the underlying Coq recognizer already handled it — this is now
+fixed by adding both (plus their `_to_expr` counterparts) to the
+`Extraction` root list.
+
+The CLI itself (`ocaml/driver/main.ml`) previously only read this
+project's own hand-rolled `Json.v` wire format for a bare `expr` —
+never Coq's actual `Extraction Language JSON` module output, which is
+the only thing a real agent's `coqc` run would ever produce. A new
+`coq2py --real <function-name>` mode reads a whole real module on
+stdin and tries, in declaration order, all four recognized shapes
+(plain/possibly-multi-arg non-recursive, single-argument
+self-recursive, multi-argument self-recursive, N-way mutually-recursive
+group), applying the right number of parameters via `EApp` (and, for a
+group, projecting the named member via `EFieldN` first) before handing
+the result to `translate`/`py_function` — the same calling convention
+every hand-built multi-argument example in this repository already
+uses at its own call site, not a new one invented for this. Confirmed
+end to end, not just compiled: all four shapes were run through the
+actual staged binary against **genuinely `coqc`-extracted** JSON (not
+this project's own fixtures) — a fresh ~350KB real Coquelicot capture
+for the plain-declaration case (`quad`), a fresh throwaway single-arg
+self-recursive probe (`any_true`), and the project's own committed
+`all_match`/`sum_list` (multi-arg self-recursive) and `cycle_a`/
+`cycle_b`/`cycle_c` (N-way group, entered from all three members)
+module captures — every one byte-for-byte identical to that example's
+own already-proven, hand-checked generated Python.
+
+Also confirmed, not assumed: the built binary's only runtime
+dependencies (`ldd`) are the OS's own `libc`/`libm`/`libthr` — nothing
+from `coq-core` or OCaml's own runtime, meaning the `coq-core.kernel`
+link dependency `Extract.v`'s header already documents is exactly the
+link-time-only cost it claims to be. A new `gmake package` target
+builds (at dune's `release` profile, stripped) and stages the single
+deployable binary into `dist/`; copying just that file to an empty
+directory with no build tooling present and running it there
+(simulating the actual remote-host copy) worked identically to running
+it from the build tree.
+
+Still not done, deliberately out of scope for this entry: anything
+about *which* Coq programs are recognized at all (modules/typeclasses/
+coinductives, numpy-shaped arrays — this section's sibling entry
+below), and the open question of how the agent's own harness decides
+*which* declaration name(s) in its proof to extract (left to that
+harness, same as any other CLI tool's caller deciding its own
+arguments) — not something `coq2py` itself needs an opinion on.

@@ -8,7 +8,7 @@
 # Use `gmake` if your platform's default `make` is BSD make (coqc's own
 # generated-makefile conventions assume GNU make).
 
-.PHONY: all coq ocaml examples physics test wave_sim clean
+.PHONY: all coq ocaml examples physics test wave_sim package clean
 
 all: coq ocaml
 
@@ -59,8 +59,34 @@ test: ocaml
 	echo -n '{"tag":"and","lhs":{"tag":"le","lhs":{"tag":"var","name":"x"},"rhs":{"tag":"const","value":0}},"rhs":{"tag":"lt","lhs":{"tag":"var","name":"v"},"rhs":{"tag":"const","value":0}}}' \
 	  | (cd ocaml && dune exec driver/main.exe -- landed x,v)
 
+# Stages exactly what ships to the remote deployment host (GOAL.md's
+# "Target environments" table, docs/deployment.md for the full
+# protocol): one binary, nothing else -- confirmed to have no runtime
+# dependency beyond the OS's own libc/libm/libthr (`ldd` on the built
+# `main.exe` shows nothing from `coq-core`/OCaml's own runtime: the
+# `coq-core.kernel` library Extract.v's header explains is needed is a
+# *link-time* cost only, statically compiled into the executable by
+# `dune build`'s native-code default, not something the deployment
+# host separately needs installed merely to *run* this binary -- it
+# still needs `coqc`/`coq-core` for its own, separate job of
+# type-checking the agent's proofs, per GOAL.md's target-environment
+# table, just not to run this binary). Built at the `release` dune
+# profile and stripped of debug info, since this is the artifact an
+# actual host runs, not a dev-loop rebuild.
+DIST_DIR := dist
+
+package: coq
+	cp coq/coq2py_core.ml coq/coq2py_core.mli ocaml/driver/
+	cd ocaml && dune build --profile release
+	mkdir -p $(DIST_DIR)
+	cp ocaml/_build/default/driver/main.exe $(DIST_DIR)/coq2py
+	strip $(DIST_DIR)/coq2py
+	cp docs/deployment.md $(DIST_DIR)/README.md
+	@echo "Deployable artifact staged in $(DIST_DIR)/: coq2py (binary) + README.md"
+
 clean:
 	$(MAKE) -C coq clean
 	rm -f coq/coq2py_core.ml coq/coq2py_core.mli
 	rm -f ocaml/driver/coq2py_core.ml ocaml/driver/coq2py_core.mli
 	cd ocaml && dune clean
+	rm -rf $(DIST_DIR)
