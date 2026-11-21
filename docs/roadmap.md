@@ -982,6 +982,52 @@ real, checked Python (`def hyp_len(v0, v1): return
 __import__("math").sqrt(((v0 * v0) + (v1 * v1)))`, confirmed to run
 correctly under actual Python too).
 
+**Done** (`"rinv"`, `"rmax"`/`"rmin"`): three more probes -- `inv_sum
+(x y : R) := / (x + y)`, `bigger_plus_one (x y : R) := Rmax x y + 1`,
+`smaller_plus_one (x y : R) := Rmin x y + 1` -- confirm `/ e` extracts
+as a plain unary `rinv` call, and `Rmax`/`Rmin` as plain binary
+`rmax`/`rmin` calls (not eta-reduced to a bare `expr:global`, which a
+point-free `Definition bigger (x y : R) : R := Rmax x y.` is confirmed
+to trigger -- wrapping the call in `+ 1` avoids it). Each needed a
+different kind of addition: `"rinv"` needed *no* new `Lang.v`
+constructor at all -- `PrimFloat.div` is already correctly-rounded, so
+`1.0 / x` computes the correctly-rounded reciprocal exactly, so
+`"rinv"` just translates to the already-proven `EFDiv (EFConst 1) e`.
+`"rmax"`/`"rmin"` needed a real `EFMax`/`EFMin`, but not calling one
+more `PrimFloat` primitive -- `PrimFloat` has no native max/min at
+all, so they're defined directly in Gallina via `PrimFloat.ltb`
+(already trusted): `if f1 < f2 then f2 else f1` for max, `if f2 < f1
+then f2 else f1` for min. Which operand a signed-zero tie returns is a
+genuine, explicit choice made here (classical `R` has no signed zero
+at all, so there's no "faithful to Coquelicot" answer to match in the
+first place -- the same kind of boundary `RealBridge.v`'s own
+rounding axioms already draw) -- confirmed directly to match real
+Python's own `max`/`min` builtins' tie-breaking exactly (`max(0.0,
+-0.0) = 0.0`, `max(-0.0, 0.0) = -0.0`, both returning their *first*
+argument on a tie), so `PyPrint.v` renders them as plain `max(...)`/
+`min(...)` calls. `Print Assumptions` shows no new axioms (`rinv`
+reuses `div`; `rmax`/`rmin` reuse `ltb`, both already in the set).
+`examples/CoquelicotDemo.v`'s `inv_sum`/`bigger_plus_one`/
+`smaller_plus_one` are the worked instances: checked against concrete
+values (`1/(3+1) = 0.25`, `max(3,5)+1 = 6`, `min(3,5)+1 = 4`),
+parsed from the real captured JSON text, and printed to real, checked
+Python, confirmed to run correctly under actual Python too.
+
+**Not viable the same way** (confirmed, not assumed): `exp`/`ln`/
+`pow` were considered next, but `PrimFloat` has *no* native
+transcendental-function primitive at all (confirmed directly:
+`Print PrimFloat` lists only `abs`/`sqrt`/`opp`/`eqb`/`ltb`/`leb`/
+`compare`/`mul`/`add`/`sub`/`div` -- no `exp`/`ln`/`pow`), unlike
+`sqrt` (a primitive) or `rmax`/`rmin` (definable from an existing
+primitive, `ltb`). Supporting them would need a *new category* of
+trust boundary -- an `Axiom` asserting some IEEE-754-correct
+`exp`/`ln`/`pow` exists and that Python's `math.exp`/`math.log`/`**`
+match it, the same shape `RealBridge.v`'s own two rounding axioms
+already are, but for a reference semantics this project cannot
+compute in Gallina at all (unlike `rmax`/`rmin`, which compute a real
+answer via `ltb`) -- not a bounded addition on the same footing as
+the others above, and not attempted here.
+
 Still not done: `R` literals other than small-integer `iZR`; anything
 nested deeper where the error-propagation question above would
 actually start to matter;

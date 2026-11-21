@@ -292,6 +292,14 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
   | PFSqrt e1 =>
       let '(e1', n1) := rename_pyexpr env n e1 in
       (PFSqrt e1', n1)
+  | PFMax e1 e2 =>
+      let '(e1', n1) := rename_pyexpr env n e1 in
+      let '(e2', n2) := rename_pyexpr env n1 e2 in
+      (PFMax e1' e2', n2)
+  | PFMin e1 e2 =>
+      let '(e1', n1) := rename_pyexpr env n e1 in
+      let '(e2', n2) := rename_pyexpr env n1 e2 in
+      (PFMin e1' e2', n2)
   | PRepeat k x body init =>
       let '(init', n1) := rename_pyexpr env n init in
       let y := fresh_name n1 in
@@ -449,7 +457,7 @@ Fixpoint pyexpr_size (e : pyexpr) : nat :=
       S (pyexpr_size e1)
   | PAdd e1 e2 | PSub e1 e2 | PMul e1 e2 | PEq e1 e2 | PLt e1 e2 | PLe e1 e2
   | PAnd e1 e2 | POr e1 e2 | PPair e1 e2 | PFAdd e1 e2 | PFSub e1 e2 | PFMul e1 e2
-  | PFDiv e1 e2 | PFEq e1 e2 | PFLt e1 e2 | PFLe e1 e2 | PDiv e1 e2 | PMod e1 e2
+  | PFDiv e1 e2 | PFEq e1 e2 | PFLt e1 e2 | PFLe e1 e2 | PFMax e1 e2 | PFMin e1 e2 | PDiv e1 e2 | PMod e1 e2
   | PApp e1 e2 | PCons e1 e2 | PStrConcat e1 e2 | PStrEq e1 e2
   | PLet _ e1 e2 | PRecord _ e1 _ e2 =>
       S (pyexpr_size e1 + pyexpr_size e2)
@@ -517,7 +525,7 @@ Fixpoint pyexpr_recgroup_ok (e : pyexpr) : Prop :=
       pyexpr_recgroup_ok e1
   | PAdd e1 e2 | PSub e1 e2 | PMul e1 e2 | PEq e1 e2 | PLt e1 e2 | PLe e1 e2
   | PAnd e1 e2 | POr e1 e2 | PPair e1 e2 | PFAdd e1 e2 | PFSub e1 e2 | PFMul e1 e2
-  | PFDiv e1 e2 | PFEq e1 e2 | PFLt e1 e2 | PFLe e1 e2 | PDiv e1 e2 | PMod e1 e2
+  | PFDiv e1 e2 | PFEq e1 e2 | PFLt e1 e2 | PFLe e1 e2 | PFMax e1 e2 | PFMin e1 e2 | PDiv e1 e2 | PMod e1 e2
   | PApp e1 e2 | PCons e1 e2 | PStrConcat e1 e2 | PStrEq e1 e2
   | PLet _ e1 e2 | PRecord _ e1 _ e2 =>
       pyexpr_recgroup_ok e1 /\ pyexpr_recgroup_ok e2
@@ -546,7 +554,7 @@ Proof.
     destruct e as
       [ z | b | x | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1
       | c e1 e2 | e1 e2 | e1 | e1 | x e1 e2 | fl | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2
-      | e1 e2 | e1 e2 | e1 | e1 | e1 | k x body init | e1 e2 | e1 e2 | param body | f param body
+      | e1 e2 | e1 e2 | e1 | e1 | e1 | e1 e2 | e1 e2 | k x body init | e1 e2 | e1 e2 | param body | f param body
       | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
@@ -1209,7 +1217,7 @@ Proof.
   - destruct e as
       [ z | b | x | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1
       | c e1 e2 | e1 e2 | e1 | e1 | x e1 e2 | fl | e1 e2 | e1 e2 | e1 e2 | e1 e2 | e1 e2
-      | e1 e2 | e1 e2 | e1 | e1 | e1 | k x body init | e1 e2 | e1 e2 | param body | f param body
+      | e1 e2 | e1 e2 | e1 | e1 | e1 | e1 e2 | e1 e2 | k x body init | e1 e2 | e1 e2 | param body | f param body
       | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
@@ -1560,6 +1568,38 @@ Proof.
       rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
       rewrite E1';
       destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFMax *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      simpl; eexists; split; [reflexivity | constructor].
+    + (* PFMin *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 e2) as [e2' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho e2) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone e1 env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' e2 env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
       simpl; eexists; split; [reflexivity | constructor].
     + (* PRepeat *) destruct Hok as [HokBody HokInit]. simpl.
       destruct (rename_pyexpr env n init) as [init' n1] eqn:R1.

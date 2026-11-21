@@ -298,7 +298,30 @@
     definition goes through [Rsqrt_exists] and a classical
     completeness argument. Translates to a real, dedicated [EFSqrt]
     (added to [Lang.v] alongside [EFOpp]/[EFAbs]), calling
-    [PrimFloat.sqrt] directly. *)
+    [PrimFloat.sqrt] directly.
+
+    ["rinv"] (reciprocal, Coquelicot's unary [/]) is the one addition
+    here needing *no* new [Lang.v] constructor at all: [PrimFloat]'s
+    own division is already a correctly-rounded operation, so
+    [1.0 / x] computes the correctly-rounded reciprocal of [x] exactly
+    -- confirmed directly (including the signed-zero/infinity cases:
+    [1.0 / (-0.0) = -Infinity], matching IEEE-754, the same way
+    [PrimFloat.div] itself already would). Translates to the already-
+    proven [EFDiv (EFConst 1) e], no new primitive, no new proof
+    obligation beyond this file's own.
+
+    ["rmax"]/["rmin"] are a third kind of addition: [PrimFloat] has
+    *no* native max/min primitive at all (unlike [sqrt]/[abs]/[opp]),
+    so [EFMax]/[EFMin] (added to [Lang.v]) are defined directly in
+    Gallina via [PrimFloat.ltb] (already trusted), not by calling out
+    to one more primitive. Which operand a tie (signed zero) returns
+    is a genuine, explicit choice this project makes here -- classical
+    [R] has no signed zero at all, so there is no "faithful to
+    Coquelicot" answer to match in the first place (the same kind of
+    boundary [RealBridge.v]'s own rounding axioms already draw) --
+    confirmed directly to match real Python's own [max]/[min] builtins'
+    tie-breaking exactly, so [PyPrint.v] can render them as plain
+    [max(...)]/[min(...)] calls. *)
 
 From Coq Require Import ZArith String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -356,6 +379,7 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
           if string_dec fn "ropp" then Some (VFloat (PrimFloat.opp f))
           else if string_dec fn "rabs" then Some (VFloat (PrimFloat.abs f))
           else if string_dec fn "sqrt" then Some (VFloat (PrimFloat.sqrt f))
+          else if string_dec fn "rinv" then Some (VFloat (PrimFloat.div 1%float f))
           else None
       | _ => None
       end
@@ -378,6 +402,10 @@ Fixpoint real_eval (rho : env) (re : real_expr) : option value :=
           else if string_dec fn "rmult" then Some (VFloat (PrimFloat.mul f1 f2))
           else if string_dec fn "rminus" then Some (VFloat (PrimFloat.sub f1 f2))
           else if string_dec fn "rdiv" then Some (VFloat (PrimFloat.div f1 f2))
+          else if string_dec fn "rmax" then
+            Some (VFloat (if PrimFloat.ltb f1 f2 then f2 else f1))
+          else if string_dec fn "rmin" then
+            Some (VFloat (if PrimFloat.ltb f2 f1 then f2 else f1))
           else None
       | _, _ => None
       end
@@ -476,6 +504,7 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           else if string_dec fn "ropp" then Some (EFOpp e1)
           else if string_dec fn "rabs" then Some (EFAbs e1)
           else if string_dec fn "sqrt" then Some (EFSqrt e1)
+          else if string_dec fn "rinv" then Some (EFDiv (EFConst 1%float) e1)
           else None
       | None => None
       end
@@ -494,6 +523,8 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           else if string_dec fn "rmult" then Some (EFMul e1 e2)
           else if string_dec fn "rminus" then Some (EFSub e1 e2)
           else if string_dec fn "rdiv" then Some (EFDiv e1 e2)
+          else if string_dec fn "rmax" then Some (EFMax e1 e2)
+          else if string_dec fn "rmin" then Some (EFMin e1 e2)
           else None
       | _, _ => None
       end
@@ -663,6 +694,13 @@ Proof.
       [inversion Htrans; subst; simpl; rewrite IH1;
        destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
        reflexivity|].
+    destruct (string_dec fn "rinv") as [Heq|Hne7];
+      [inversion Htrans; subst;
+       assert (Hconst1 : eval fuel' rho (EFConst 1%float) = Some (VFloat 1%float))
+         by (destruct fuel' as [|fuel'']; [lia|]; reflexivity);
+       simpl; rewrite Hconst1, IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       reflexivity|].
     discriminate.
   - (* RApp2 *)
     destruct (real_to_expr re1) as [e1|] eqn:Hre1; [|destruct (real_to_expr re2); discriminate].
@@ -729,6 +767,16 @@ Proof.
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
        reflexivity|].
     destruct (string_dec fn "rdiv") as [Heq|Hne12];
+      [inversion Htrans; subst; simpl; rewrite IH1, IH2;
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       reflexivity|].
+    destruct (string_dec fn "rmax") as [Heq|Hne13];
+      [inversion Htrans; subst; simpl; rewrite IH1, IH2;
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       reflexivity|].
+    destruct (string_dec fn "rmin") as [Heq|Hne14];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
        destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];

@@ -481,3 +481,96 @@ Proof. vm_compute. reflexivity. Qed.
 
 Compute py_function "hyp_len" (match hyp_len_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
   (translate hyp_len_expr).
+
+
+(* ------------------------------------------------------------------ *)
+(** * "rinv"/"rmax"/"rmin": a reciprocal needing no new primitive, and
+      two that need a Gallina-defined one since PrimFloat has none
+
+    Three more probes, the same way the others were: [inv_sum (x y :
+    R) := / (x + y)], [bigger_plus_one (x y : R) := Rmax x y + 1],
+    [smaller_plus_one (x y : R) := Rmin x y + 1]. Confirmed directly:
+    [/ (x + y)] extracts as [rinv (rplus x y)] (plain unary call, the
+    same shape every other float op here has); [Rmax x y]/[Rmin x y]
+    extract as plain binary [rmax]/[rmin] calls -- *not* eta-reduced
+    the way a bare [Definition bigger (x y : R) : R := Rmax x y.]
+    would be (confirmed directly: that exact definition extracts to
+    a bare [expr:global "rmax"] with no [expr:lambda] at all, this
+    file's header's own eta-reduction limitation; wrapping the call in
+    [+ 1] avoids it here, the same way every worked example in this
+    file needs a body that isn't point-free). *)
+Definition inv_sum_ir : real_expr :=
+  RApp1 "rinv" (RApp2 "rplus" (RRel "x") (RRel "y")).
+
+Example inv_sum_ir_translates :
+  real_to_expr inv_sum_ir = Some (EFDiv (EFConst 1) (EFAdd (EVar "x") (EVar "y"))).
+Proof. reflexivity. Qed.
+
+(** [1 / (3 + 1) = 0.25] exactly -- no rounding, a power-of-two
+    denominator. *)
+Example inv_sum_ir_matches_expected_value :
+  real_eval [("x", VFloat 3); ("y", VFloat 1)] inv_sum_ir = Some (VFloat 0.25).
+Proof. reflexivity. Qed.
+
+Compute py_function "inv_sum" ["x"; "y"]
+  (translate (EFDiv (EFConst 1) (EFAdd (EVar "x") (EVar "y")))).
+
+Definition bigger_plus_one_ir : real_expr :=
+  RApp2 "rplus" (RApp2 "rmax" (RRel "x") (RRel "y")) (RFLit 1).
+
+Example bigger_plus_one_ir_translates :
+  real_to_expr bigger_plus_one_ir = Some (EFAdd (EFMax (EVar "x") (EVar "y")) (EFConst 1)).
+Proof. reflexivity. Qed.
+
+(** [max(3, 5) + 1 = 6] exactly. *)
+Example bigger_plus_one_ir_matches_expected_value :
+  real_eval [("x", VFloat 3); ("y", VFloat 5)] bigger_plus_one_ir = Some (VFloat 6).
+Proof. reflexivity. Qed.
+
+Definition smaller_plus_one_ir : real_expr :=
+  RApp2 "rplus" (RApp2 "rmin" (RRel "x") (RRel "y")) (RFLit 1).
+
+Example smaller_plus_one_ir_translates :
+  real_to_expr smaller_plus_one_ir = Some (EFAdd (EFMin (EVar "x") (EVar "y")) (EFConst 1)).
+Proof. reflexivity. Qed.
+
+(** [min(3, 5) + 1 = 4] exactly. *)
+Example smaller_plus_one_ir_matches_expected_value :
+  real_eval [("x", VFloat 3); ("y", VFloat 5)] smaller_plus_one_ir = Some (VFloat 4).
+Proof. reflexivity. Qed.
+
+Compute py_function "bigger_plus_one" ["x"; "y"]
+  (translate (EFAdd (EFMax (EVar "x") (EVar "y")) (EFConst 1))).
+Compute py_function "smaller_plus_one" ["x"; "y"]
+  (translate (EFAdd (EFMin (EVar "x") (EVar "y")) (EFConst 1))).
+
+(** Parsed from the real JSON text, not hand-built. *)
+Definition inv_sum_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""inv_sum"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rinv""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rplus""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""y""}]}]}}}]}".
+
+Definition inv_sum_decl_parsed : option real_decl :=
+  real_decl_of_module_json inv_sum_module_json "inv_sum".
+
+Example inv_sum_decl_parsed_matches_hand_built :
+  inv_sum_decl_parsed = Some {| rd_argnames := ["x"; "y"]; rd_body := inv_sum_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition bigger_plus_one_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""bigger_plus_one"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rplus""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rmax""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""y""}]}, {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""iZR""}, ""args"": [{""what"": ""expr:constructor"", ""name"": ""Zpos"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XH"", ""args"": []}]}]}]}}}]}".
+
+Definition bigger_plus_one_decl_parsed : option real_decl :=
+  real_decl_of_module_json bigger_plus_one_module_json "bigger_plus_one".
+
+Example bigger_plus_one_decl_parsed_matches_hand_built :
+  bigger_plus_one_decl_parsed = Some {| rd_argnames := ["x"; "y"]; rd_body := bigger_plus_one_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition smaller_plus_one_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""smaller_plus_one"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rplus""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rmin""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""y""}]}, {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""iZR""}, ""args"": [{""what"": ""expr:constructor"", ""name"": ""Zpos"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XH"", ""args"": []}]}]}]}}}]}".
+
+Definition smaller_plus_one_decl_parsed : option real_decl :=
+  real_decl_of_module_json smaller_plus_one_module_json "smaller_plus_one".
+
+Example smaller_plus_one_decl_parsed_matches_hand_built :
+  smaller_plus_one_decl_parsed = Some {| rd_argnames := ["x"; "y"]; rd_body := smaller_plus_one_ir |}.
+Proof. vm_compute. reflexivity. Qed.

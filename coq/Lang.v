@@ -72,6 +72,28 @@
     completeness argument this project has no interest in extracting
     literally.
 
+    [EFMax e1 e2]/[EFMin e1 e2] (confirmed directly: [Rmax x y] and
+    [Rmin x y] each extract as a plain binary [rmax]/[rmin] global
+    call) are a different kind of addition than
+    [EFOpp]/[EFAbs]/[EFSqrt]: [PrimFloat] has no native max/min
+    primitive to call *at all*, so [EFMax]/[EFMin] are defined
+    directly in Gallina, via [PrimFloat.ltb] (already trusted) --
+    [if f1 < f2 then f2 else f1] for max, [if f2 < f1 then f2 else
+    f1] for min. Choosing *which* operand a tie (signed zero: [0.0]
+    and [-0.0] compare equal) returns is a genuine, explicit choice
+this project introduces here, not a hidden assumption -- classical
+    [R] has no signed zero at all, so there is no "faithful to
+    Coquelicot" answer to match in the first place (the same kind of
+    boundary [RealBridge.v]'s own rounding axioms already draw).
+    Confirmed directly, this choice exactly matches real Python's own
+    [max]/[min] builtins' tie-breaking (both return their *first*
+    argument on a tie: [max(0.0, -0.0) = 0.0], [max(-0.0, 0.0) =
+    -0.0]), so [PyPrint.v] can render [EFMax]/[EFMin] as plain
+    [max(...)]/[min(...)] calls with no further workaround needed,
+    and the only property that actually matters --
+    [translate_preserves_semantics] -- holds unconditionally either
+    way.
+
     [ERepeat n x body init] is bounded iteration: evaluate [init] to a
     starting value, then apply [body] (with [x] bound to the current
     value) exactly [n] times, [n] a literal [nat] fixed at "compile
@@ -287,6 +309,8 @@ Inductive expr : Type :=
   | EFOpp (e : expr)
   | EFAbs (e : expr)
   | EFSqrt (e : expr)
+  | EFMax (e1 e2 : expr)
+  | EFMin (e1 e2 : expr)
   | ERepeat (n : nat) (x : var) (body init : expr)
   | EDiv (e1 e2 : expr)
   | EMod (e1 e2 : expr)
@@ -510,6 +534,18 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       | Some (VFloat f1) => Some (VFloat (PrimFloat.sqrt f1))
       | _ => None
       end
+  | EFMax e1 e2 =>
+      match eval fuel' rho e1, eval fuel' rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) =>
+          Some (VFloat (if PrimFloat.ltb f1 f2 then f2 else f1))
+      | _, _ => None
+      end
+  | EFMin e1 e2 =>
+      match eval fuel' rho e1, eval fuel' rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) =>
+          Some (VFloat (if PrimFloat.ltb f2 f1 then f2 else f1))
+      | _, _ => None
+      end
   | ERepeat n x body init =>
       match eval fuel' rho init with
       | Some v0 => iterate n (fun v => eval fuel' ((x, v) :: rho) body) v0
@@ -732,6 +768,8 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EFOpp e1 => expr_idents_valid is_valid_ident e1
   | EFAbs e1 => expr_idents_valid is_valid_ident e1
   | EFSqrt e1 => expr_idents_valid is_valid_ident e1
+  | EFMax e1 e2 | EFMin e1 e2 =>
+      andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | ERepeat _ x body init =>
       andb (is_valid_ident x)
            (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident init))

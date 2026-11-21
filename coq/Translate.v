@@ -63,6 +63,8 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EFOpp e1 => PFOpp (translate e1)
   | EFAbs e1 => PFAbs (translate e1)
   | EFSqrt e1 => PFSqrt (translate e1)
+  | EFMax e1 e2 => PFMax (translate e1) (translate e2)
+  | EFMin e1 e2 => PFMin (translate e1) (translate e2)
   | ERepeat n x body init => PRepeat n x (translate body) (translate init)
   | EDiv e1 e2 => PDiv (translate e1) (translate e2)
   | EMod e1 e2 => PMod (translate e1) (translate e2)
@@ -357,6 +359,8 @@ Proof.
       | e1                          (* EFOpp *)
       | e1                          (* EFAbs *)
       | e1                          (* EFSqrt *)
+      | e1 e2                       (* EFMax *)
+      | e1 e2                       (* EFMin *)
       | n x body init               (* ERepeat *)
       | e1 e2                       (* EDiv *)
       | e1 e2                       (* EMod *)
@@ -467,6 +471,12 @@ Proof.
       destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1|cg1a cg1b cg1c| |sov1]|]; reflexivity.
     + (* EFSqrt *) rewrite (IHfuel e1 rho).
       destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1|cg1a cg1b cg1c| |sov1]|]; reflexivity.
+    + (* EFMax *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1|cg1a cg1b cg1c| |sov1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2|cg2a cg2b cg2c| |sov2]|]; reflexivity.
+    + (* EFMin *) rewrite (IHfuel e1 rho), (IHfuel e2 rho).
+      destruct (eval fuel' rho e1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|rn1|cg1a cg1b cg1c| |sov1]|];
+        destruct (eval fuel' rho e2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|rn2|cg2a cg2b cg2c| |sov2]|]; reflexivity.
     + (* ERepeat *) rewrite (IHfuel init rho).
       destruct (eval fuel' rho init) as [v0|].
       * apply (iterate_translate_correct fuel' n x body rho (fun rho' => IHfuel body rho') v0).

@@ -299,6 +299,8 @@ Fixpoint py_expr (e : pyexpr) : string :=
      [py_function] header to invent -- confirmed directly to compute
      the exact same bits as [math.sqrt], sign of zero included. *)
   | PFSqrt e1 => "__import__(""math"").sqrt(" ++ py_expr e1 ++ ")"
+  | PFMax e1 e2 => "max(" ++ py_expr e1 ++ ", " ++ py_expr e2 ++ ")"
+  | PFMin e1 e2 => "min(" ++ py_expr e1 ++ ", " ++ py_expr e2 ++ ")"
   | PRepeat n x body init =>
       "((" ++ x ++ " := " ++ py_expr init ++ ")"
         ++ py_repeat_steps n x (py_expr body) ++ ", " ++ x ++ ")[-1]"
