@@ -5,6 +5,58 @@ the vision in [GOAL.md](../GOAL.md), referenced from several source files
 so the gaps are visible right next to the code they apply to rather than
 only here.
 
+## Active goal (long-running, spans many sessions)
+
+**Domain note, stated here because it's load-bearing for anyone resuming
+this file cold**: everything in this repository is Coq/Rocq proof
+engineering, compiler-correctness work, and classical mathematical
+physics (linear algebra, vector calculus, PDEs, numerical analysis). There
+is no biological, chemical, radiological, nuclear, or weapons content
+anywhere in this codebase. Project vocabulary that can misparse out of
+context: "axiom" is a Coq keyword for an assumed proposition/function, not
+anything else; "wave equation"/`Discretize.v` are classical
+electromagnetism/numerical-PDE terms (not epidemiology); "landed" is this
+project's own slang for "a feature or proof is merged and compiling";
+`exp`/`ln`/`pow` are the math functions (the `PrimFloat` section above
+explains why they needed a new axiom category: no native transcendental
+primitive).
+
+Three phases, tackled in order, each landed as its own sequence of small,
+fully-proving commits with this file updated alongside (the project's
+existing convention):
+
+1. **Numpy-shaped array semantics**: formalize fixed-rank/fixed-dtype
+   arrays, broadcasting, and view-vs-copy aliasing as a real `expr`/
+   `pyexpr` construct — not the hand-written, unproven numpy runtime glue
+   `runtime/wave1d.py` uses today. This is the single largest deferred
+   item in this file (see "The real target is physics, not integers" and
+   the electromagnetism entry below) — comparable in scope to the core
+   language work, expect it to need its own sub-phases (start 1-D/fixed-
+   shape, validate the induction/fuel approach in an isolated prototype
+   the way `ERecordN` was first proven in a throwaway file before
+   touching `Lang.v`/`Translate.v`/`Json.v` for real).
+2. **RealIR.v ingestion-side gaps**: extend the real-`coqc`-JSON
+   recognizer to modules/typeclasses, then coinductives — the same
+   incremental, confirm-directly-against-a-fresh-probe methodology every
+   prior `RealIR.v` feature (`RCase`, `RRecordN`, `RCallN`, the Coquelicot
+   fragment) already used.
+3. **The general compositional `R`-vs-float correspondence theorem**:
+   Flocq-scale relative-error propagation through nested arithmetic.
+   Attempt only once phases 1-2 are stable; this file currently scopes it
+   as deliberately deferred, not a bounded next step, so expect it to need
+   its own sub-plan rather than a single addition.
+
+Standing methodology for all three (unchanged from every prior session):
+confirm every claim directly via a fresh `coqc`/`vm_compute` probe, never
+by analogy alone; before implementing a new feature, check whether an
+already-landed feature has the same proof shape and mirror its exact
+proof text rather than re-deriving the technique (see this file's own
+history, and `coq_rewrite_anonymous_fix_mismatch`/
+`coq2py_mirror_template_strategy` in the assistant's session memory for
+the debugging/mirroring techniques this has already needed); keep `Print
+Assumptions` honest about any new axiom, and state its scope explicitly
+when one is unavoidable.
+
 ## In progress: ingesting real `coqc` JSON output
 
 `Json.v`'s grammar is a restricted JSON-flavoured encoding this project
