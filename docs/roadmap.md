@@ -1033,7 +1033,11 @@ bulk anyway, and because baking a `ulimit`/90-second dependency into
 a routine `coqc` build would be a real cost for every future build,
 not a one-off probe -- the right fix for the *general* case is
 `Extract.v`'s own realizer-level string-handling speedup (already
-proven effective for the extracted OCaml path), not a bigger stack.
+proven effective for the extracted OCaml path), not a bigger stack --
+**done**, see this section's own later entry below (90s down to 1.28s
+under `vm_compute`, `ulimit` still needed but now for an orthogonal,
+unrelated reason: elaborating a 350KB string *literal*, not this
+project's own parsing code).
 
 **Done** (`"rminus"`/`"rdiv"`/`"ropp"` confirmed against real JSON
 text too, not just `"rplus"`/`"rmult"`): a second real probe --
@@ -1188,13 +1192,56 @@ bit-for-bit identical to Python's own `3.14` literal
 real, checked Python, confirmed to run correctly under actual Python
 too.
 
+**Done** (extending the string-handling speedup to the `vm_compute` path
+too, not just the extracted-OCaml one `Extract.v`'s own `Extract
+Constant` pragmas already covered): root-caused directly, not
+guessed. `Json.v`'s `parse_qtext` (the entry point every quoted string
+in the input goes through) used to call `String.length` on the
+*entire remaining input* every time a quoted string started, purely
+to hand `parse_text_chars` a fuel bound it never structurally needed --
+harmless for the OCaml path (`Extract.v`'s realizer ignores fuel and
+scans directly) but a genuine O(n^2) cost in pure Gallina/`vm_compute`,
+since most of a real `coqc`-extracted module's bytes *are* quoted
+strings (every `"what"`/`"name"` key and value). `parse_text_chars` is
+rewritten to recurse structurally on the string itself with no `fuel`
+parameter at all -- its backslash-escape case recurses two characters
+deep via nested destructuring (`rest2` obtained by matching `rest`,
+itself obtained by matching the original string), the same
+iterated-subterm shape Coq's guard checker already accepts for
+`Nat.div2`-style `S (S n')` recursion, so no well-founded-recursion
+machinery was needed. `parse_qtext` is `Opaque` past its own proof
+block and every downstream file (`PyPrint.v`, `RealJson.v`) only ever
+rewrites with `parse_qtext_print`'s *statement*, never its
+implementation, so the fix (and its reproof, actually slightly
+*shorter* than before since the fuel side-conditions disappear) stayed
+entirely local to `Json.v` -- confirmed by rebuilding the whole
+project (`coq`, `examples`, `physics`, `test`, `wave_sim`) with no
+other file touched besides `Extract.v`'s matching realizer-arity
+update. Measured, not estimated: a real ~350KB module (the same
+Coquelicot-derived capture this section's `quad`/`combo`/`absdiff`
+probes above are each one declaration of) was re-extracted fresh via
+`coqc`/`coq-coquelicot`, and a standalone microbenchmark walking the
+*identical* string and calling old-vs-new `parse_qtext` on every one
+of its 12,409 quoted strings (same count, same result, both versions)
+went from 65.6s to 0.4s under `vm_compute` -- a ~165x speedup, and
+`real_decl_of_module_json` on the *actual* full module (not a
+microbenchmark) now completes in 1.28s under `Time Eval vm_compute`,
+down from the ~90s this section documented above. A raised `ulimit -s`
+is still needed to even reach that point, though -- confirmed this is
+an *orthogonal*, unrelated cost: `coqc`'s own front-end elaborating a
+350KB string *literal* into the kernel's nested `String` term (before
+`vm_compute` ever runs) is already O(stack depth proportional to
+string length) by construction, independent of which parser function
+is later applied to it. That's a cost of writing a 350KB string as a
+literal in a `.v` file at all, not of this project's own parsing code
+-- out of scope for this fix, and not expected to matter for the
+remote-deployment path (the deployment entry below), where the agent's
+own `.v` files are the proof source, not a `.v` file containing a
+pre-serialized giant JSON string constant.
+
 Still not done: anything
 nested deeper where the error-propagation question above would
-actually start to matter;
-extending `Extract.v`'s own realizer-level string speedup to cover
-`vm_compute`'s in-Coq path (not just the extracted-OCaml one it
-already covers), which is what would let a future `coqc`-build-time
-tool actually parse a whole captured module this size in practice; and
+actually start to matter; and
 the general compositional correspondence theorem itself, if ever
 prioritized -- which the paragraph above already scopes as Flocq-scale
 work, not a bounded next step.

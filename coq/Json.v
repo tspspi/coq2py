@@ -389,101 +389,96 @@ Definition quote_text (x : string) : string :=
 
 (** Consumes characters up to (and past) the first *unescaped* closing
     quote, undoing [escape_text]'s own escaping one character at a
-    time. [fuel] is a plain structural bound on how many of the
-    *original* characters remain (one unit per original character,
-    regardless of whether it printed as one or two), not [eval]'s
-    kind of open-ended fuel -- any [fuel] at least the original
-    string's own length always suffices, proved below. *)
-Fixpoint parse_text_chars (fuel : nat) (s : string) : option (string * string) :=
-  match fuel with
-  | O => None
-  | S fuel' =>
-      match s with
-      | EmptyString => None
-      | String c rest =>
-          if Ascii.eqb c quote_char then Some (EmptyString, rest)
-          else if Ascii.eqb c backslash_char then
-            match rest with
-            | String c2 rest2 =>
-                match parse_text_chars fuel' rest2 with
-                | Some (tok, rest3) => Some (String c2 tok, rest3)
-                | None => None
-                end
-            | EmptyString => None
-            end
-          else
-            match parse_text_chars fuel' rest with
-            | Some (tok, rest') => Some (String c tok, rest')
+    time. Structural recursion directly on [s] -- no [fuel] parameter
+    at all: every step consumes at least one character of [s] (two,
+    in the backslash-escape case, both obtained by nested
+    destructuring of [s] itself -- [rest2] comes from matching [rest],
+    which came from matching [s] -- the same iterated-subterm shape
+    Coq's guard checker already accepts for e.g. [Nat.div2]'s
+    [S (S n')] recursion, so this needs no well-founded-recursion
+    machinery either).
+
+    This used to carry a [fuel : nat] parameter purely as a
+    termination device, with [parse_qtext] below supplying
+    [S (String.length s1)] -- a safe bound, but one that required
+    computing the length of the *entire remaining input* every single
+    time a quoted string started. That's harmless for the extracted
+    OCaml path ([Extract.v]'s own realizer below ignores [fuel]
+    entirely and scans directly) but is a genuine O(n^2) cost in pure
+    Gallina/[vm_compute], since most of a real [coqc]-extracted
+    module's bytes are quoted-string keys/values: parsing a module of
+    length n triggers O(n) quoted strings, each paying an O(remaining
+    length) [String.length] call, for O(n^2) total -- confirmed to be
+    the dominant cost of the 90-second/raised-[ulimit] full-module
+    [vm_compute] parse documented in docs/roadmap.md's Coquelicot
+    section. Dropping [fuel] removes this call site entirely; see
+    that same roadmap entry for the measured before/after. *)
+Fixpoint parse_text_chars (s : string) : option (string * string) :=
+  match s with
+  | EmptyString => None
+  | String c rest =>
+      if Ascii.eqb c quote_char then Some (EmptyString, rest)
+      else if Ascii.eqb c backslash_char then
+        match rest with
+        | String c2 rest2 =>
+            match parse_text_chars rest2 with
+            | Some (tok, rest3) => Some (String c2 tok, rest3)
             | None => None
             end
-      end
+        | EmptyString => None
+        end
+      else
+        match parse_text_chars rest with
+        | Some (tok, rest') => Some (String c tok, rest')
+        | None => None
+        end
   end.
 
 Lemma parse_text_chars_unfold :
-  forall fuel' s,
-    parse_text_chars (S fuel') s =
-      match s with
-      | EmptyString => None
-      | String c rest =>
-          if Ascii.eqb c quote_char then Some (EmptyString, rest)
-          else if Ascii.eqb c backslash_char then
-            match rest with
-            | String c2 rest2 =>
-                match parse_text_chars fuel' rest2 with
-                | Some (tok, rest3) => Some (String c2 tok, rest3)
-                | None => None
-                end
-            | EmptyString => None
-            end
-          else
-            match parse_text_chars fuel' rest with
-            | Some (tok, rest') => Some (String c tok, rest')
-            | None => None
-            end
-      end.
+  forall c rest,
+    parse_text_chars (String c rest) =
+      (if Ascii.eqb c quote_char then Some (EmptyString, rest)
+       else if Ascii.eqb c backslash_char then
+         match rest with
+         | String c2 rest2 =>
+             match parse_text_chars rest2 with
+             | Some (tok, rest3) => Some (String c2 tok, rest3)
+             | None => None
+             end
+         | EmptyString => None
+         end
+       else
+         match parse_text_chars rest with
+         | Some (tok, rest') => Some (String c tok, rest')
+         | None => None
+         end).
 Proof. reflexivity. Qed.
 
 Definition parse_qtext (s : string) : option (string * string) :=
   match s with
   | String a s1 =>
-      if Ascii.eqb a quote_char then parse_text_chars (S (String.length s1)) s1
+      if Ascii.eqb a quote_char then parse_text_chars s1
       else None
   | EmptyString => None
   end.
 
 Lemma parse_text_chars_print :
-  forall x fuel, (String.length x <= fuel)%nat ->
-    forall rest, parse_text_chars (S fuel) (escape_text x ++ String quote_char rest) = Some (x, rest).
+  forall x rest, parse_text_chars (escape_text x ++ String quote_char rest) = Some (x, rest).
 Proof.
-  induction x as [| c x' IH]; intros fuel Hfuel rest.
+  induction x as [| c x' IH]; intro rest.
   - reflexivity.
-  - destruct fuel as [| fuel']; [simpl in Hfuel; lia|].
-    simpl in Hfuel. assert (Hfuel' : (String.length x' <= fuel')%nat) by lia.
-    rewrite escape_text_cons.
+  - rewrite escape_text_cons.
     destruct (Ascii.eqb c quote_char) eqn:Hq.
     + apply Ascii.eqb_eq in Hq; subst.
       cbn [append]. rewrite parse_text_chars_unfold. cbn [Ascii.eqb quote_char backslash_char].
-      rewrite (IH fuel' Hfuel' rest). reflexivity.
+      rewrite (IH rest). reflexivity.
     + destruct (Ascii.eqb c backslash_char) eqn:Hb.
       * apply Ascii.eqb_eq in Hb; subst.
         cbn [append]. rewrite parse_text_chars_unfold. cbn [Ascii.eqb quote_char backslash_char].
-        rewrite (IH fuel' Hfuel' rest). reflexivity.
+        rewrite (IH rest). reflexivity.
       * cbn [append]. rewrite parse_text_chars_unfold. cbn [Ascii.eqb quote_char backslash_char].
         rewrite Hq, Hb.
-        rewrite (IH fuel' Hfuel' rest). reflexivity.
-Qed.
-
-Lemma escape_text_append_length_ge :
-  forall x s, (String.length x <= String.length (escape_text x ++ s))%nat.
-Proof.
-  induction x as [| c x' IH]; intro s.
-  - simpl. lia.
-  - rewrite escape_text_cons.
-    destruct (Ascii.eqb c quote_char) eqn:Hq; simpl.
-    + pose proof (IH s) as IHs. simpl in IHs. lia.
-    + destruct (Ascii.eqb c backslash_char) eqn:Hb; simpl.
-      * pose proof (IH s) as IHs. simpl in IHs. lia.
-      * pose proof (IH s) as IHs. simpl in IHs. lia.
+        rewrite (IH rest). reflexivity.
 Qed.
 
 Theorem parse_qtext_print :
@@ -492,8 +487,7 @@ Proof.
   intros x rest. unfold parse_qtext, quote_text.
   simpl.
   rewrite string_append_assoc. simpl.
-  pose proof (escape_text_append_length_ge x (String quote_char rest)) as Hfuel.
-  exact (parse_text_chars_print x (String.length (escape_text x ++ String quote_char rest)) Hfuel rest).
+  exact (parse_text_chars_print x rest).
 Qed.
 
 (* ----------------------------------------------------------------- *)

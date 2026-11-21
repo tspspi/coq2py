@@ -124,10 +124,13 @@ Extract Constant expect => "(fun lit s ->
     character-by-character [String c rest] recursion as [take_while]
     above, called once per quoted string in the input -- plentiful in
     real extraction JSON (every object's ["what"]/["name"] key and
-    value). [fuel] is a Coq-side termination device only ([parse_text_chars]
-    always halts on its own, at the closing quote, well before fuel
-    exhausts); the realizer below ignores it and scans directly. *)
-Extract Constant parse_text_chars => "(fun _fuel s ->
+    value). [Json.v] no longer threads a [fuel] parameter through this
+    at all (it was a Coq-side termination device only, dropped once
+    [parse_text_chars] was rewritten to recurse structurally on [s]
+    itself -- see that file's own comment); the realizer below matches
+    that signature and, as always, ignores Coq's own recursion
+    structure and scans directly. *)
+Extract Constant parse_text_chars => "(fun s ->
   let n = String.length s in
   let buf = Buffer.create 16 in
   let rec go i =
