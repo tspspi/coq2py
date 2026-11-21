@@ -62,6 +62,28 @@ Extraction Language OCaml.
     hand -- strictly worse than taking the already-trusted stock pragma
     and its one honest linking cost. *)
 
+(** [Lang.v]'s [prim_exp]/[prim_ln]/[prim_pow] are new, project-
+    introduced [Axiom]s (see that file's header for exactly how little
+    they claim) standing in for the transcendental primitives
+    [PrimFloat] itself doesn't have. An [Axiom] has no Gallina body to
+    extract at all -- Coq's extraction would otherwise emit a dummy
+    placeholder that aborts at runtime if ever called -- so, same as
+    [Json.v]'s hand-realized parser primitives above, each needs its
+    own [Extract Constant] to become an actually-callable OCaml
+    function. [Float64.of_float]/[Float64.to_float] (the same
+    [coq-core.kernel] module [ExtrOCamlFloats] itself realizes
+    [PrimFloat.float] against, confirmed directly: [Float64.mli]
+    documents [t] as "currently implemented by OCaml's [float] type")
+    convert at the boundary to OCaml's own [Stdlib.exp]/[Stdlib.log]/
+    [ ** ], the only point in this entire codebase where a numeric
+    result is produced without anything in Coq to check it against --
+    see [Lang.v]'s header and `docs/roadmap.md` for why that's exactly
+    the honest, unavoidable shape of this particular trust boundary,
+    not a shortcut. *)
+Extract Constant prim_exp => "(fun x -> Float64.of_float (Stdlib.exp (Float64.to_float x)))".
+Extract Constant prim_ln => "(fun x -> Float64.of_float (Stdlib.log (Float64.to_float x)))".
+Extract Constant prim_pow => "(fun x y -> Float64.of_float (Float64.to_float x ** Float64.to_float y))".
+
 (** [RealJson.v] (this project's new real-[coqc]-JSON ingestion parser,
     see that file's header) exposed a genuine performance problem in
     *existing* [Json.v]/[nat] extraction choices that its own small,

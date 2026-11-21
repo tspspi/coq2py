@@ -1252,6 +1252,66 @@ produce example *source* `.v` files to extract from, the same
 "devtime-only" role `coqc` itself already plays for every other
 `RealJson.v` capture.
 
+**Done** (`exp`/`ln`/a binary real power — a new, honestly-scoped axiom
+category, not a bounded addition to the existing `rplus`/`rmult`/...
+style): `PrimFloat` has no native transcendental primitive at all
+(confirmed directly: `Print PrimFloat` lists `abs`/`sqrt`/`opp`/`eqb`/
+`ltb`/`leb`/`compare`/`mul`/`add`/`sub`/`div` and the bit-level
+`of_uint63`/`normfr_mantissa`/`frshiftexp`/`ldshiftexp`/`next_up`/
+`next_down` — nothing resembling `exp`/`log`/`pow`), and unlike
+`rmax`/`rmin` there is no finite composition of what's already in
+`expr` that computes one either. `Lang.v` gains three new, genuinely
+project-introduced `Axiom`s — `prim_exp`/`prim_ln : float -> float`,
+`prim_pow : float -> float -> float` — kept to the barest honest claim
+(a function of the right type exists; no equation or property about
+what it computes is assumed, not even "agrees with classical
+`Rpower`/`exp`/`ln` on any input"). That bare-existence scope is what
+makes `EFExp`/`EFLn`/`EFPow`'s `translate_preserves_semantics` cases
+trivial — `eval`/`peval` call the same opaque axiom on the same
+argument, the same reason `EFSqrt`'s own case already was, not because
+anything is known about the result. The one cost this honestly defers
+elsewhere: with no Gallina body, `prim_exp`/`prim_ln`/`prim_pow` leave
+`vm_compute`/`simpl` permanently stuck on them, so the "matches this
+exact float" check every arithmetic-only example in this project uses
+isn't available for anything built from these — what's checked instead
+(`examples/CoquelicotDemo.v`) is a fully symbolic `reflexivity` showing
+`real_eval`/`eval` reduce *exactly* down to the opaque call and no
+further (the same technique `examples/physics/Discretize.v`'s
+`one_pass_symbolic_7point` already uses), the full translation/
+round-trip proof chain, `Print Assumptions` confirming exactly these
+three new axioms appear (alongside `PrimFloat`'s own pre-existing
+kernel primitives, nothing from `Json.v`'s unrelated float-codec
+axioms), and the *generated Python* actually running and producing the
+numerically expected answer for a concrete, hand-checked input — real
+`math.exp`/`math.log`/`math.pow` are computable, even though the
+axiomatized Coq side deliberately isn't.
+
+No new `RealIR.v` constructor was needed: confirmed directly (three
+fresh probes, actually run through `coqc` with `coq-coquelicot`
+installed, each wrapping the transcendental inside a non-trivial
+expression to dodge an eta-reduction edge case confirmed separately —
+a *bare* wrapper like `myexp (x : R) := exp x` extracts as `argnames
+[]` with body just the bare global `exp`, since Coq's extraction
+eta-contracts the trivial identity application), `exp`/`ln` extract as
+plain unary `expr:apply`/`expr:global` calls (the same shape `RApp1`
+already recognizes for `ropp`/`rabs`/`sqrt`) and `Rpower` extracts as a
+plain binary call named `rpower` (the same shape `RApp2` already
+recognizes for `rmax`/`rmin`) — so this closed with three new names in
+the existing, generic `RApp1`/`RApp2` dispatch, not a new recognizer
+shape. `PyPrint.v` renders `EFPow` as `math.pow(...)`, deliberately not
+Python's own `**` operator: confirmed directly that `**` silently
+returns a *complex* number for a negative base and non-integer exponent
+(`(-1.0) ** 0.5` in real Python), while `math.pow` raises `ValueError`
+instead — a loud failure being the honest choice for a domain
+`EFPow`'s own `float`-only semantics never anticipates leaving.
+`Extract.v` realizes the three new axioms via `coq-core.kernel`'s own
+`Float64.of_float`/`Float64.to_float` (the same conversion
+`ExtrOCamlFloats` itself already realizes `PrimFloat.float` against)
+bridging to OCaml's `Stdlib.exp`/`Stdlib.log`/`( ** )` — the one place
+in this whole codebase where a numeric result is produced with nothing
+in Coq to check it against, an honest, unavoidable shape for this
+particular trust boundary, not a shortcut.
+
 ## Electromagnetism example: symmetry, Maxwell's equations, the wave equation
 
 `examples/physics/` is a larger worked example built on reusable modules:

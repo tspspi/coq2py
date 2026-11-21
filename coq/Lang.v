@@ -94,6 +94,47 @@ this project introduces here, not a hidden assumption -- classical
     [translate_preserves_semantics] -- holds unconditionally either
     way.
 
+    [EFExp]/[EFLn]/[EFPow] (exp, natural log, and a binary real power)
+    are a *fourth* kind of addition, distinct from each of the three
+    above: [PrimFloat] has no native transcendental primitive to call
+    at all (confirmed directly: [Print PrimFloat] lists [abs]/[sqrt]/
+    [opp]/[eqb]/[ltb]/[leb]/[compare]/[mul]/[add]/[sub]/[div] and the
+    bit-level [of_uint63]/[normfr_mantissa]/[frshiftexp]/[ldshiftexp]/
+    [next_up]/[next_down] -- nothing resembling [exp]/[log]/[pow]),
+    *and*, unlike [EFMax]/[EFMin], there is no way to build one from
+    what's already here either: [+]/[-]/[*]/[/]/[sqrt]/[abs]/[opp]/
+    comparisons cannot compute a transcendental function by any finite
+    composition. So [prim_exp]/[prim_ln]/[prim_pow] below are declared
+    as new [Axiom]s -- a genuinely new trust category this project
+    introduces, distinct from the ones GOAL.md already documents
+    ([PrimFloat]'s own kernel-trusted primitives; the stdlib's
+    [FloatAxioms.SF2Prim_Prim2SF]). Deliberately kept to the *barest*
+    honest claim: each axiom only asserts a function of the right
+    *type* exists ([float -> float], or [float -> float -> float] for
+    [prim_pow]) -- no equation or property about what it computes is
+    assumed, not even "agrees with Coq's classical [Rpower]/[exp]/[ln]
+    on any particular input". That means these axioms carry no
+    semantic content to prove anything *about* -- which is exactly
+    what makes them safe to add: [translate_preserves_semantics]'s new
+    cases below hold simply because [eval]/[peval] both call the same
+    opaque [prim_exp]/[prim_ln]/[prim_pow] on the same argument, the
+    same reason [EFSqrt]'s own case is trivial, *not* because anything
+    is known about the result. The one-time cost this honestly defers
+    elsewhere: [prim_exp]/[prim_ln]/[prim_pow] have no Gallina body, so
+    [vm_compute]/[simpl] get permanently stuck on them -- a concrete
+    "matches this exact float" check (the style every arithmetic-only
+    example in this project already uses) is not available for any
+    [expr] built from these; what *is* checked (see
+    `examples/CoquelicotDemo.v`) is the translation/round-trip proof
+    chain structurally, `Print Assumptions` confirming exactly these
+    three new axioms (and no others) appear, and the *generated
+    Python* actually running and producing numerically sensible
+    results -- real [math.exp]/[math.log]/[math.pow] are computable,
+    even though the axiomatized Coq side deliberately isn't. See
+    [Extract.v] for where [prim_exp]/[prim_ln]/[prim_pow] are realized
+    (bound to OCaml's own transcendental functions) and
+    `docs/roadmap.md` for the full write-up.
+
     [ERepeat n x body init] is bounded iteration: evaluate [init] to a
     starting value, then apply [body] (with [x] bound to the current
     value) exactly [n] times, [n] a literal [nat] fixed at "compile
@@ -278,6 +319,14 @@ Import ListNotations.
 Open Scope Z_scope.
 Open Scope string_scope.
 
+(** New, project-introduced axioms for the three transcendental
+    primitives [PrimFloat] itself doesn't have -- see this file's own
+    header comment (the [EFExp]/[EFLn]/[EFPow] paragraph) for why
+    these are axioms at all and exactly how little they claim. *)
+Axiom prim_exp : float -> float.
+Axiom prim_ln : float -> float.
+Axiom prim_pow : float -> float -> float.
+
 Definition var := string.
 
 Inductive expr : Type :=
@@ -311,6 +360,9 @@ Inductive expr : Type :=
   | EFSqrt (e : expr)
   | EFMax (e1 e2 : expr)
   | EFMin (e1 e2 : expr)
+  | EFExp (e : expr)
+  | EFLn (e : expr)
+  | EFPow (e1 e2 : expr)
   | ERepeat (n : nat) (x : var) (body init : expr)
   | EDiv (e1 e2 : expr)
   | EMod (e1 e2 : expr)
@@ -546,6 +598,21 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
           Some (VFloat (if PrimFloat.ltb f2 f1 then f2 else f1))
       | _, _ => None
       end
+  | EFExp e1 =>
+      match eval fuel' rho e1 with
+      | Some (VFloat f1) => Some (VFloat (prim_exp f1))
+      | _ => None
+      end
+  | EFLn e1 =>
+      match eval fuel' rho e1 with
+      | Some (VFloat f1) => Some (VFloat (prim_ln f1))
+      | _ => None
+      end
+  | EFPow e1 e2 =>
+      match eval fuel' rho e1, eval fuel' rho e2 with
+      | Some (VFloat f1), Some (VFloat f2) => Some (VFloat (prim_pow f1 f2))
+      | _, _ => None
+      end
   | ERepeat n x body init =>
       match eval fuel' rho init with
       | Some v0 => iterate n (fun v => eval fuel' ((x, v) :: rho) body) v0
@@ -769,6 +836,10 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EFAbs e1 => expr_idents_valid is_valid_ident e1
   | EFSqrt e1 => expr_idents_valid is_valid_ident e1
   | EFMax e1 e2 | EFMin e1 e2 =>
+      andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
+  | EFExp e1 => expr_idents_valid is_valid_ident e1
+  | EFLn e1 => expr_idents_valid is_valid_ident e1
+  | EFPow e1 e2 =>
       andb (expr_idents_valid is_valid_ident e1) (expr_idents_valid is_valid_ident e2)
   | ERepeat _ x body init =>
       andb (is_valid_ident x)

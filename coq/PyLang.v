@@ -65,6 +65,9 @@ Inductive pyexpr : Type :=
   | PFSqrt (e1 : pyexpr)
   | PFMax (e1 e2 : pyexpr)
   | PFMin (e1 e2 : pyexpr)
+  | PFExp (e1 : pyexpr)
+  | PFLn (e1 : pyexpr)
+  | PFPow (e1 e2 : pyexpr)
   | PRepeat (n : nat) (x : var) (body init : pyexpr)
   | PDiv (e1 e2 : pyexpr)
   | PMod (e1 e2 : pyexpr)
@@ -274,6 +277,21 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
       match peval fuel' rho e1, peval fuel' rho e2 with
       | Some (PVFloat f1), Some (PVFloat f2) =>
           Some (PVFloat (if PrimFloat.ltb f2 f1 then f2 else f1))
+      | _, _ => None
+      end
+  | PFExp e1 =>
+      match peval fuel' rho e1 with
+      | Some (PVFloat f1) => Some (PVFloat (prim_exp f1))
+      | _ => None
+      end
+  | PFLn e1 =>
+      match peval fuel' rho e1 with
+      | Some (PVFloat f1) => Some (PVFloat (prim_ln f1))
+      | _ => None
+      end
+  | PFPow e1 e2 =>
+      match peval fuel' rho e1, peval fuel' rho e2 with
+      | Some (PVFloat f1), Some (PVFloat f2) => Some (PVFloat (prim_pow f1 f2))
       | _, _ => None
       end
   | PRepeat n x body init =>

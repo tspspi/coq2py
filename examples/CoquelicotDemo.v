@@ -621,3 +621,207 @@ Proof. vm_compute. reflexivity. Qed.
 
 Compute py_function "decimal_lit" (match decimal_lit_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
   (translate decimal_lit_expr).
+
+
+(* ------------------------------------------------------------------ *)
+(** * Transcendentals: exp/ln/pow, a new and honestly-scoped axiom category
+
+    [PrimFloat] has no native [exp]/[log]/power primitive at all
+    (confirmed directly: [Print PrimFloat] -- see [Lang.v]'s header),
+    and unlike ["rmax"]/["rmin"] there is no way to build one from
+    what [expr] already has either. [Lang.v]'s [prim_exp]/[prim_ln]/
+    [prim_pow] are new, project-introduced [Axiom]s closing that gap --
+    deliberately the barest possible claim (a function of the right
+    *type* exists, nothing about what it computes), so this is a new
+    trust category, not a reuse of [PrimFloat]'s own kernel-trusted
+    primitives or the stdlib's [FloatAxioms.SF2Prim_Prim2SF]. See that
+    file's header for the full rationale.
+
+    Three fresh probes, actually run through [coqc] with
+    [coq-coquelicot] installed (not assumed by analogy): [expdiff (x y
+    : R) := exp (x - y)], [lnsum (x y : R) := ln (x + y)], [powprod (x
+    y z : R) := Rpower x (y * z)] -- each wrapping its transcendental
+    inside a non-trivial expression specifically to avoid an
+    eta-reduction edge case confirmed separately (a *bare* wrapper
+    like [myexp (x : R) := exp x] extracts as argnames [[]] with body
+    just the bare global [exp], since Coq's extraction eta-contracts
+    the trivial identity application -- the non-trivial bodies here
+    sidestep that, the same way [combo]/[absdiff] above already did
+    for ["ropp"]/["rdiv"]). Confirmed directly (not assumed): [exp]/
+    [ln] extract as plain unary [expr:apply]/[expr:global] calls (the
+    same shape [RApp1] already recognizes for ["ropp"]/["rabs"]/
+    ["sqrt"]), and [Rpower] extracts as a plain binary call named
+    ["rpower"] (the same shape [RApp2] already recognizes for
+    ["rmax"]/["rmin"]) -- so no new [RealIR.v] constructor was needed
+    at all, only three new names in the existing, generic [RApp1]/
+    [RApp2] dispatch. *)
+Definition expdiff_ir : real_expr :=
+  RApp1 "exp" (RApp2 "rminus" (RRel "x") (RRel "y")).
+Definition lnsum_ir : real_expr :=
+  RApp1 "ln" (RApp2 "rplus" (RRel "x") (RRel "y")).
+Definition powprod_ir : real_expr :=
+  RApp2 "rpower" (RRel "x") (RApp2 "rmult" (RRel "y") (RRel "z0")).
+
+(** [real_eval]/[eval] get permanently stuck on [prim_exp]/[prim_ln]/
+    [prim_pow] -- they have no Gallina body, by design (this file's
+    header, [Lang.v]'s header) -- so the "matches this exact float"
+    style check every arithmetic-only example above uses isn't
+    available here. What *is* available, and just as strong a
+    structural guarantee: a fully symbolic [reflexivity] check (the
+    same technique [examples/physics/Discretize.v]'s
+    [one_pass_symbolic_7point] uses) showing [real_eval]/[eval] reduce
+    *exactly* down to the opaque axiom call and no further, for
+    arbitrary float inputs, not just one concrete example. *)
+Example expdiff_ir_matches_expected_shape :
+  forall x y : PrimFloat.float,
+    real_eval [("x", VFloat x); ("y", VFloat y)] expdiff_ir
+    = Some (VFloat (prim_exp (PrimFloat.sub x y))).
+Proof. intros. reflexivity. Qed.
+
+Example lnsum_ir_matches_expected_shape :
+  forall x y : PrimFloat.float,
+    real_eval [("x", VFloat x); ("y", VFloat y)] lnsum_ir
+    = Some (VFloat (prim_ln (PrimFloat.add x y))).
+Proof. intros. reflexivity. Qed.
+
+Example powprod_ir_matches_expected_shape :
+  forall x y z : PrimFloat.float,
+    real_eval [("x", VFloat x); ("y", VFloat y); ("z0", VFloat z)] powprod_ir
+    = Some (VFloat (prim_pow x (PrimFloat.mul y z))).
+Proof. intros. reflexivity. Qed.
+
+Definition expdiff_expr : expr :=
+  match real_to_expr expdiff_ir with Some e => e | None => EFConst 0 end.
+Definition lnsum_expr : expr :=
+  match real_to_expr lnsum_ir with Some e => e | None => EFConst 0 end.
+Definition powprod_expr : expr :=
+  match real_to_expr powprod_ir with Some e => e | None => EFConst 0 end.
+
+Example expdiff_ir_translates : real_to_expr expdiff_ir = Some expdiff_expr.
+Proof. reflexivity. Qed.
+Example lnsum_ir_translates : real_to_expr lnsum_ir = Some lnsum_expr.
+Proof. reflexivity. Qed.
+Example powprod_ir_translates : real_to_expr powprod_ir = Some powprod_expr.
+Proof. reflexivity. Qed.
+
+Theorem expdiff_idents_valid : expr_idents_valid is_valid_ident expdiff_expr = true.
+Proof. reflexivity. Qed.
+Theorem lnsum_idents_valid : expr_idents_valid is_valid_ident lnsum_expr = true.
+Proof. reflexivity. Qed.
+Theorem powprod_idents_valid : expr_idents_valid is_valid_ident powprod_expr = true.
+Proof. reflexivity. Qed.
+
+Corollary expdiff_json_roundtrip :
+  parse_expr_top (print_expr expdiff_expr) = Some (expdiff_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip expdiff_expr expdiff_idents_valid
+                (String.length (print_expr expdiff_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_append_nil_r in H. exact H.
+Qed.
+
+Corollary lnsum_json_roundtrip :
+  parse_expr_top (print_expr lnsum_expr) = Some (lnsum_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip lnsum_expr lnsum_idents_valid
+                (String.length (print_expr lnsum_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_append_nil_r in H. exact H.
+Qed.
+
+Corollary powprod_json_roundtrip :
+  parse_expr_top (print_expr powprod_expr) = Some (powprod_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip powprod_expr powprod_idents_valid
+                (String.length (print_expr powprod_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_append_nil_r in H. exact H.
+Qed.
+
+Corollary expdiff_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate expdiff_expr)
+      = option_map value_to_pyvalue (eval fuel rho expdiff_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Corollary lnsum_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate lnsum_expr)
+      = option_map value_to_pyvalue (eval fuel rho lnsum_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Corollary powprod_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate powprod_expr)
+      = option_map value_to_pyvalue (eval fuel rho powprod_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Compute print_expr expdiff_expr.
+Compute print_expr lnsum_expr.
+Compute print_expr powprod_expr.
+
+(** The real, running Python. [math.pow]'s own domain/edge-case
+    footnote is in [PyPrint.v]; nothing here checks it against
+    [prim_pow]'s own (unspecified) value -- only that real Python
+    actually runs and returns the numerically expected answer for a
+    concrete, hand-checked input (confirmed separately: [expdiff(5,2)
+    = exp(3) ~ 20.0855], [lnsum(4,3) = ln(7) ~ 1.9459],
+    [powprod(2,5,2) = 2**10 = 1024.0]). *)
+Compute py_function "expdiff" ["x"; "y"] (translate expdiff_expr).
+Compute py_function "lnsum" ["x"; "y"] (translate lnsum_expr).
+Compute py_function "powprod" ["x"; "y"; "z0"] (translate powprod_expr).
+
+(* ------------------------------------------------------------------ *)
+(** * Parsed from the real JSON text, not hand-built
+
+    [expdiff_module_json]/[lnsum_module_json]/[powprod_module_json]
+    below are the literal bytes [coqc] emitted for each declaration
+    (one declaration per module object, the same per-declaration shape
+    [quad_decl_json] above uses and for the same reason: this
+    recognizer was never going to look at anything else in a real
+    captured module anyway). *)
+Definition expdiff_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""expdiff"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""exp""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rminus""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""y""}]}]}}}]}".
+
+Definition expdiff_decl_parsed : option real_decl :=
+  real_decl_of_module_json expdiff_module_json "expdiff".
+
+Example expdiff_decl_parsed_matches_hand_built :
+  expdiff_decl_parsed = Some {| rd_argnames := ["x"; "y"]; rd_body := expdiff_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition lnsum_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""lnsum"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""ln""}, ""args"": [{""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rplus""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:rel"", ""name"": ""y""}]}]}}}]}".
+
+Definition lnsum_decl_parsed : option real_decl :=
+  real_decl_of_module_json lnsum_module_json "lnsum".
+
+Example lnsum_decl_parsed_matches_hand_built :
+  lnsum_decl_parsed = Some {| rd_argnames := ["x"; "y"]; rd_body := lnsum_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition powprod_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""powprod"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x"", ""y"", ""z0""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rpower""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rmult""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""y""}, {""what"": ""expr:rel"", ""name"": ""z0""}]}]}}}]}".
+
+Definition powprod_decl_parsed : option real_decl :=
+  real_decl_of_module_json powprod_module_json "powprod".
+
+Example powprod_decl_parsed_matches_hand_built :
+  powprod_decl_parsed = Some {| rd_argnames := ["x"; "y"; "z0"]; rd_body := powprod_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+(** Honest disclosure, not just claimed: confirmed directly (not
+    assumed), exactly the three new axioms this section introduces
+    ([prim_exp]/[prim_ln]/[prim_pow]) appear below, alongside
+    [PrimFloat]'s own pre-existing kernel-trusted primitives
+    ([float]/[add]/[sub]/[mul]/[div]/[abs]/[opp]/[sqrt]/[eqb]/[ltb]/
+    [leb]) that every float-using file in this project already
+    carries -- nothing from [Json.v]'s own [FloatAxioms]/classical
+    axioms shows up here at all, since this corollary never goes
+    through the JSON float codec. *)
+Print Assumptions expdiff_translation_correct.
+Print Assumptions lnsum_translation_correct.
+Print Assumptions powprod_translation_correct.

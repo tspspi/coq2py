@@ -518,6 +518,8 @@ Fixpoint real_eval (rho : env) (re : real_expr) {struct re} : option value :=
           else if string_dec fn "rabs" then Some (VFloat (PrimFloat.abs f))
           else if string_dec fn "sqrt" then Some (VFloat (PrimFloat.sqrt f))
           else if string_dec fn "rinv" then Some (VFloat (PrimFloat.div 1%float f))
+          else if string_dec fn "exp" then Some (VFloat (prim_exp f))
+          else if string_dec fn "ln" then Some (VFloat (prim_ln f))
           else None
       | _ => None
       end
@@ -544,6 +546,7 @@ Fixpoint real_eval (rho : env) (re : real_expr) {struct re} : option value :=
             Some (VFloat (if PrimFloat.ltb f1 f2 then f2 else f1))
           else if string_dec fn "rmin" then
             Some (VFloat (if PrimFloat.ltb f2 f1 then f2 else f1))
+          else if string_dec fn "rpower" then Some (VFloat (prim_pow f1 f2))
           else None
       | _, _ => None
       end
@@ -668,6 +671,8 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           else if string_dec fn "rabs" then Some (EFAbs e1)
           else if string_dec fn "sqrt" then Some (EFSqrt e1)
           else if string_dec fn "rinv" then Some (EFDiv (EFConst 1%float) e1)
+          else if string_dec fn "exp" then Some (EFExp e1)
+          else if string_dec fn "ln" then Some (EFLn e1)
           else None
       | None => None
       end
@@ -688,6 +693,7 @@ Fixpoint real_to_expr (re : real_expr) : option expr :=
           else if string_dec fn "rdiv" then Some (EFDiv e1 e2)
           else if string_dec fn "rmax" then Some (EFMax e1 e2)
           else if string_dec fn "rmin" then Some (EFMin e1 e2)
+          else if string_dec fn "rpower" then Some (EFPow e1 e2)
           else None
       | _, _ => None
       end
@@ -947,6 +953,14 @@ Proof.
        simpl; rewrite Hconst1, IH1;
        destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
        reflexivity|].
+    destruct (string_dec fn "exp") as [Heq|Hne8];
+      [inversion Htrans; subst; simpl; rewrite IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       reflexivity|].
+    destruct (string_dec fn "ln") as [Heq|Hne9];
+      [inversion Htrans; subst; simpl; rewrite IH1;
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       reflexivity|].
     discriminate.
   - (* RApp2 *)
     destruct (real_to_expr re1) as [e1|] eqn:Hre1; [|destruct (real_to_expr re2); discriminate].
@@ -1023,6 +1037,11 @@ Proof.
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
        reflexivity|].
     destruct (string_dec fn "rmin") as [Heq|Hne14];
+      [inversion Htrans; subst; simpl; rewrite IH1, IH2;
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       reflexivity|].
+    destruct (string_dec fn "rpower") as [Heq|Hne15];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
        destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
        destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];

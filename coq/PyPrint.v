@@ -301,6 +301,28 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PFSqrt e1 => "__import__(""math"").sqrt(" ++ py_expr e1 ++ ")"
   | PFMax e1 e2 => "max(" ++ py_expr e1 ++ ", " ++ py_expr e2 ++ ")"
   | PFMin e1 e2 => "min(" ++ py_expr e1 ++ ", " ++ py_expr e2 ++ ")"
+  (* [PFExp]/[PFLn]/[PFPow] translate [Lang.v]'s new, axiomatized
+     [prim_exp]/[prim_ln]/[prim_pow] (see that file's header for why
+     they're axioms with no assumed properties at all) -- this is the
+     one place where an *actual* numeric choice gets made, since
+     nothing about the axiom's value is fixed at the Coq level to
+     compare against. [math.exp]/[math.log], like [math.sqrt] above,
+     are single self-contained expressions needing [math] imported but
+     no new statement. [PFPow] deliberately renders as [math.pow(...)],
+     not Python's own [**] operator: confirmed directly that [**]
+     silently returns a *complex* number for a negative base and
+     non-integer exponent ([(-1.0) ** 0.5 = (6.123...e-17+1j)] in real
+     Python), while [math.pow] raises [ValueError] instead -- a loud
+     failure is the honest choice here, not a silent type change
+     [PFPow]'s own [float]-only domain never anticipates. Still
+     unverified, the same as [math.sqrt]'s sign-of-zero footnote above:
+     this project has no way to check [math.exp]/[math.log]/[math.pow]
+     against the axiom's own (unspecified) value, only that real
+     Python actually runs and returns a plausible-looking float for a
+     concrete, hand-checked input (see `examples/CoquelicotDemo.v`). *)
+  | PFExp e1 => "__import__(""math"").exp(" ++ py_expr e1 ++ ")"
+  | PFLn e1 => "__import__(""math"").log(" ++ py_expr e1 ++ ")"
+  | PFPow e1 e2 => "__import__(""math"").pow(" ++ py_expr e1 ++ ", " ++ py_expr e2 ++ ")"
   | PRepeat n x body init =>
       "((" ++ x ++ " := " ++ py_expr init ++ ")"
         ++ py_repeat_steps n x (py_expr body) ++ ", " ++ x ++ ")[-1]"

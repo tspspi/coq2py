@@ -73,3 +73,26 @@ long literal string gets retyped in one stretch of the conversation.
    empty/junk files behind (e.g. a bare word from a broken redirect
    turning into a 0-byte or multi-MB accidental file); these are not
    proof of a working change and must be removed, not committed.
+
+### Recurring trigger: Json.v's `end end end ...` chains
+
+Confirmed to recur in a later session, adding a new `expr`/`pyexpr`
+constructor (`EFExp`/`EFLn`/`EFPow`): `Json.v`'s `parse_expr` is one
+giant cascading `match ... with | Some ... | None => match ... end`
+chain, closed by a single line that is nothing but N repetitions of
+the bare word `end` (one per `| None =>`-opened nested `match`). Every
+new constructor's parser clause adds exactly one more `match`, so that
+closing line's `end` count must grow by exactly that many -- and
+`Edit`'s `old_string`/`new_string` reliably fails
+(`InputValidationError: ... type is expected as string but provided as
+unknown`) on that line specifically, precisely because it is such a
+long run of one repeated token. Do **not** retry `Edit` on it, even
+with a shorter surrounding context. Go straight to rule 1 above: read
+the line's current `end` count with a `python3 -c` one-liner
+(`line.count(' end')`), then rewrite just that one line (by its 0-
+indexed line number, via `readlines()`/`writelines()`) to the new
+count. The disjunctive-pattern lists a few hundred lines away
+(`destruct e as [ ... ]` in both `Json.v` and `Translate.v`) that must
+also grow by one entry per new constructor are comparatively short and
+`Edit` handles them fine -- it is specifically the bare-`end` run that
+needs the scripted approach, every time this pattern recurs.

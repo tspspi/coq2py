@@ -79,6 +79,7 @@ package: coq
 	cp coq/coq2py_core.ml coq/coq2py_core.mli ocaml/driver/
 	cd ocaml && dune build --profile release
 	mkdir -p $(DIST_DIR)
+	rm -f $(DIST_DIR)/coq2py
 	cp ocaml/_build/default/driver/main.exe $(DIST_DIR)/coq2py
 	strip $(DIST_DIR)/coq2py
 	cp docs/deployment.md $(DIST_DIR)/README.md
