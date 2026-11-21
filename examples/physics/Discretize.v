@@ -61,7 +61,20 @@
     as explicit runtime preconditions before running the simulation,
     rather than silently producing numerically meaningless output if
     they're violated. See that function's comment for the precise mapping
-    from each check back to the hypothesis or assumption it encodes. *)
+    from each check back to the hypothesis or assumption it encodes.
+
+    * The whole-grid loop, also now a proven [expr] term
+
+    Everything above is the *per-point* update rule. This file's final
+    section ([compute_interior_expr]/[one_pass_expr]/[wave_sim_expr])
+    goes one step further: a genuine, proven whole-grid stencil-plus-
+    time-loop simulator, built entirely from constructs [Lang.v]
+    already had (lists, self-recursive closures, [ERepeat]) -- closing
+    docs/roadmap.md's own "arrays/loops aren't in [expr] yet" gap for a
+    list-based (not numpy-array-based) simulator. See that section's
+    own header comment for the full account, including exactly what
+    this does and does not claim relative to [runtime/wave1d.py]'s own,
+    separately-maintained numpy fast path. *)
 
 From Coq Require Import Reals Lra String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -201,3 +214,224 @@ Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
     imports and calls per grid cell; see its header comment. *)
 Compute py_function "leapfrog_update" ["r"; "u_prev"; "u_left"; "u_center"; "u_right"]
   (translate leapfrog_update_expr).
+
+(* ----------------------------------------------------------------- *)
+(** * The whole-grid loop, as a real [expr] term -- not just the per-point update *)
+
+(** Everything above this point proves the *per-point* update rule
+    correct and extracts it; the grid allocation, boundary conditions,
+    and time-stepping loop that actually run it (`runtime/wave1d.py`)
+    were deliberately left as hand-written, unproven glue (see that
+    module's own docstring, and `docs/roadmap.md`'s "arrays/loops
+    aren't in `expr`/`pyexpr` yet" gap). This section closes that gap
+    -- for a genuine, if list-based rather than numpy-array-based,
+    whole-grid simulator -- using *zero* new [Lang.v]/[PyLang.v]/
+    [Translate.v]/[Json.v]/[PyPrint.v]/[PyRename.v] constructors:
+    [Lang.v]'s own [VList (list value)] (already backing [ENil]/
+    [ECons]/[EListMatch]), [ERec]/[ELam]/[EApp] (self-recursive
+    closures), [EPair]/[EFst]/[ESnd], [ELet], and [ERepeat] (bounded
+    iteration) are already enough to express "apply a 3-point stencil
+    across a whole list, fixing both ends, for [nt] time steps" --
+    this is purely a matter of *composing* already-proven pieces, not
+    inventing a new one.
+
+    [compute_interior_expr] walks two lists in lockstep -- [cs], the
+    current time step's grid (shrinking one element per step), and
+    [ps], the previous time step's grid (shrinking the same way, its
+    own *second* element -- [ps]'s first is the stencil's left
+    neighbor's own prev value, not needed for the point currently
+    being computed -- aligned with [cs]'s third): at each step the
+    first three elements of [cs] are exactly one point's full 3-point
+    spatial stencil, and [apply_leapfrog_update] rebinds them (plus
+    the matching prev value) to the names [leapfrog_update_expr] above
+    already expects, so the *exact*, already-proven update formula
+    runs unmodified -- not a re-derivation, a direct reuse. Recursion
+    stops (fixing the trailing boundary to [0]) once fewer than 3
+    elements remain, the same "stuck once the shape runs out, not
+    guessed" partiality this project's other recursive constructs
+    already have. [one_pass_expr] is one whole-grid time step: fix the
+    leading boundary to [0], then [compute_interior_expr] builds the
+    rest. [wave_sim_expr nt] is [nt] such steps chained by [ERepeat],
+    carrying [(prev, curr)] as its own loop state -- the exact
+    "u_prev, u_curr = u_curr, u_next" swap `runtime/wave1d.py` already
+    does, now inside the proven fragment instead of outside it. *)
+Definition apply_leapfrog_update : expr :=
+  ELet "u_prev" (EVar "p1") (
+   ELet "u_left" (EVar "c0") (
+    ELet "u_center" (EVar "c1") (
+     ELet "u_right" (EVar "c2") (
+      leapfrog_update_expr
+     )))).
+
+Definition compute_interior_expr : expr :=
+  ERec "ci" "cs" (ELam "ps" (
+    EListMatch (EVar "cs")
+      (ECons (EFConst 0) ENil)
+      "c0" "cs_rest1" (
+        EListMatch (EVar "cs_rest1")
+          (ECons (EFConst 0) ENil)
+          "c1" "cs_rest2" (
+            EListMatch (EVar "cs_rest2")
+              (ECons (EFConst 0) ENil)
+              "c2" "cs_rest3" (
+                EListMatch (EVar "ps")
+                  (ECons (EFConst 0) ENil)
+                  "p0" "ps_rest1" (
+                    EListMatch (EVar "ps_rest1")
+                      (ECons (EFConst 0) ENil)
+                      "p1" "ps_rest2" (
+                        ECons
+                          apply_leapfrog_update
+                          (EApp (EApp (EVar "ci")
+                                      (ECons (EVar "c1") (ECons (EVar "c2") (EVar "cs_rest3"))))
+                                (ECons (EVar "p1") (EVar "ps_rest2")))
+                      )
+                  )
+              )
+          )
+      )
+  )).
+
+Definition one_pass_expr : expr :=
+  ELam "r" (ELam "curr" (ELam "prev" (
+    ECons (EFConst 0)
+      (EApp (EApp compute_interior_expr (EVar "curr")) (EVar "prev"))
+  ))).
+
+Definition wave_sim_expr (nt : nat) : expr :=
+  ELam "r" (ELam "init" (
+    ERepeat nt "state"
+      (ELet "prev" (EFst (EVar "state"))
+        (ELet "curr" (ESnd (EVar "state"))
+          (EPair (EVar "curr")
+                 (EApp (EApp (EApp one_pass_expr (EVar "r")) (EVar "curr")) (EVar "prev")))))
+      (EVar "init")
+  )).
+
+Theorem one_pass_expr_idents_valid :
+  expr_idents_valid is_valid_ident
+    (EApp (EApp (EApp one_pass_expr (EVar "r")) (EVar "curr")) (EVar "prev")) = true.
+Proof. reflexivity. Qed.
+
+Theorem wave_sim_expr_idents_valid :
+  forall nt, expr_idents_valid is_valid_ident (wave_sim_expr nt) = true.
+Proof. intro nt. destruct nt; reflexivity. Qed.
+
+(** The strongest check: *fully symbolic* in every grid value (not one
+    concrete numeric instance) for a fixed 7-point grid -- [eval]
+    unfolds [compute_interior_expr]'s own recursion down to a
+    closed-form [PrimFloat] expression in the abstract bound variables
+    regardless of what they denote, confirming the whole stencil-over-
+    a-list machinery (not just the already-proven per-point formula in
+    isolation) genuinely computes the intended thing for *any* 7-point
+    grid, not merely one hand-picked example. This is a *fixed-size*
+    universally-quantified theorem, not an arbitrary-length one -- the
+    same "enough fuel/structure for this particular shape, not a
+    general induction" standard this project's other [ERec]-based
+    examples already use (`RealIR.v`'s header on [real_fix_decl]; see
+    `examples/NaturalCoq.v`'s [any_true_expr_matches_real_definition]),
+    since [compute_interior_expr]'s own recursion depth is the grid's
+    length, not a static property of the term. *)
+Example one_pass_symbolic_7point :
+  forall g0 g1 g2 g3 g4 g5 g6 h0 h1 h2 h3 h4 h5 h6 r : PrimFloat.float,
+    eval 80
+      [("g0", VFloat g0); ("g1", VFloat g1); ("g2", VFloat g2); ("g3", VFloat g3);
+       ("g4", VFloat g4); ("g5", VFloat g5); ("g6", VFloat g6);
+       ("h0", VFloat h0); ("h1", VFloat h1); ("h2", VFloat h2); ("h3", VFloat h3);
+       ("h4", VFloat h4); ("h5", VFloat h5); ("h6", VFloat h6);
+       ("r", VFloat r)]
+      (EApp (EApp (EApp one_pass_expr (EVar "r"))
+               (ECons (EVar "g0") (ECons (EVar "g1") (ECons (EVar "g2") (ECons (EVar "g3")
+                 (ECons (EVar "g4") (ECons (EVar "g5") (ECons (EVar "g6") ENil))))))))
+               (ECons (EVar "h0") (ECons (EVar "h1") (ECons (EVar "h2") (ECons (EVar "h3")
+                 (ECons (EVar "h4") (ECons (EVar "h5") (ECons (EVar "h6") ENil))))))))
+    = Some (VList
+        [VFloat 0;
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g1) h1)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g0 g2) (PrimFloat.mul 2 g1))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g2) h2)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g1 g3) (PrimFloat.mul 2 g2))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g3) h3)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g2 g4) (PrimFloat.mul 2 g3))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g4) h4)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g3 g5) (PrimFloat.mul 2 g4))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g5) h5)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g4 g6) (PrimFloat.mul 2 g5))));
+         VFloat 0]).
+Proof. intros. reflexivity. Qed.
+
+(** A genuine multi-step run of the *whole simulator* -- not just one
+    pass -- on a 7-point grid, unit pulse at the center, zero initial
+    velocity (prev = curr, matching `runtime/wave1d.py`'s own
+    convention), Courant number [r = 1] (the simplest CFL-satisfying
+    choice: [c = dt = dx = 1]), for 3 time steps. Cross-checked against
+    an independent, from-scratch Python computation of the same scheme
+    (not derived from this expression) before trusting it:
+
+    [[
+    >>> def leapfrog(r, up, ul, uc, ur): return 2*uc - up + r*(ul - 2*uc + ur)
+    >>> def one_pass(r, curr, prev):
+    ...     n = len(curr); out = [0.0]*n
+    ...     for i in range(1, n-1): out[i] = leapfrog(r, prev[i], curr[i-1], curr[i], curr[i+1])
+    ...     return out
+    >>> r = 1.0; curr = [0,0,0,1,0,0,0]; prev = curr[:]
+    >>> for _ in range(3): prev, curr = curr, one_pass(r, curr, prev)
+    >>> curr
+    [0.0, -1.0, 1.0, -1.0, 1.0, -1.0, 0.0]
+    >>> prev
+    [0.0, 1.0, -1.0, 1.0, -1.0, 1.0, 0.0]
+    ]]
+
+    -- exactly the pair [wave_sim_expr 3] below computes. *)
+Example wave_sim_3steps_7point :
+  eval 500 []
+    (EApp (EApp (wave_sim_expr 3) (EFConst 1))
+       (EPair
+          (ECons (EFConst 0) (ECons (EFConst 0) (ECons (EFConst 0) (ECons (EFConst 1)
+            (ECons (EFConst 0) (ECons (EFConst 0) (ECons (EFConst 0) ENil)))))))
+          (ECons (EFConst 0) (ECons (EFConst 0) (ECons (EFConst 0) (ECons (EFConst 1)
+            (ECons (EFConst 0) (ECons (EFConst 0) (ECons (EFConst 0) ENil)))))))))
+  = Some (VPair
+            (VList [VFloat 0; VFloat 1; VFloat (-1); VFloat 1; VFloat (-1); VFloat 1; VFloat 0])
+            (VList [VFloat 0; VFloat (-1); VFloat 1; VFloat (-1); VFloat 1; VFloat (-1); VFloat 0])).
+Proof. reflexivity. Qed.
+
+Corollary one_pass_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho)
+      (translate (EApp (EApp (EApp one_pass_expr (EVar "r")) (EVar "curr")) (EVar "prev")))
+      = option_map value_to_pyvalue
+          (eval fuel rho (EApp (EApp (EApp one_pass_expr (EVar "r")) (EVar "curr")) (EVar "prev"))).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Corollary wave_sim_translation_correct :
+  forall nt fuel rho,
+    peval fuel (env_to_pyenv rho) (translate (wave_sim_expr nt))
+      = option_map value_to_pyvalue (eval fuel rho (wave_sim_expr nt)).
+Proof. intros nt fuel rho. apply translate_preserves_semantics. Qed.
+
+Compute print_expr (wave_sim_expr 3).
+
+Corollary wave_sim_3_json_roundtrip :
+  parse_expr_top (print_expr (wave_sim_expr 3)) = Some (wave_sim_expr 3, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip (wave_sim_expr 3) (wave_sim_expr_idents_valid 3)
+                (String.length (print_expr (wave_sim_expr 3)) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H.
+  exact H.
+Qed.
+
+(** The generated Python: a list-of-nested-tuples simulator (the same
+    representation every other list in this project already renders
+    as -- not a numpy array the way `runtime/wave1d.py`'s own,
+    separately-maintained fast path uses), confirmed to run and
+    produce the exact pair above under actual Python, not just
+    checked in Coq. This is a second, slower-but-proven way to run
+    the simulator end to end, not a replacement for
+    `runtime/wave1d.py`'s numpy-based one: see this file's header and
+    `docs/roadmap.md`'s own entry on this for what remains genuinely
+    unformalized (numpy's own array semantics specifically). *)
+Compute py_function "wave_sim3" ["r"; "init"]
+  (translate (EApp (EApp (wave_sim_expr 3) (EVar "r")) (EVar "init"))).

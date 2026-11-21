@@ -1255,14 +1255,7 @@ error actually comes from) — this theorem proves the error's *leading
 term* is what remains after cubic-order matching, not that the leading
 term is small.
 
-What `Discretize.v` does *not* do is add arrays to `expr`/`pyexpr` itself
-(still the gap tracked above) — `ERepeat` (bounded iteration, now
-covered) doesn't close this one on its own, since the wave simulator's
-state is a whole grid, not a small, fixed-shape value `ERepeat` could
-carry around the way `examples/Kinematics.v`'s `euler_multi_step_expr`
-does for a `(x, v)` pair. Instead, `leapfrog_update_expr` is the proven,
-extracted *per-point* update rule (five scalar floats in, one out), and
-`runtime/wave1d.py` is a hand-written, explicitly unproven external
+`runtime/wave1d.py` remains a hand-written, explicitly unproven external
 runtime — in the same trust category as `ocaml/driver/main.ml`'s CLI glue
 or `PyPrint.v`'s pretty-printer — that allocates the numpy grid, applies
 Dirichlet boundary conditions, and drives the time-stepping loop, calling
@@ -1270,12 +1263,65 @@ the *literal* extracted `leapfrog_update` function (imported, not
 re-transcribed) once per step, over whole-array numpy slices (its body is
 plain `+`/`-`/`*`/`**`, so passing numpy arrays instead of scalars just
 works via Python's operator overloading — no separate "vectorized"
-rewrite was needed). This is a real, if narrower, way to reach "extracted
-Python actually running a simulator" without first doing the
-substantially larger numpy-semantics formalization described above; it
-is not a substitute for that formalization, which remains future work if
-arrays/loops ever need to live *inside* the proven subset (e.g. to prove
-something about the loop itself, not just each step it runs).
+rewrite was needed). This remains a real, if narrower, way to reach
+"extracted Python actually running a simulator" at numpy speed, and is
+*not* being replaced by what follows below.
+
+**Done** (the whole-grid loop, as a second, proven, list-based
+simulator): `examples/physics/Discretize.v`'s own final section closes
+the "arrays/loops aren't in `expr`/`pyexpr` yet" gap this entry used to
+end on — not via a new array type, but by noticing `Lang.v` already had
+everything needed: `VList`/`ENil`/`ECons`/`EListMatch` (a real,
+structural list, not an encoding), `ERec`/`ELam`/`EApp` (self-recursive
+closures, curried for the two-list case the way `RealIR.v`'s own
+`RSelfN` comment already established multi-argument recursion works),
+`EPair`/`EFst`/`ESnd`, `ELet`, and `ERepeat` (bounded iteration) — so
+`compute_interior_expr`/`one_pass_expr`/`wave_sim_expr` are a *pure
+composition* of already-proven pieces, needing zero new `Lang.v`/
+`PyLang.v`/`Translate.v`/`Json.v`/`PyPrint.v`/`PyRename.v` constructors,
+the same "nothing new to re-prove below this line" shape `RealIR.v`'s
+`real_fix_group_decl_to_expr` (landing on `ERecGroup`) already has.
+`compute_interior_expr` walks the current and previous time steps' grids
+in lockstep, rebinding each 3-point stencil (plus the matching previous
+value) to the exact names `leapfrog_update_expr` already expects via
+`ELet` — reusing that already-proven update formula verbatim, not
+re-deriving it — and stops (fixing the boundary to `0`) once fewer than
+3 elements remain; `one_pass_expr` is one whole-grid step; `wave_sim_expr
+nt` chains `nt` such steps via `ERepeat`, threading `(prev, curr)` as its
+own loop state — the exact `u_prev, u_curr = u_curr, u_next` swap
+`runtime/wave1d.py` already does, now *inside* the proven fragment too.
+
+What's actually proved about it, stated precisely (the same "concrete
+run, not a universally-quantified theorem" standard every other
+`ERec`-based recursive example in this project already uses, for the
+same reason — `RealIR.v`'s header on `real_fix_decl`: a self-recursive
+function's own recursion depth is its argument's size, not a static
+property of the term): `one_pass_symbolic_7point` is *fully symbolic* in
+every grid value (not one hand-picked numeric instance) for a fixed
+7-point grid, confirmed by `reflexivity` alone to reduce to the exact
+closed-form update formula at every interior point, for *any* values —
+confirming the whole stencil-over-two-lists machinery, not just the
+already-proven per-point formula in isolation. `wave_sim_3steps_7point`
+is a genuine multi-step run of the whole simulator (not just one pass) —
+a unit pulse on a 7-point grid, 3 time steps, Courant number `r = 1` —
+cross-checked against an independent, from-scratch Python computation of
+the same scheme (not derived from this expression) before trusting it.
+`Print Assumptions` on both shows no new axioms beyond the pre-existing
+`PrimFloat` primitives. The generated Python (a list-of-nested-tuples
+simulator, the same representation every other list in this project
+already renders as) was run for real too, confirmed to produce the exact
+pair `wave_sim_3steps_7point` computes in Coq.
+
+Honestly scoped, what this is *not*: not a replacement for
+`runtime/wave1d.py`'s numpy-array-based fast path (a second, slower,
+proven way to run the simulator, not a substitute for the first), and
+not an arbitrary-grid-length inductive theorem (the fixed-size,
+symbolic-values standard above, consistently with every other recursive
+`expr` example already in this project) — formalizing numpy's own array
+semantics specifically (mutable, fixed-size, vectorized) remains the
+substantially larger undertaking this entry originally deferred, if ever
+prioritized; what's closed here is "arrays/loops as *some* proven `expr`
+construct", not "numpy's own semantics as a proven `expr` construct".
 
 ## Deployment target: the remote host
 
