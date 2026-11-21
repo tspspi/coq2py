@@ -299,11 +299,56 @@ byte-identical Python to the hand-built version already in
 `examples/NaturalCoq.v`. This also landed the nested `Z0`/`Zpos`/
 `Zneg`/`XH`/`XO`/`XI` numeral reconstruction (folding real `expr:constructor`
 numeral encodings back into `RZLit`'s plain `Z`), so that item below is
-done too, not just the parser shell around it. Not yet proved: no
-roundtrip/soundness theorem for the parser itself (unlike `Json.v`'s
-own `parse_print_roundtrip`) -- correctness is checked empirically (the
-four instances above), not by proof; tracked as `RealJson.v`'s own next
-step, the file's header has the detail.
+done too, not just the parser shell around it.
+
+**Done** (`jvalue_parse_print_roundtrip`): `RealJson.v` now has its own
+proper print/parse round-trip theorem for the *generic* `jvalue` layer,
+mirroring `Json.v`'s own `parse_print_roundtrip` -- `print_jvalue`
+(added purely for this proof; nothing upstream ever prints a `jvalue`
+in practice) followed by `parse_jvalue` always recovers the original
+value, for any fuel at least `jvalue_fuel v` and any trailing `rest`
+not mistakable for more digits of a trailing `JNum` (`safe_rest`, the
+same proviso `Json.v`'s own `parse_number_print` already needs, for the
+same reason -- a text-based number grammar is inherently ambiguous
+against an adjacent digit without some terminator). Proved by strong
+induction on `jvalue_fuel`, the same `well_founded_induction lt_wf`
+pattern `Json.v`'s own theorem uses, with the array/object list-level
+cases built from two dedicated lemmas each (`print_parse_jarray_singleton`/
+`print_parse_jarray_roundtrip`, `print_parse_jobject_singleton`/
+`print_parse_jobject_roundtrip`) via the same "named Fixpoint mirroring
+an anonymous one, bridged by a `reflexivity`-proved equality lemma"
+technique already established for `PyLang.v`'s anonymous `fix`es, plus
+a `jvalue_list_fuel`/`jvalue_fields_fuel` pair of dedicated fuel
+measures (`Json.v`'s own `fields_fuel`/`fns_fuel` pattern) rather than
+inlining a `length + fold_right` formula that `lia` couldn't see
+through cleanly inside the induction. `Print Assumptions` confirms
+**zero axioms** -- a fully constructive proof, not resting on anything
+beyond what `Json.v` itself already proved (`parse_qtext_print`,
+`parse_number_print`, `string_append_assoc`, ...). One genuine, prior
+off-by-one surfaced and got fixed along the way: `jvalue_fuel`'s
+`JArray`/`JObject` cases needed *two* extra fuel units over their naive
+`S (length + fold_right max ...)` form, not one -- one for
+`parse_jvalue`'s own `"{"`/`"["` dispatch step, one more for
+`parse_jarray_elems`/`parse_jobject_fields`'s own first loop
+iteration (even an empty list still needs one fuel unit to check for
+the closing bracket) -- caught by the proof itself refusing to close
+at the tight boundary, not spotted by inspection first.
+
+Deliberately scoped to *only* this generic `jvalue` layer -- not the
+`real_expr_of_json`/`real_decl_of_json` interpretation layer built on
+top of it, which remains checked empirically (the instances above),
+not by proof, same as before. This split is principled, not an
+oversight: the generic layer's grammar is closed and stable (objects/
+arrays/strings/numbers/bools/null, unaffected by future `real_expr`
+feature additions), while the interpretation layer's own target is
+"whatever shapes `coqc`'s extraction can ever produce" -- an
+open-ended, moving target this project has already declined to chase
+elsewhere for a related reason (see the extraction-name-instability
+discussion earlier in this section, `resolve_intrinsic_name`). It's
+the exact same boundary `Json.v` itself draws between its own proven
+`expr`/`parse_expr` round-trip and the hand-verified-not-mechanically-
+proven claim that real `coqc`-extracted terms actually print through
+`PyPrint.v` the way the worked examples show.
 
 What `RealIR.v`/`RealJson.v` deliberately does *not* yet do, in
 roughly the order they'd be needed next:

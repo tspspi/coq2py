@@ -75,23 +75,34 @@
     have plenty of.
 
     What is proved here and what is not, stated plainly: [parse_json]
-    is a total, fuel-bounded function (it always terminates), but
-    unlike [Json.v]'s [parse_print_roundtrip] this file does not yet
-    carry a machine-checked roundtrip or soundness theorem of its own;
-    the proved, trusted end of the pipeline still starts at
-    [real_decl] ([real_decl_to_expr_preserves_semantics], already
-    proved, in [RealIR.v]). Correctness of parsing real [coqc] output
-    into a [real_decl] is checked, for now, by actually running it on
-    real extracted JSON (four confirmed, working instances: [clamp_nonneg]'s
+    is a total, fuel-bounded function (it always terminates), and now
+    *does* carry a machine-checked roundtrip theorem of its own --
+    [jvalue_parse_print_roundtrip], right after [parse_json] below,
+    mirroring [Json.v]'s own [parse_print_roundtrip] for this file's
+    generic [jvalue] layer (zero axioms, confirmed via [Print
+    Assumptions]). That theorem is deliberately scoped to *only* the
+    generic [jvalue] layer, not the [real_expr_of_json]/
+    [real_decl_of_json] interpretation layer below it -- the proved,
+    trusted end of the *semantic* pipeline still starts at [real_decl]
+    ([real_decl_to_expr_preserves_semantics], already proved, in
+    [RealIR.v]). Correctness of parsing real [coqc] output into a
+    [real_decl] is checked, for now, by actually running it on real
+    extracted JSON (four confirmed, working instances: [clamp_nonneg]'s
     [if], [classify]'s 2-case sum, [swap_xz]'s 3-field record, and
     [any_true]'s self-recursive [Fixpoint] over a list -- each
     producing, through the full, already-proven rest of the pipeline,
     *exactly* the same generated Python the hand-built [real_decl]/
     [real_fix_decl] for the same source definition already produces in
-    [examples/NaturalCoq.v]) -- not yet by proof. Tracked in
-    docs/roadmap.md as this file's own next step. *)
+    [examples/NaturalCoq.v]) -- not yet by proof, and not a gap this
+    file's own [jvalue] round-trip theorem closes: that interpretation
+    layer's target is "whatever shapes [coqc]'s extraction can ever
+    produce", an open-ended, moving target this project has already
+    declined to chase elsewhere (see [resolve_intrinsic_name]'s own
+    extraction-name-instability discussion). See docs/roadmap.md for
+    the full account of both halves. *)
 
 From Coq Require Import ZArith String List Bool Ascii Lia.
+From Coq Require Import Decimal DecimalString DecimalPos DecimalZ.
 From Coq Require Import Floats.PrimFloat Floats.FloatOps Floats.SpecFloat.
 Import ListNotations.
 Require Import Lang.
@@ -237,6 +248,1088 @@ Definition parse_json (s : string) : option jvalue :=
   | Some (v, _) => Some v
   | None => None
   end.
+
+(* ------------------------------------------------------------------ *)
+(** * Soundness: a generic [jvalue] print/parse round-trip
+
+    [jvalue_parse_print_roundtrip] below proves that [parse_jvalue] can
+    always recover a [jvalue] from what [print_jvalue] (defined here
+    purely for this proof -- nothing upstream of this file ever prints
+    a [jvalue] in practice, since the real JSON text this file parses
+    comes from [coqc]'s own extraction, not from this project) printed
+    for it, for any fuel budget at least [jvalue_fuel v], and any
+    trailing [rest] that cannot be mistaken for more digits of a
+    trailing [JNum] ([safe_rest] -- the same proviso [Json.v]'s own
+    [parse_number_print] already carries, for the same reason: a
+    text-based number grammar is inherently ambiguous against an
+    adjacent digit without *some* terminator).
+
+    Deliberately scoped to *only* this generic [jvalue] layer (the
+    closed, stable JSON-value grammar), not the [real_expr_of_json]
+    interpretation layer built on top of it below: that layer's own
+    target is "whatever shapes [coqc]'s extraction can ever produce",
+    an open-ended, moving target this project has already declined to
+    chase elsewhere (see the extraction-name-instability discussion
+    above [resolve_intrinsic_name]) -- it remains checked empirically,
+    against real probes, same as before. The boundary is the same one
+    [Json.v] itself draws between its own proven [expr]/[parse_expr]
+    round-trip and the hand-verified (not mechanically proven) claim
+    that real [coqc]-extracted terms actually print through [PyPrint.v]
+    the way the worked examples show. *)
+
+
+Fixpoint print_jvalue (j : jvalue) : string :=
+  match j with
+  | JString s => quote_text s
+  | JBool true => "true"
+  | JBool false => "false"
+  | JNull => "null"
+  | JNum z => z_to_string z
+  | JArray vs =>
+      "[" ++
+      (fix go (vs : list jvalue) : string :=
+         match vs with
+         | [] => ""
+         | [v] => print_jvalue v
+         | v :: rest => print_jvalue v ++ "," ++ go rest
+         end) vs
+      ++ "]"
+  | JObject fs =>
+      "{" ++
+      (fix go (fs : list (string * jvalue)) : string :=
+         match fs with
+         | [] => ""
+         | [(k, v)] => quote_text k ++ ":" ++ print_jvalue v
+         | (k, v) :: rest => quote_text k ++ ":" ++ print_jvalue v ++ "," ++ go rest
+         end) fs
+      ++ "}"
+  end.
+
+Fixpoint jvalue_fuel (j : jvalue) : nat :=
+  match j with
+  | JString _ | JBool _ | JNull | JNum _ => 1
+  | JArray vs => S (S (length vs + fold_right (fun v acc => Nat.max (jvalue_fuel v) acc) O vs))
+  | JObject fs => S (S (length fs + fold_right (fun kv acc => Nat.max (jvalue_fuel (snd kv)) acc) O fs))
+  end.
+
+Lemma bracket_app : forall X : string, "[" ++ X = String "["%char X.
+Proof. reflexivity. Qed.
+
+Lemma skip_ws_bracket_noop : forall X, skip_ws (String "]"%char X) = String "]"%char X.
+Proof. intro X. unfold skip_ws. simpl. reflexivity. Qed.
+
+Lemma skip_ws_brace_noop : forall X, skip_ws (String "}"%char X) = String "}"%char X.
+Proof. intro X. unfold skip_ws. simpl. reflexivity. Qed.
+
+Lemma expect_bracket_eq : forall rest, expect "]" (String "]"%char rest) = Some rest.
+Proof. reflexivity. Qed.
+
+Lemma expect_brace_eq : forall rest, expect "}" (String "}"%char rest) = Some rest.
+Proof. reflexivity. Qed.
+
+Lemma brace_app : forall X : string, "{" ++ X = String "{"%char X.
+Proof. reflexivity. Qed.
+
+Lemma in_le_fold_max : forall v1 vs,
+  In v1 vs -> jvalue_fuel v1 <= fold_right (fun v acc => Nat.max (jvalue_fuel v) acc) O vs.
+Proof.
+  induction vs as [|v vs' IH]; simpl; intros Hin.
+  - contradiction.
+  - destruct Hin as [->|Hin].
+    + apply Nat.le_max_l.
+    + eapply Nat.le_trans; [apply IH; exact Hin | apply Nat.le_max_r].
+Qed.
+
+Lemma jvalue_fuel_array_head_lt : forall v0 vs', jvalue_fuel v0 < jvalue_fuel (JArray (v0 :: vs')).
+Proof.
+  intros v0 vs'. simpl.
+  pose proof (Nat.le_max_l (jvalue_fuel v0)
+                (fold_right (fun v acc => Nat.max (jvalue_fuel v) acc) O vs')) as H.
+  lia.
+Qed.
+
+Lemma jvalue_fuel_array_elem_lt : forall v0 vs' v1,
+  In v1 vs' -> jvalue_fuel v1 < jvalue_fuel (JArray (v0 :: vs')).
+Proof.
+  intros v0 vs' v1 Hin. simpl.
+  pose proof (in_le_fold_max v1 vs' Hin) as H1.
+  pose proof (Nat.le_max_r (jvalue_fuel v0)
+                (fold_right (fun v acc => Nat.max (jvalue_fuel v) acc) O vs')) as H2.
+  lia.
+Qed.
+
+Lemma in_le_fold_max_fields : forall (kv : string * jvalue) (fs : list (string * jvalue)),
+  In kv fs -> jvalue_fuel (snd kv) <= fold_right (fun kv0 acc => Nat.max (jvalue_fuel (snd kv0)) acc) O fs.
+Proof.
+  induction fs as [|kv0 fs' IH]; simpl; intros Hin.
+  - contradiction.
+  - destruct Hin as [->|Hin].
+    + apply Nat.le_max_l.
+    + eapply Nat.le_trans; [apply IH; exact Hin | apply Nat.le_max_r].
+Qed.
+
+Lemma jvalue_fuel_object_head_lt : forall (kv0 : string * jvalue) fs', jvalue_fuel (snd kv0) < jvalue_fuel (JObject (kv0 :: fs')).
+Proof.
+  intros kv0 fs'. simpl.
+  pose proof (Nat.le_max_l (jvalue_fuel (snd kv0))
+                (fold_right (fun kv acc => Nat.max (jvalue_fuel (snd kv)) acc) O fs')) as H.
+  lia.
+Qed.
+
+Lemma jvalue_fuel_object_elem_lt : forall (kv0 : string * jvalue) fs' (kv1 : string * jvalue),
+  In kv1 fs' -> jvalue_fuel (snd kv1) < jvalue_fuel (JObject (kv0 :: fs')).
+Proof.
+  intros kv0 fs' kv1 Hin. simpl.
+  pose proof (in_le_fold_max_fields kv1 fs' Hin) as H1.
+  pose proof (Nat.le_max_r (jvalue_fuel (snd kv0))
+                (fold_right (fun kv acc => Nat.max (jvalue_fuel (snd kv)) acc) O fs')) as H2.
+  lia.
+Qed.
+
+Lemma skip_ws_noop : forall s, (match s with String a _ => is_ws a = false | EmptyString => True end) -> skip_ws s = s.
+Proof.
+  intros s. unfold skip_ws. destruct s as [| a s'].
+  - reflexivity.
+  - intro H. simpl. rewrite H. reflexivity.
+Qed.
+
+(* A "safe" trailing string: either empty, or starts with a character
+   that can never be mistaken for more digits of a preceding number. *)
+Definition safe_rest (rest : string) : Prop :=
+  match rest with
+  | EmptyString => True
+  | String a _ => is_digit a = false /\ a <> minus_char
+  end.
+
+(* Structural chars { } [ ] , : are all non-digit, non-whitespace. *)
+Lemma safe_rest_struct : forall (c : ascii) (s : string),
+  In c ["{"%char;"}"%char;"["%char;"]"%char;","%char;":"%char] ->
+  safe_rest (String c s).
+Proof.
+  intros c s Hin. unfold safe_rest, is_digit.
+  simpl in Hin.
+  repeat (destruct Hin as [Heq|Hin]; [subst; split; [reflexivity | discriminate] |]).
+  contradiction.
+Qed.
+
+Lemma safe_rest_bracket : forall rest, safe_rest ("]" ++ rest).
+Proof. intro rest. apply safe_rest_struct. simpl. tauto. Qed.
+
+Lemma safe_rest_brace : forall rest, safe_rest ("}" ++ rest).
+Proof. intro rest. apply safe_rest_struct. simpl. tauto. Qed.
+
+Lemma safe_rest_comma : forall rest, safe_rest ("," ++ rest).
+Proof. intro rest. apply safe_rest_struct. simpl. tauto. Qed.
+
+Lemma take_while_all : forall (p : ascii -> bool) (x : string),
+  string_forallb p x = true -> take_while p x = (x, EmptyString).
+Proof.
+  induction x as [| c x' IH]; intros Hall; simpl.
+  - reflexivity.
+  - simpl in Hall. apply andb_true_iff in Hall as [Hc Hall'].
+    rewrite Hc. rewrite (IH Hall'). reflexivity.
+Qed.
+
+Lemma string_append_nil_r : forall s, s ++ "" = s.
+Proof. induction s as [|c s' IH]; simpl; [reflexivity | rewrite IH; reflexivity]. Qed.
+
+Lemma parse_number_print_nil :
+  forall z, parse_number (z_to_string z) = Some (z, EmptyString).
+Proof.
+  intro z. destruct z as [|p|p].
+  - reflexivity.
+  - destruct (nilzero_string_of_uint_cons (Pos.to_uint p)) as (c & s0 & Hcs).
+    pose proof (nilzero_string_of_uint_all_digits (Pos.to_uint p)) as Hall.
+    rewrite Hcs in Hall.
+    assert (Hzp : z_to_string (Zpos p) = String c s0).
+    { unfold z_to_string, NilZero.string_of_int.
+      replace (Z.to_int (Zpos p)) with (Decimal.Pos (Pos.to_uint p)) by reflexivity.
+      simpl. exact Hcs. }
+    rewrite Hzp.
+    rewrite parse_number_unfold.
+    assert (Hcm : c <> minus_char) by (intro Heq; subst c; simpl in Hall; discriminate).
+    assert (Hcmb : Ascii.eqb c minus_char = false) by (apply (proj2 (Ascii.eqb_neq _ _)); exact Hcm).
+    rewrite Hcmb.
+    rewrite (take_while_all is_digit (String c s0) Hall).
+    assert (Hfinal : z_of_string (String c s0) = Some (Zpos p))
+      by (rewrite <- Hzp; apply z_round_trip).
+    rewrite Hfinal. reflexivity.
+  - assert (Hzn : z_to_string (Zneg p) = String minus_char (NilZero.string_of_uint (Pos.to_uint p))).
+    { unfold z_to_string, NilZero.string_of_int.
+      replace (Z.to_int (Zneg p)) with (Decimal.Neg (Pos.to_uint p)) by reflexivity.
+      reflexivity. }
+    rewrite Hzn.
+    rewrite parse_number_unfold.
+    rewrite Ascii.eqb_refl.
+    pose proof (nilzero_string_of_uint_all_digits (Pos.to_uint p)) as Hall.
+    rewrite (take_while_all is_digit (NilZero.string_of_uint (Pos.to_uint p)) Hall).
+    assert (Hfinal : z_of_string (String minus_char (NilZero.string_of_uint (Pos.to_uint p))) = Some (Zneg p))
+      by (rewrite <- Hzn; apply z_round_trip).
+    rewrite Hfinal. reflexivity.
+Qed.
+
+Lemma z_to_string_first_char :
+  forall z, exists c s, z_to_string z = String c s /\
+    (is_digit c = true \/ c = minus_char).
+Proof.
+  intro z. destruct z as [|p|p].
+  - exists "0"%char, EmptyString. split; [reflexivity | left; reflexivity].
+  - unfold z_to_string, NilZero.string_of_int.
+    replace (Z.to_int (Zpos p)) with (Decimal.Pos (Pos.to_uint p)) by reflexivity.
+    simpl.
+    destruct (nilzero_string_of_uint_cons (Pos.to_uint p)) as (c & s0 & Hcs).
+    pose proof (nilzero_string_of_uint_all_digits (Pos.to_uint p)) as Hall.
+    rewrite Hcs in Hall. simpl in Hall.
+    apply andb_true_iff in Hall as [Hd _].
+    exists c, s0. split; [exact Hcs | left; exact Hd].
+  - unfold z_to_string, NilZero.string_of_int.
+    replace (Z.to_int (Zneg p)) with (Decimal.Neg (Pos.to_uint p)) by reflexivity.
+    simpl. eexists _, _. split; [reflexivity | right; reflexivity].
+Qed.
+
+Lemma print_jvalue_first_char :
+  forall j, exists c s, print_jvalue j = String c s /\
+    (c = quote_char \/ c = "t"%char \/ c = "f"%char \/ c = "n"%char \/
+     is_digit c = true \/ c = minus_char \/ c = "["%char \/ c = "{"%char).
+Proof.
+  intros [s | [] | | z | vs | fs]; simpl.
+  - eexists _, _. split; [reflexivity | left; reflexivity].
+  - eexists _, _. split; [reflexivity | right; left; reflexivity].
+  - eexists _, _. split; [reflexivity | right; right; left; reflexivity].
+  - eexists _, _. split; [reflexivity | right; right; right; left; reflexivity].
+  - destruct (z_to_string_first_char z) as (c & s0 & Heq & Hc).
+    rewrite Heq. eexists _, _. split; [reflexivity |].
+    destruct Hc as [Hc|Hc]; [right; right; right; right; left; exact Hc
+                            | right; right; right; right; right; left; exact Hc].
+  - eexists _, _. split; [reflexivity | right; right; right; right; right; right; left; reflexivity].
+  - eexists _, _. split; [reflexivity | right; right; right; right; right; right; right; reflexivity].
+Qed.
+
+Lemma is_digit_not_ws : forall c, is_digit c = true -> is_ws c = false.
+Proof.
+  intro c. unfold is_digit. intro H.
+  apply andb_true_iff in H as [H1 H2].
+  apply Nat.leb_le in H1. apply Nat.leb_le in H2.
+  unfold is_ws.
+  assert (H10 : (10 < 256)%nat) by lia.
+  assert (H13 : (13 < 256)%nat) by lia.
+  assert (H9 : (9 < 256)%nat) by lia.
+  assert (Hsp : Ascii.eqb c " "%char = false).
+  { apply Ascii.eqb_neq. intro Hc. subst c. compute in H1, H2. lia. }
+  assert (Hnl : Ascii.eqb c (ascii_of_nat 10) = false).
+  { apply Ascii.eqb_neq. intro Hc. subst c.
+    rewrite (nat_ascii_embedding 10 H10) in H1, H2. lia. }
+  assert (Hcr : Ascii.eqb c (ascii_of_nat 13) = false).
+  { apply Ascii.eqb_neq. intro Hc. subst c.
+    rewrite (nat_ascii_embedding 13 H13) in H1, H2. lia. }
+  assert (Htb : Ascii.eqb c (ascii_of_nat 9) = false).
+  { apply Ascii.eqb_neq. intro Hc. subst c.
+    rewrite (nat_ascii_embedding 9 H9) in H1, H2. lia. }
+  rewrite Hsp, Hnl, Hcr, Htb. reflexivity.
+Qed.
+
+Lemma minus_char_not_ws : is_ws minus_char = false.
+Proof. reflexivity. Qed.
+
+Lemma print_jvalue_not_ws : forall j rest c s,
+  print_jvalue j ++ rest = String c s -> is_ws c = false.
+Proof.
+  intros j rest c s Heq.
+  destruct (print_jvalue_first_char j) as (c0 & s0 & Hp & Hclass).
+  rewrite Hp in Heq. simpl in Heq. injection Heq as Hc0 _. subst c0.
+  destruct Hclass as [H|[H|[H|[H|[H|[H|[H|H]]]]]]]; subst;
+    try reflexivity; try (apply is_digit_not_ws; exact H); try (apply minus_char_not_ws).
+Qed.
+
+Fixpoint parse_jarray_elems (fuel0 : nat) (s0 : string) : option (list jvalue * string) :=
+  match fuel0 with
+  | O => None
+  | S fuel0' =>
+      let s0 := skip_ws s0 in
+      match expect "]" s0 with
+      | Some rest0 => Some ([], rest0)
+      | None =>
+          match parse_jvalue fuel0' s0 with
+          | Some (v, rest1) =>
+              let rest1 := skip_ws rest1 in
+              match expect "," rest1 with
+              | Some rest2 =>
+                  match parse_jarray_elems fuel0' (skip_ws rest2) with
+                  | Some (vs, rest3) => Some (v :: vs, rest3)
+                  | None => None
+                  end
+              | None =>
+                  match expect "]" rest1 with
+                  | Some rest2 => Some ([v], rest2)
+                  | None => None
+                  end
+              end
+          | None => None
+          end
+      end
+  end.
+
+Lemma parse_jvalue_array_eq : forall fuel' rest,
+  parse_jvalue (S fuel') (String "["%char rest) =
+    match parse_jarray_elems fuel' (skip_ws rest) with
+    | Some (vs, rest') => Some (JArray vs, rest')
+    | None => None
+    end.
+Proof. intros. reflexivity. Qed.
+
+Fixpoint parse_jobject_fields (fuel0 : nat) (s0 : string) : option (list (string * jvalue) * string) :=
+  match fuel0 with
+  | O => None
+  | S fuel0' =>
+      let s0 := skip_ws s0 in
+      match expect "}" s0 with
+      | Some rest0 => Some ([], rest0)
+      | None =>
+          match parse_qtext s0 with
+          | Some (key, rest1) =>
+              match expect ":" (skip_ws rest1) with
+              | Some rest2 =>
+                  match parse_jvalue fuel0' (skip_ws rest2) with
+                  | Some (v, rest3) =>
+                      let rest3 := skip_ws rest3 in
+                      match expect "," rest3 with
+                      | Some rest4 =>
+                          match parse_jobject_fields fuel0' (skip_ws rest4) with
+                          | Some (fs, rest5) => Some ((key, v) :: fs, rest5)
+                          | None => None
+                          end
+                      | None =>
+                          match expect "}" rest3 with
+                          | Some rest4 => Some ([(key, v)], rest4)
+                          | None => None
+                          end
+                      end
+                  | None => None
+                  end
+              | None => None
+              end
+          | None => None
+          end
+      end
+  end.
+
+Lemma parse_jvalue_object_eq : forall fuel' rest,
+  parse_jvalue (S fuel') (String "{"%char rest) =
+    match parse_jobject_fields fuel' (skip_ws rest) with
+    | Some (fs, rest') => Some (JObject fs, rest')
+    | None => None
+    end.
+Proof. intros. reflexivity. Qed.
+
+Fixpoint print_jvalue_list (vs : list jvalue) : string :=
+  match vs with
+  | [] => ""
+  | [v] => print_jvalue v
+  | v :: rest => print_jvalue v ++ "," ++ print_jvalue_list rest
+  end.
+
+Lemma print_jvalue_list_cons2 : forall v v2 vs'',
+  print_jvalue_list (v :: v2 :: vs'') = print_jvalue v ++ "," ++ print_jvalue_list (v2 :: vs'').
+Proof. reflexivity. Qed.
+
+Lemma print_jvalue_list_first_char :
+  forall v vs, exists c s, print_jvalue_list (v :: vs) = String c s /\
+    (c = quote_char \/ c = "t"%char \/ c = "f"%char \/ c = "n"%char \/
+     is_digit c = true \/ c = minus_char \/ c = "["%char \/ c = "{"%char).
+Proof.
+  intros v vs.
+  destruct (print_jvalue_first_char v) as (c & s & Hp & Hclass).
+  destruct vs as [|v2 vs2]; simpl; rewrite Hp; eexists _, _; split; [reflexivity | exact Hclass | reflexivity | exact Hclass].
+Qed.
+
+Lemma print_jvalue_list_not_ws : forall v vs rest c s,
+  print_jvalue_list (v :: vs) ++ rest = String c s -> is_ws c = false.
+Proof.
+  intros v vs rest c s Heq.
+  destruct (print_jvalue_list_first_char v vs) as (c0 & s0 & Hp & Hclass).
+  rewrite Hp in Heq. simpl in Heq. injection Heq as Hc0 _. subst c0.
+  destruct Hclass as [H|[H|[H|[H|[H|[H|[H|H]]]]]]]; subst;
+    try reflexivity; try (apply is_digit_not_ws; exact H); try (apply minus_char_not_ws).
+Qed.
+
+Lemma skip_ws_noop_print_list : forall v vs rest,
+  skip_ws (print_jvalue_list (v :: vs) ++ rest) = print_jvalue_list (v :: vs) ++ rest.
+Proof.
+  intros v vs rest.
+  destruct (print_jvalue_list_first_char v vs) as (c & s & Hp & _).
+  rewrite Hp. simpl.
+  apply skip_ws_noop.
+  simpl.
+  apply (print_jvalue_list_not_ws v vs rest c (s ++ rest)).
+  rewrite Hp. reflexivity.
+Qed.
+
+Fixpoint print_jvalue_fields (fs : list (string * jvalue)) : string :=
+  match fs with
+  | [] => ""
+  | [(k, v)] => quote_text k ++ ":" ++ print_jvalue v
+  | (k, v) :: rest => quote_text k ++ ":" ++ print_jvalue v ++ "," ++ print_jvalue_fields rest
+  end.
+
+Lemma print_jvalue_array_eq : forall vs, print_jvalue (JArray vs) = "[" ++ print_jvalue_list vs ++ "]".
+Proof. intro vs. destruct vs as [|v vs']; reflexivity. Qed.
+
+Lemma print_jvalue_object_eq : forall fs, print_jvalue (JObject fs) = "{" ++ print_jvalue_fields fs ++ "}".
+Proof. intro fs. destruct fs as [|[k v] fs']; reflexivity. Qed.
+
+
+Lemma parse_jarray_elems_unfold : forall fuel0 s0,
+  parse_jarray_elems (S fuel0) s0 =
+    let s0 := skip_ws s0 in
+    match expect "]" s0 with
+    | Some rest0 => Some ([], rest0)
+    | None =>
+        match parse_jvalue fuel0 s0 with
+        | Some (v, rest1) =>
+            let rest1 := skip_ws rest1 in
+            match expect "," rest1 with
+            | Some rest2 =>
+                match parse_jarray_elems fuel0 (skip_ws rest2) with
+                | Some (vs, rest3) => Some (v :: vs, rest3)
+                | None => None
+                end
+            | None =>
+                match expect "]" rest1 with
+                | Some rest2 => Some ([v], rest2)
+                | None => None
+                end
+            end
+        | None => None
+        end
+    end.
+Proof. reflexivity. Qed.
+
+
+Lemma expect_single_neq : forall (a c : ascii) (s : string), a <> c -> expect (String a EmptyString) (String c s) = None.
+Proof.
+  intros a c s Hne. simpl.
+  destruct (Ascii.eqb a c) eqn:E.
+  - apply Ascii.eqb_eq in E. contradiction.
+  - reflexivity.
+Qed.
+
+Lemma print_jvalue_app_not_char : forall v rest (a : ascii),
+  (forall c s, print_jvalue v = String c s -> a <> c) ->
+  expect (String a EmptyString) (print_jvalue v ++ rest) = None.
+Proof.
+  intros v rest a Hneq.
+  destruct (print_jvalue_first_char v) as (c & s & Hp & _).
+  rewrite Hp. simpl. apply expect_single_neq. apply (Hneq c s Hp).
+Qed.
+
+Lemma print_jvalue_class_neq : forall v (c0 : ascii) s,
+  print_jvalue v = String c0 s ->
+  c0 = quote_char \/ c0 = "t"%char \/ c0 = "f"%char \/ c0 = "n"%char \/
+  is_digit c0 = true \/ c0 = minus_char \/ c0 = "["%char \/ c0 = "{"%char.
+Proof.
+  intros v c0 s Hp.
+  destruct (print_jvalue_first_char v) as (c1 & s1 & Hp1 & Hclass).
+  rewrite Hp in Hp1. injection Hp1 as Hc _. subst c1. exact Hclass.
+Qed.
+
+Lemma print_jvalue_not_bracket : forall v rest, expect "]" (print_jvalue v ++ rest) = None.
+Proof.
+  intros v rest. apply print_jvalue_app_not_char.
+  intros c s Hp. pose proof (print_jvalue_class_neq v c s Hp) as Hclass.
+  intro Hbad. subst c.
+  destruct Hclass as [H|[H|[H|[H|[H|[H|[H|H]]]]]]]; discriminate.
+Qed.
+
+Lemma print_jvalue_not_brace : forall v rest, expect "}" (print_jvalue v ++ rest) = None.
+Proof.
+  intros v rest. apply print_jvalue_app_not_char.
+  intros c s Hp. pose proof (print_jvalue_class_neq v c s Hp) as Hclass.
+  intro Hbad. subst c.
+  destruct Hclass as [H|[H|[H|[H|[H|[H|[H|H]]]]]]]; discriminate.
+Qed.
+
+Lemma print_jvalue_not_comma2 : forall v rest, expect "," (print_jvalue v ++ rest) = None.
+Proof.
+  intros v rest. apply print_jvalue_app_not_char.
+  intros c s Hp. pose proof (print_jvalue_class_neq v c s Hp) as Hclass.
+  intro Hbad. subst c.
+  destruct Hclass as [H|[H|[H|[H|[H|[H|[H|H]]]]]]]; discriminate.
+Qed.
+
+Lemma skip_ws_noop_print : forall v rest, skip_ws (print_jvalue v ++ rest) = print_jvalue v ++ rest.
+Proof.
+  intros v rest.
+  destruct (print_jvalue_first_char v) as (c & s & Hp & _).
+  rewrite Hp. simpl.
+  apply skip_ws_noop.
+  simpl.
+  apply (print_jvalue_not_ws v rest c (s ++ rest)).
+  rewrite Hp. reflexivity.
+Qed.
+
+Lemma print_parse_jarray_singleton :
+  forall v,
+    (forall fuel0, (jvalue_fuel v <= fuel0)%nat -> forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue v ++ rest0) = Some (v, rest0)) ->
+    forall fuel, (jvalue_fuel v <= fuel)%nat ->
+      forall rest,
+        parse_jarray_elems (S fuel) (print_jvalue v ++ "]" ++ rest) = Some ([v], rest).
+Proof.
+  intros v Hv fuel Hfuel rest.
+  rewrite parse_jarray_elems_unfold.
+  rewrite skip_ws_noop_print.
+  cbv zeta.
+  rewrite (print_jvalue_not_bracket v ("]" ++ rest)).
+  rewrite (Hv fuel Hfuel ("]" ++ rest) (safe_rest_bracket rest)).
+  cbv zeta.
+  replace (skip_ws ("]" ++ rest)) with ("]" ++ rest) by (simpl; unfold skip_ws; simpl; reflexivity).
+  destruct (expect "," ("]" ++ rest)) eqn:Hcomma.
+  - simpl in Hcomma. discriminate.
+  - simpl. reflexivity.
+Qed.
+
+
+Fixpoint jvalue_list_fuel (vs : list jvalue) : nat :=
+  match vs with
+  | [] => O
+  | v :: rest => S (Nat.max (jvalue_fuel v) (jvalue_list_fuel rest))
+  end.
+
+Lemma jvalue_list_fuel_cons : forall v vs,
+  jvalue_list_fuel (v :: vs) = S (Nat.max (jvalue_fuel v) (jvalue_list_fuel vs)).
+Proof. reflexivity. Qed.
+
+Lemma jvalue_list_fuel_le_len_fold :
+  forall vs, (jvalue_list_fuel vs <= length vs + fold_right (fun v acc => Nat.max (jvalue_fuel v) acc) O vs)%nat.
+Proof.
+  induction vs as [| v vs' IH]; simpl.
+  - lia.
+  - apply le_n_S.
+    rewrite <- Nat.add_max_distr_l.
+    apply Nat.max_le_compat; [lia | exact IH].
+Qed.
+
+Lemma print_parse_jarray_roundtrip :
+  forall v vs',
+    (forall fuel0, (jvalue_fuel v <= fuel0)%nat -> forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue v ++ rest0) = Some (v, rest0)) ->
+    Forall (fun v0 => forall fuel0, (jvalue_fuel v0 <= fuel0)%nat -> forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue v0 ++ rest0) = Some (v0, rest0)) vs' ->
+    forall fuel, (jvalue_list_fuel (v :: vs') <= fuel)%nat ->
+      forall rest,
+        parse_jarray_elems (S fuel) (print_jvalue_list (v :: vs') ++ "]" ++ rest) = Some (v :: vs', rest).
+Proof.
+  intros v vs'. revert v.
+  induction vs' as [| v2 vs'' IH]; intros v Hv Hall fuel Hfuel rest.
+  - (* singleton *)
+    rewrite jvalue_list_fuel_cons in Hfuel.
+    simpl jvalue_list_fuel in Hfuel.
+    assert (Hone : (jvalue_fuel v <= fuel)%nat) by lia.
+    simpl print_jvalue_list.
+    exact (print_parse_jarray_singleton v Hv fuel Hone rest).
+  - (* cons: v :: v2 :: vs'' *)
+    rewrite jvalue_list_fuel_cons in Hfuel.
+    destruct fuel as [|fuel'].
+    + exfalso. lia.
+    + assert (Hone : (jvalue_fuel v <= S fuel')%nat) by lia.
+      assert (Hfuel' : (jvalue_list_fuel (v2 :: vs'') <= fuel')%nat) by lia.
+      inversion Hall as [| x l Hx Hl]; subst.
+    rewrite print_jvalue_list_cons2.
+    repeat rewrite string_append_assoc.
+    rewrite parse_jarray_elems_unfold.
+    rewrite skip_ws_noop_print.
+    cbv zeta.
+    rewrite (print_jvalue_not_bracket v (","%string ++ (print_jvalue_list (v2 :: vs'') ++ "]" ++ rest))).
+    rewrite (Hv (S fuel') Hone (","%string ++ (print_jvalue_list (v2 :: vs'') ++ "]" ++ rest)) (safe_rest_comma (print_jvalue_list (v2 :: vs'') ++ "]" ++ rest))).
+    cbv zeta.
+    replace (skip_ws ("," ++ (print_jvalue_list (v2 :: vs'') ++ "]" ++ rest)))
+      with ("," ++ (print_jvalue_list (v2 :: vs'') ++ "]" ++ rest))
+      by (simpl; unfold skip_ws; simpl; reflexivity).
+    rewrite (expect_app "," (print_jvalue_list (v2 :: vs'') ++ "]" ++ rest)).
+    rewrite (skip_ws_noop_print_list v2 vs'' ("]" ++ rest)).
+    pose proof (IH v2 Hx Hl fuel' Hfuel' rest) as IH'.
+    rewrite IH'.
+    reflexivity.
+Qed.
+
+Lemma quote_char_not_ws : is_ws quote_char = false.
+Proof. reflexivity. Qed.
+
+Lemma quote_text_not_brace : forall k rest, expect "}" (quote_text k ++ rest) = None.
+Proof.
+  intros k rest. unfold quote_text. simpl. reflexivity.
+Qed.
+
+Lemma quote_text_first_char : forall k, exists s, quote_text k = String quote_char s.
+Proof. intro k. unfold quote_text. eexists. reflexivity. Qed.
+
+Lemma quote_text_not_ws : forall k rest c s,
+  quote_text k ++ rest = String c s -> is_ws c = false.
+Proof.
+  intros k rest c s Heq.
+  destruct (quote_text_first_char k) as (s0 & Hp).
+  rewrite Hp in Heq. simpl in Heq. injection Heq as Hc0 _. subst c.
+  apply quote_char_not_ws.
+Qed.
+
+Lemma skip_ws_noop_quote : forall k rest, skip_ws (quote_text k ++ rest) = quote_text k ++ rest.
+Proof.
+  intros k rest.
+  destruct (quote_text_first_char k) as (s & Hp).
+  rewrite Hp. simpl.
+  apply skip_ws_noop.
+  simpl.
+  apply (quote_text_not_ws k rest quote_char (s ++ rest)).
+  rewrite Hp. reflexivity.
+Qed.
+
+Lemma print_jvalue_fields_first_char : forall k v fs,
+  exists s, print_jvalue_fields ((k, v) :: fs) = String quote_char s.
+Proof.
+  intros k v fs.
+  destruct fs as [|kv2 fs2]; simpl; unfold quote_text; simpl; eexists; reflexivity.
+Qed.
+
+Lemma print_jvalue_fields_not_ws : forall k v fs rest c s,
+  print_jvalue_fields ((k, v) :: fs) ++ rest = String c s -> is_ws c = false.
+Proof.
+  intros k v fs rest c s Heq.
+  destruct (print_jvalue_fields_first_char k v fs) as (s0 & Hp).
+  rewrite Hp in Heq. simpl in Heq. injection Heq as Hc0 _. subst c.
+  apply quote_char_not_ws.
+Qed.
+
+Lemma skip_ws_noop_print_fields : forall k v fs rest,
+  skip_ws (print_jvalue_fields ((k, v) :: fs) ++ rest) = print_jvalue_fields ((k, v) :: fs) ++ rest.
+Proof.
+  intros k v fs rest.
+  destruct (print_jvalue_fields_first_char k v fs) as (s & Hp).
+  rewrite Hp. simpl.
+  apply skip_ws_noop.
+  simpl.
+  apply (print_jvalue_fields_not_ws k v fs rest quote_char (s ++ rest)).
+  rewrite Hp. reflexivity.
+Qed.
+
+Lemma print_jvalue_fields_singleton : forall k v,
+  print_jvalue_fields [(k, v)] = quote_text k ++ ":" ++ print_jvalue v.
+Proof. reflexivity. Qed.
+
+Lemma print_jvalue_fields_cons2 : forall k v k2 v2 fs'',
+  print_jvalue_fields ((k, v) :: (k2, v2) :: fs'') =
+    quote_text k ++ ":" ++ print_jvalue v ++ "," ++ print_jvalue_fields ((k2, v2) :: fs'').
+Proof. reflexivity. Qed.
+
+Lemma parse_jobject_fields_unfold : forall fuel0 s0,
+  parse_jobject_fields (S fuel0) s0 =
+    let s0 := skip_ws s0 in
+    match expect "}" s0 with
+    | Some rest0 => Some ([], rest0)
+    | None =>
+        match parse_qtext s0 with
+        | Some (key, rest1) =>
+            match expect ":" (skip_ws rest1) with
+            | Some rest2 =>
+                match parse_jvalue fuel0 (skip_ws rest2) with
+                | Some (v, rest3) =>
+                    let rest3 := skip_ws rest3 in
+                    match expect "," rest3 with
+                    | Some rest4 =>
+                        match parse_jobject_fields fuel0 (skip_ws rest4) with
+                        | Some (fs, rest5) => Some ((key, v) :: fs, rest5)
+                        | None => None
+                        end
+                    | None =>
+                        match expect "}" rest3 with
+                        | Some rest4 => Some ([(key, v)], rest4)
+                        | None => None
+                        end
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    end.
+Proof. intros. reflexivity. Qed.
+
+Fixpoint jvalue_fields_fuel (fs : list (string * jvalue)) : nat :=
+  match fs with
+  | [] => O
+  | kv :: rest => S (Nat.max (jvalue_fuel (snd kv)) (jvalue_fields_fuel rest))
+  end.
+
+Lemma jvalue_fields_fuel_cons : forall kv fs,
+  jvalue_fields_fuel (kv :: fs) = S (Nat.max (jvalue_fuel (snd kv)) (jvalue_fields_fuel fs)).
+Proof. reflexivity. Qed.
+
+Lemma jvalue_fields_fuel_le_len_fold :
+  forall fs, (jvalue_fields_fuel fs <= length fs + fold_right (fun kv acc => Nat.max (jvalue_fuel (snd kv)) acc) O fs)%nat.
+Proof.
+  induction fs as [| kv fs' IH]; simpl.
+  - lia.
+  - apply le_n_S.
+    rewrite <- Nat.add_max_distr_l.
+    apply Nat.max_le_compat; [lia | exact IH].
+Qed.
+
+Lemma print_parse_jobject_singleton :
+  forall k v,
+    (forall fuel0, (jvalue_fuel v <= fuel0)%nat -> forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue v ++ rest0) = Some (v, rest0)) ->
+    forall fuel, (jvalue_fuel v <= fuel)%nat ->
+      forall rest,
+        parse_jobject_fields (S fuel) (print_jvalue_fields [(k, v)] ++ "}" ++ rest) = Some ([(k, v)], rest).
+Proof.
+  intros k v Hv fuel Hfuel rest.
+  rewrite print_jvalue_fields_singleton.
+  repeat rewrite string_append_assoc.
+  rewrite parse_jobject_fields_unfold.
+  rewrite (skip_ws_noop_quote k (":" ++ (print_jvalue v ++ ("}" ++ rest)))).
+  cbv zeta.
+  rewrite (quote_text_not_brace k (":" ++ (print_jvalue v ++ ("}" ++ rest)))).
+  rewrite (parse_qtext_print k (":" ++ (print_jvalue v ++ ("}" ++ rest)))).
+  replace (skip_ws (":" ++ (print_jvalue v ++ ("}" ++ rest))))
+    with (":" ++ (print_jvalue v ++ ("}" ++ rest)))
+    by (simpl; unfold skip_ws; simpl; reflexivity).
+  rewrite (expect_app ":" (print_jvalue v ++ ("}" ++ rest))).
+  rewrite skip_ws_noop_print.
+  rewrite (Hv fuel Hfuel ("}" ++ rest) (safe_rest_brace rest)).
+  replace (skip_ws ("}" ++ rest)) with ("}" ++ rest) by (simpl; unfold skip_ws; simpl; reflexivity).
+  destruct (expect "," ("}" ++ rest)) eqn:Hcomma.
+  - simpl in Hcomma. discriminate.
+  - rewrite (expect_app "}" rest). reflexivity.
+Qed.
+
+Lemma print_parse_jobject_roundtrip :
+  forall k v fs',
+    (forall fuel0, (jvalue_fuel v <= fuel0)%nat -> forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue v ++ rest0) = Some (v, rest0)) ->
+    Forall (fun kv => forall fuel0, (jvalue_fuel (snd kv) <= fuel0)%nat -> forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue (snd kv) ++ rest0) = Some (snd kv, rest0)) fs' ->
+    forall fuel, (jvalue_fields_fuel ((k, v) :: fs') <= fuel)%nat ->
+      forall rest,
+        parse_jobject_fields (S fuel) (print_jvalue_fields ((k, v) :: fs') ++ "}" ++ rest) = Some ((k, v) :: fs', rest).
+Proof.
+  intros k v fs'. revert k v.
+  induction fs' as [| kv2 fs'' IH]; intros k v Hv Hall fuel Hfuel rest.
+  - (* singleton *)
+    rewrite jvalue_fields_fuel_cons in Hfuel.
+    simpl in Hfuel.
+    assert (Hone : (jvalue_fuel v <= fuel)%nat) by lia.
+    rewrite print_jvalue_fields_singleton.
+    exact (print_parse_jobject_singleton k v Hv fuel Hone rest).
+  - (* cons: (k,v) :: kv2 :: fs'' *)
+    rewrite jvalue_fields_fuel_cons in Hfuel.
+    destruct kv2 as [k2 v2].
+    destruct fuel as [|fuel'].
+    + inversion Hfuel.
+    + pose proof (le_S_n _ _ Hfuel) as Hfuel2.
+      assert (Hone : (jvalue_fuel v <= S fuel')%nat)
+        by (apply le_S; eapply Nat.le_trans; [apply Nat.le_max_l | exact Hfuel2]).
+      assert (Hfuel' : (jvalue_fields_fuel ((k2, v2) :: fs'') <= fuel')%nat)
+        by (eapply Nat.le_trans; [apply Nat.le_max_r | exact Hfuel2]).
+      inversion Hall as [| x l Hx Hl]; subst.
+    rewrite print_jvalue_fields_cons2.
+    repeat rewrite string_append_assoc.
+    rewrite parse_jobject_fields_unfold.
+    rewrite (skip_ws_noop_quote k (":" ++ (print_jvalue v ++ ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest)))))).
+    cbv zeta.
+    rewrite (quote_text_not_brace k
+               (":" ++ (print_jvalue v ++ ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest)))))).
+    rewrite (parse_qtext_print k (":" ++ (print_jvalue v ++ ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest)))))).
+    replace (skip_ws (":" ++ (print_jvalue v ++ ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest))))))
+      with (":" ++ (print_jvalue v ++ ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest)))))
+      by (simpl; unfold skip_ws; simpl; reflexivity).
+    rewrite (expect_app ":" (print_jvalue v ++ ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest))))).
+    rewrite skip_ws_noop_print.
+    rewrite (Hv (S fuel') Hone ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest))) (safe_rest_comma (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest)))).
+    replace (skip_ws ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest))))
+      with ("," ++ (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest)))
+      by (simpl; unfold skip_ws; simpl; reflexivity).
+    rewrite (expect_app "," (print_jvalue_fields ((k2, v2) :: fs'') ++ ("}" ++ rest))).
+    rewrite (skip_ws_noop_print_fields k2 v2 fs'' ("}" ++ rest)).
+    pose proof (IH k2 v2 Hx Hl fuel' Hfuel' rest) as IH'.
+    rewrite IH'.
+    reflexivity.
+Qed.
+
+Lemma parse_jvalue_qtext_eq : forall fuel' s rest,
+  parse_jvalue (S fuel') (quote_text s ++ rest) =
+    match parse_qtext (quote_text s ++ rest) with
+    | Some (str, rest') => Some (JString str, rest')
+    | None => None
+    end.
+Proof. intros. reflexivity. Qed.
+
+Lemma parse_jvalue_true_eq : forall fuel' rest,
+  parse_jvalue (S fuel') ("true" ++ rest) =
+    match expect "true" ("true" ++ rest) with
+    | Some rest' => Some (JBool true, rest')
+    | None => None
+    end.
+Proof. intros. reflexivity. Qed.
+
+Lemma parse_jvalue_false_eq : forall fuel' rest,
+  parse_jvalue (S fuel') ("false" ++ rest) =
+    match expect "false" ("false" ++ rest) with
+    | Some rest' => Some (JBool false, rest')
+    | None => None
+    end.
+Proof. intros. reflexivity. Qed.
+
+Lemma parse_jvalue_null_eq : forall fuel' rest,
+  parse_jvalue (S fuel') ("null" ++ rest) =
+    match expect "null" ("null" ++ rest) with
+    | Some rest' => Some (JNull, rest')
+    | None => None
+    end.
+Proof. intros. reflexivity. Qed.
+
+Lemma parse_jvalue_unfold : forall fuel0 s0,
+  parse_jvalue (S fuel0) s0 =
+    let s0 := skip_ws s0 in
+    match expect "{" s0 with
+    | Some rest =>
+        match
+          (fix parse_members (fuel1 : nat) (s1 : string) : option (list (string * jvalue) * string) :=
+             match fuel1 with
+             | O => None
+             | S fuel1' =>
+                 let s1 := skip_ws s1 in
+                 match expect "}" s1 with
+                 | Some rest0 => Some ([], rest0)
+                 | None =>
+                     match parse_qtext s1 with
+                     | Some (key, rest1) =>
+                         match expect ":" (skip_ws rest1) with
+                         | Some rest2 =>
+                             match parse_jvalue fuel1' (skip_ws rest2) with
+                             | Some (v, rest3) =>
+                                 let rest3 := skip_ws rest3 in
+                                 match expect "," rest3 with
+                                 | Some rest4 =>
+                                     match parse_members fuel1' (skip_ws rest4) with
+                                     | Some (fs, rest5) => Some ((key, v) :: fs, rest5)
+                                     | None => None
+                                     end
+                                 | None =>
+                                     match expect "}" rest3 with
+                                     | Some rest4 => Some ([(key, v)], rest4)
+                                     | None => None
+                                     end
+                                 end
+                             | None => None
+                             end
+                         | None => None
+                         end
+                     | None => None
+                     end
+                 end
+             end) fuel0 (skip_ws rest)
+        with
+        | Some (fs, rest') => Some (JObject fs, rest')
+        | None => None
+        end
+    | None =>
+    match expect "[" s0 with
+    | Some rest =>
+        match
+          (fix parse_elems (fuel1 : nat) (s1 : string) : option (list jvalue * string) :=
+             match fuel1 with
+             | O => None
+             | S fuel1' =>
+                 let s1 := skip_ws s1 in
+                 match expect "]" s1 with
+                 | Some rest0 => Some ([], rest0)
+                 | None =>
+                     match parse_jvalue fuel1' s1 with
+                     | Some (v, rest1) =>
+                         let rest1 := skip_ws rest1 in
+                         match expect "," rest1 with
+                         | Some rest2 =>
+                             match parse_elems fuel1' (skip_ws rest2) with
+                             | Some (vs, rest3) => Some (v :: vs, rest3)
+                             | None => None
+                             end
+                         | None =>
+                             match expect "]" rest1 with
+                             | Some rest2 => Some ([v], rest2)
+                             | None => None
+                             end
+                         end
+                     | None => None
+                     end
+                 end
+             end) fuel0 (skip_ws rest)
+        with
+        | Some (vs, rest') => Some (JArray vs, rest')
+        | None => None
+        end
+    | None =>
+    match s0 with
+    | String """"%char _ =>
+        match parse_qtext s0 with
+        | Some (str, rest) => Some (JString str, rest)
+        | None => None
+        end
+    | _ =>
+        match expect "true" s0 with
+        | Some rest => Some (JBool true, rest)
+        | None =>
+        match expect "false" s0 with
+        | Some rest => Some (JBool false, rest)
+        | None =>
+        match expect "null" s0 with
+        | Some rest => Some (JNull, rest)
+        | None =>
+        match parse_number s0 with
+        | Some (z, rest) => Some (JNum z, rest)
+        | None => None
+        end end end end
+    end
+    end
+    end.
+Proof. intros. reflexivity. Qed.
+
+Lemma parse_jvalue_num_eq : forall fuel0 z rest,
+  parse_jvalue (S fuel0) (z_to_string z ++ rest) =
+    match parse_number (z_to_string z ++ rest) with
+    | Some (z', rest') => Some (JNum z', rest')
+    | None => None
+    end.
+Proof.
+  intros fuel0 z rest.
+  destruct (z_to_string_first_char z) as (c & s0 & Heq & Hc).
+  rewrite Heq. simpl.
+  destruct Hc as [Hd | Hm].
+  - unfold is_digit in Hd. apply andb_true_iff in Hd as [H1 H2].
+    apply Nat.leb_le in H1. apply Nat.leb_le in H2.
+    destruct c as [b0 b1 b2 b3 b4 b5 b6 b7].
+    destruct b0, b1, b2, b3, b4, b5, b6, b7; compute in H1, H2; try lia; reflexivity.
+  - subst c. reflexivity.
+Qed.
+
+Theorem jvalue_parse_print_roundtrip :
+  forall v,
+    forall fuel, (jvalue_fuel v <= fuel)%nat ->
+    forall rest, safe_rest rest ->
+      parse_jvalue fuel (print_jvalue v ++ rest) = Some (v, rest).
+Proof.
+  assert (Hstrong : forall n v,
+    (jvalue_fuel v <= n)%nat ->
+    forall fuel, (jvalue_fuel v <= fuel)%nat ->
+    forall rest, safe_rest rest ->
+      parse_jvalue fuel (print_jvalue v ++ rest) = Some (v, rest)).
+  {
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros v Hn fuel Hfuel rest Hsafe.
+  destruct v as [str | b | | z | vs | fs].
+  - (* JString str *)
+    simpl print_jvalue.
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    rewrite (parse_jvalue_qtext_eq fuel' str rest).
+    rewrite (parse_qtext_print str rest).
+    reflexivity.
+  - (* JBool b *)
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    destruct b; simpl print_jvalue.
+    + rewrite (parse_jvalue_true_eq fuel' rest).
+      rewrite (expect_app "true" rest). reflexivity.
+    + rewrite (parse_jvalue_false_eq fuel' rest).
+      rewrite (expect_app "false" rest). reflexivity.
+  - (* JNull *)
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl print_jvalue.
+    rewrite (parse_jvalue_null_eq fuel' rest).
+    rewrite (expect_app "null" rest). reflexivity.
+  - (* JNum z *)
+    destruct fuel as [|fuel']; [simpl in Hfuel; lia|].
+    simpl print_jvalue.
+    rewrite (parse_jvalue_num_eq fuel' z rest).
+    destruct rest as [|a rest'].
+    + rewrite string_append_nil_r. rewrite (parse_number_print_nil z). reflexivity.
+    + destruct Hsafe as [Hdig Hmin].
+      rewrite (parse_number_print z a rest' Hdig Hmin). reflexivity.
+  - (* JArray vs *)
+    destruct vs as [|v0 vs'].
+    + (* empty array *)
+      simpl. simpl in Hfuel.
+      destruct fuel as [|fuel1]; [exfalso; lia|].
+      destruct fuel1 as [|fuel2]; [exfalso; lia|].
+      rewrite (parse_jvalue_array_eq (S fuel2) (String "]"%char rest)).
+      rewrite skip_ws_bracket_noop.
+      rewrite parse_jarray_elems_unfold.
+      rewrite skip_ws_bracket_noop.
+      cbv zeta.
+      rewrite expect_bracket_eq.
+      reflexivity.
+    + (* nonempty array *)
+      assert (Hlt0 : jvalue_fuel v0 < n)
+        by (eapply Nat.lt_le_trans; [apply jvalue_fuel_array_head_lt | exact Hn]).
+      pose proof (IHn (jvalue_fuel v0) Hlt0 v0 (le_n _)) as Hv0.
+      assert (Hall' : Forall (fun v1 => forall fuel0, (jvalue_fuel v1 <= fuel0)%nat ->
+                 forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue v1 ++ rest0) = Some (v1, rest0)) vs').
+      { apply Forall_forall. intros v1 Hin.
+        assert (Hlt1 : jvalue_fuel v1 < n)
+          by (eapply Nat.lt_le_trans; [apply (jvalue_fuel_array_elem_lt v0 vs' v1 Hin) | exact Hn]).
+        exact (IHn (jvalue_fuel v1) Hlt1 v1 (le_n _)). }
+      simpl in Hfuel.
+      destruct fuel as [|fuel1]; [exfalso; lia|].
+      destruct fuel1 as [|fuel2].
+      * exfalso. simpl in Hfuel.
+        exact (Nat.nle_succ_0 _ (le_S_n _ _ Hfuel)).
+      * assert (Hlf : (jvalue_list_fuel (v0 :: vs') <= fuel2)%nat).
+        { pose proof (jvalue_list_fuel_le_len_fold (v0 :: vs')) as Hb.
+          simpl in Hfuel. simpl in Hb.
+          eapply Nat.le_trans; [exact Hb | apply (le_S_n _ _ (le_S_n _ _ Hfuel))]. }
+        rewrite print_jvalue_array_eq.
+      repeat rewrite string_append_assoc.
+      rewrite bracket_app.
+      rewrite (parse_jvalue_array_eq (S fuel2) (print_jvalue_list (v0 :: vs') ++ "]" ++ rest)).
+      rewrite (skip_ws_noop_print_list v0 vs' ("]" ++ rest)).
+      rewrite (print_parse_jarray_roundtrip v0 vs' Hv0 Hall' fuel2 Hlf rest).
+      reflexivity.
+  - (* JObject fs *)
+    destruct fs as [|kv0 fs'].
+    + (* empty object *)
+      simpl. simpl in Hfuel.
+      destruct fuel as [|fuel1]; [exfalso; lia|].
+      destruct fuel1 as [|fuel2]; [exfalso; lia|].
+      rewrite (parse_jvalue_object_eq (S fuel2) (String "}"%char rest)).
+      rewrite skip_ws_brace_noop.
+      rewrite parse_jobject_fields_unfold.
+      rewrite skip_ws_brace_noop.
+      cbv zeta.
+      rewrite expect_brace_eq.
+      reflexivity.
+    + (* nonempty object *)
+      assert (Hlt0 : jvalue_fuel (snd kv0) < n)
+        by (eapply Nat.lt_le_trans; [apply jvalue_fuel_object_head_lt | exact Hn]).
+      pose proof (IHn (jvalue_fuel (snd kv0)) Hlt0 (snd kv0) (le_n _)) as Hv0.
+      assert (Hall' : Forall (fun kv => forall fuel0, (jvalue_fuel (snd kv) <= fuel0)%nat ->
+                 forall rest0, safe_rest rest0 -> parse_jvalue fuel0 (print_jvalue (snd kv) ++ rest0) = Some (snd kv, rest0)) fs').
+      { apply Forall_forall. intros kv1 Hin.
+        assert (Hlt1 : jvalue_fuel (snd kv1) < n)
+          by (eapply Nat.lt_le_trans; [apply (jvalue_fuel_object_elem_lt kv0 fs' kv1 Hin) | exact Hn]).
+        exact (IHn (jvalue_fuel (snd kv1)) Hlt1 (snd kv1) (le_n _)). }
+      simpl in Hfuel.
+      destruct fuel as [|fuel1]; [exfalso; lia|].
+      destruct fuel1 as [|fuel2].
+      * exfalso. simpl in Hfuel.
+        exact (Nat.nle_succ_0 _ (le_S_n _ _ Hfuel)).
+      * assert (Hlf : (jvalue_fields_fuel (kv0 :: fs') <= fuel2)%nat).
+        { pose proof (jvalue_fields_fuel_le_len_fold (kv0 :: fs')) as Hb.
+          simpl in Hfuel. simpl in Hb.
+          eapply Nat.le_trans; [exact Hb | apply (le_S_n _ _ (le_S_n _ _ Hfuel))]. }
+        rewrite print_jvalue_object_eq.
+      repeat rewrite string_append_assoc.
+      rewrite brace_app.
+      rewrite (parse_jvalue_object_eq (S fuel2) (print_jvalue_fields (kv0 :: fs') ++ "}" ++ rest)).
+      destruct kv0 as [k0 v0].
+      rewrite (skip_ws_noop_print_fields k0 v0 fs' ("}" ++ rest)).
+      rewrite (print_parse_jobject_roundtrip k0 v0 fs' Hv0 Hall' fuel2 Hlf rest).
+      reflexivity.
+  }
+  intros v fuel Hfuel rest Hsafe.
+  exact (Hstrong (jvalue_fuel v) v (le_n _) fuel Hfuel rest Hsafe).
+Qed.
+
 
 (* ------------------------------------------------------------------ *)
 (** * Small [jvalue] accessors *)
