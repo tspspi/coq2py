@@ -83,6 +83,36 @@ existing convention):
    starting; it sizes the next real commit honestly so it isn't
    attempted as a quick addition and abandoned half-done partway
    through a file that must stay fully proving.
+
+   **Quantified, not just described** (counted directly via `grep`,
+   confirming the "~90 pattern" figure from the `option` entry below was
+   roughly right and is a recurring cost, not a one-off): any new
+   `value` constructor requires inserting one more alternative, in the
+   exact right position, into *every* `destruct (eval ...) as
+   [[z1|b1|...]|]`-style full positional pattern over `value`'s 15
+   current constructors (mechanical, but position-sensitive — most hits
+   are in an arithmetic/comparison operator case where a wrong-shape
+   operand already gets stuck, so the fix is almost always "add one
+   more alternative that falls into the same already-`reflexivity`-closed
+   stuck case," not new proof logic) — **38 occurrences in `Translate.v`
+   alone**, **51 more in `RealIR.v`**, so **~90 sites, confirmed by
+   count, not estimated**, before `pyvalue` is even touched. The good
+   news, also confirmed directly rather than assumed: `PyRename.v`'s own
+   `rename_pyexpr_correct` does *not* have this problem the same way —
+   its `value_corr`/`env_corr` are *inductive relations*, not literal
+   `destruct`s over a concrete `pyvalue`, so a new `vcorr_array`
+   constructor (mirroring `vcorr_list`'s own `Forall2 value_corr vs vs'`
+   shape for a list-backed value) is a clean, additive case, not a
+   ripple through dozens of existing proof sites. So the realistic
+   split for the next session: budget real mechanical-edit time for
+   ~90+ `Translate.v`/`RealIR.v` sites (bounded, position-sensitive, but
+   not individually hard), and ordinary one-new-case proof work for
+   `PyRename.v`'s `value_corr` family and `Json.v`'s round-trip theorem
+   (likely needing its own `elts_fuel`/`print_parse_eltsN_roundtrip`
+   pair, directly templated off `ERecordN`'s own
+   `fields_fuel`/`print_parse_fieldsN_roundtrip`, with the `var`-keyed
+   half of that template simply dropped since array elements carry no
+   name).
 2. **RealIR.v ingestion-side gaps**: extend the real-`coqc`-JSON
    recognizer to modules/typeclasses, then coinductives — the same
    incremental, confirm-directly-against-a-fresh-probe methodology every
