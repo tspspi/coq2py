@@ -191,6 +191,21 @@
     way a 3-tuple nests two [EPair]s ([EInr (EInl e)] is "the third of
     three cases").
 
+    [ENone]/[ESome e]/[EOptionMatch scrutinee nonecase x somecase]:
+    Coq's own [option], confirmed directly (`RealIR.v`'s header has the
+    probe) to extract [None]/[Some v] as 0-/1-argument constructors
+    the same way [True]/[False] or [Nil]/[Cons] do -- *not* modeled as
+    [EInl]/[EInr] with a dummy payload for [None], since [EInl]/[EInr]
+    are specifically the *two-alternative, both-carry-a-payload* sum
+    (confirmed by their own type: [EInl (e : expr)]/[EInr (e : expr)],
+    no "[EInl] with nothing" case exists), not Coq's actual, separate
+    [option] type -- a dedicated pair of constructors stays honest
+    about which real Coq type is in play, the same reason [EFOpp]
+    isn't [EFSub (EFConst 0) _]. [VNone]/[VSome] round out [value] the
+    same way; [EOptionMatch] is [ECase]'s cousin, binding [x] to the
+    payload only on the [Some] branch (there is nothing to bind for
+    [None]).
+
     [EStrConst s]/[EStrConcat e1 e2]/[EStrEq e1 e2] add a fifth scalar
     value shape, [VStr], alongside [VZ]/[VBool]/[VFloat] -- genuine
     first-class strings, not just the identifiers [var] was already
@@ -292,7 +307,10 @@ Inductive expr : Type :=
   | EStrEq (e1 e2 : expr)
   | ERecordN (fields : list (var * expr))
   | EFieldN (name : var) (e : expr)
-  | ERecGroup (fns : list (var * var * expr)).
+  | ERecGroup (fns : list (var * var * expr))
+  | ENone
+  | ESome (e : expr)
+  | EOptionMatch (scrutinee nonecase : expr) (x : var) (somecase : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -316,7 +334,9 @@ Inductive value : Type :=
   | VInr (v : value)
   | VStr (s : var)
   | VRecordN (fields : list (var * value))
-  | VClosureGroup (fns : list (var * var * expr)) (cenv : list (var * value)) (self_name : var).
+  | VClosureGroup (fns : list (var * var * expr)) (cenv : list (var * value)) (self_name : var)
+  | VNone
+  | VSome (v : value).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -624,6 +644,18 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
             | [] => []
             | (f, p, b) :: rest => (f, VClosureGroup fns rho f) :: build_fields rest
             end) fns))
+  | ENone => Some VNone
+  | ESome e1 =>
+      match eval fuel' rho e1 with
+      | Some v1 => Some (VSome v1)
+      | None => None
+      end
+  | EOptionMatch scrutinee nonecase x somecase =>
+      match eval fuel' rho scrutinee with
+      | Some VNone => eval fuel' rho nonecase
+      | Some (VSome v) => eval fuel' ((x, v) :: rho) somecase
+      | _ => None
+      end
   end
   end.
 
@@ -745,4 +777,10 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
                  | (f, p, b) =>
                      andb (is_valid_ident f) (andb (is_valid_ident p) (expr_idents_valid is_valid_ident b))
                  end) fns
+  | ENone => true
+  | ESome e1 => expr_idents_valid is_valid_ident e1
+  | EOptionMatch scrutinee nonecase x somecase =>
+      andb (expr_idents_valid is_valid_ident scrutinee)
+        (andb (expr_idents_valid is_valid_ident nonecase)
+          (andb (is_valid_ident x) (expr_idents_valid is_valid_ident somecase)))
   end.

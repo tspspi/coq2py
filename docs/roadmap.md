@@ -312,11 +312,46 @@ roughly the order they'd be needed next:
   `Record`s/mutual-recursion groups specifically (an `ERecordN`-style
   recognizer that works for *any* field count, not one more fixed
   arity at a time the way `RRecord3` above is one more instance of the
-  nested-pair workaround); `option`, per `RCase`'s own note above.
+  nested-pair workaround).
 - ~~Make intrinsic recognition robust to the `"add"`/`"add0"`-style name
   disambiguation~~ -- **done**, see this section's own entry above
   (`resolve_intrinsic_name`, type-based, not by controlling the
   extraction unit).
+
+**Done** (`option`): confirmed directly against a real extracted
+`Definition default_zero (x : option Z) : Z := match x with None => 0
+| Some v => v end.` and `Definition wrap_positive (x : Z) : option Z
+:= if Z.ltb x 0 then None else Some x.`: `None`/`Some v` extract as
+0-/1-argument `expr:constructor`s (the same shape `True`/`False` or
+`Nil`/`Cons` already have), and a match on them is a 2-case
+`expr:case` -- confirmed to appear in *either* order (`Some` first in
+`default_zero`'s own captured JSON, matching `option`'s own
+declaration order in Coq's stdlib -- `Some` before `None` -- even
+though the source `match` was written the other way around), so
+`real_case_of_json` checks both. `option`'s `None` carrying *no*
+payload is why it was never covered by `EInl`/`EInr`/`RCase` (both
+sides there always carry one) -- `Lang.v` gained a real, dedicated
+`ENone`/`ESome`/`EOptionMatch` (not `EInl`/`EInr` with a dummy payload
+for `None`, the same "dedicated constructor over an encoding trick"
+move `EFOpp` made), threaded through every layer: `PyLang.v`
+(`PNone`/`PSome`/`POptionMatch`), `Translate.v` (including fixing the
+~90 existing value-destructuring proof patterns across `Translate.v`/
+`RealIR.v` that needed `VNone`/`VSome` accounted for once `value`
+grew two constructors), `Json.v` (`"none"`/`"some"`/`"optionmatch"`
+tags, parser, round-trip proof), `PyPrint.v` (rendered the same
+tagged-tuple way `PInl`/`PInr` already are: `("none",)`/`("some",
+v)`), `PyRename.v` (`rename_pyexpr_correct`'s case, plus two new
+`value_corr` constructors), `RealIR.v` (`RNone`/`RSome`/
+`ROptionMatch`, `real_eval`/`real_to_expr`/`real_to_expr_ctx`, and
+`real_to_expr_preserves_semantics`'s proof). `Print Assumptions` shows
+no new axioms. `examples/NaturalCoq.v`'s `default_zero`/
+`wrap_positive` are the worked instances: checked against the real
+Gallina definitions (`Some`/`None` both directions), round-tripped,
+parsed from the real captured JSON text, and printed to real, checked
+Python (`def default_zero(v0): return (0 if (v0)[0] == "none" else
+((v1 := (v0)[1]), v1)[-1])`, `def wrap_positive(v0): return (("none",)
+if (v0 < 0) else ("some", v0))`), confirmed to run correctly under
+actual Python too.
 
 ## The N-field-record/mutual-recursion arity caps are liftable -- landed
 

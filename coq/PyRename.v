@@ -407,6 +407,15 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
            end) fns n
       in
       (PRecGroup fns', n2)
+  | PNone => (PNone, n)
+  | PSome e1 =>
+      let '(e1', n1) := rename_pyexpr env n e1 in (PSome e1', n1)
+  | POptionMatch scrutinee nonecase x somecase =>
+      let '(scrutinee', n0) := rename_pyexpr env n scrutinee in
+      let '(nonecase', n1) := rename_pyexpr env n0 nonecase in
+      let y := fresh_name n1 in
+      let '(somecase', n2) := rename_pyexpr ((x, y) :: env) (S n1) somecase in
+      (POptionMatch scrutinee' nonecase' y somecase', n2)
   end.
 
 (* ------------------------------------------------------------------ *)
@@ -453,6 +462,9 @@ Fixpoint pyexpr_size (e : pyexpr) : nat :=
   | PCase sc _ c1 _ c2 => S (pyexpr_size sc + pyexpr_size c1 + pyexpr_size c2)
   | PRecordN fields => S (fold_right (fun kv acc => pyexpr_size (snd kv) + acc) 0 fields)
   | PRecGroup fns => S (fold_right (fun fpb acc => pyexpr_size (snd fpb) + acc) 0 fns)
+  | PNone => 1
+  | PSome e1 => S (pyexpr_size e1)
+  | POptionMatch sc nc _ sm => S (pyexpr_size sc + pyexpr_size nc + pyexpr_size sm)
   end.
 
 Lemma pyexpr_size_in_fields :
@@ -500,8 +512,8 @@ Definition group_names_ok (fns : list (var * var * pyexpr)) : Prop :=
     ["v" ++ digits] shape. *)
 Fixpoint pyexpr_recgroup_ok (e : pyexpr) : Prop :=
   match e with
-  | PConst _ | PBool _ | PVar _ | PNil | PFConst _ | PStrConst _ => True
-  | PNot e1 | PFst e1 | PSnd e1 | PField _ e1 | PInl e1 | PInr e1 | PFieldN _ e1 | PFOpp e1 | PFAbs e1 | PFSqrt e1 =>
+  | PConst _ | PBool _ | PVar _ | PNil | PFConst _ | PStrConst _ | PNone => True
+  | PNot e1 | PFst e1 | PSnd e1 | PField _ e1 | PInl e1 | PInr e1 | PFieldN _ e1 | PFOpp e1 | PFAbs e1 | PFSqrt e1 | PSome e1 =>
       pyexpr_recgroup_ok e1
   | PAdd e1 e2 | PSub e1 e2 | PMul e1 e2 | PEq e1 e2 | PLt e1 e2 | PLe e1 e2
   | PAnd e1 e2 | POr e1 e2 | PPair e1 e2 | PFAdd e1 e2 | PFSub e1 e2 | PFMul e1 e2
@@ -523,6 +535,7 @@ Fixpoint pyexpr_recgroup_ok (e : pyexpr) : Prop :=
       group_names_ok fns /\
       (fix go (fs : list (var * var * pyexpr)) : Prop :=
          match fs with [] => True | (_, _, b) :: rest => pyexpr_recgroup_ok b /\ go rest end) fns
+  | POptionMatch sc nc _ sm => pyexpr_recgroup_ok sc /\ pyexpr_recgroup_ok nc /\ pyexpr_recgroup_ok sm
   end.
 
 Lemma rename_pyexpr_monotone : forall e env n, n <= snd (rename_pyexpr env n e).
@@ -536,7 +549,8 @@ Proof.
       | e1 e2 | e1 e2 | e1 | e1 | e1 | k x body init | e1 e2 | e1 e2 | param body | f param body
       | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
-      | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns ];
+      | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
+      | | e1 | scrutinee nonecase x somecase ];
       simpl in Hsz; simpl;
       try (
         repeat match goal with
@@ -668,6 +682,8 @@ Inductive value_corr : pyvalue -> pyvalue -> Prop :=
   | vcorr_recordn : forall fs fs',
       Forall2 (fun kv kv' => fst kv = fst kv' /\ value_corr (snd kv) (snd kv')) fs fs' ->
       value_corr (PVRecordN fs) (PVRecordN fs')
+  | vcorr_none : value_corr PVNone PVNone
+  | vcorr_some : forall v v', value_corr v v' -> value_corr (PVSome v) (PVSome v')
   | vcorr_closure_lam : forall param body cenv env n yparam body' cenv',
       env_corr n env cenv cenv' ->
       pyexpr_recgroup_ok body ->
@@ -1196,7 +1212,8 @@ Proof.
       | e1 e2 | e1 e2 | e1 | e1 | e1 | k x body init | e1 e2 | e1 e2 | param body | f param body
       | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
-      | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns ].
+      | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
+      | | e1 | scrutinee nonecase x somecase ].
     all: simpl in Hok.
     + (* PConst *) simpl. eexists; split; [reflexivity | constructor].
     + (* PBool *) simpl. eexists; split; [reflexivity | constructor].
@@ -2118,4 +2135,34 @@ Proof.
       pose proof (Hbf fns (fun f p b H => H) n) as Hb.
       rewrite Ego in Hb. simpl in Hb.
       eexists; split; [reflexivity | constructor; exact Hb].
+    + (* PNone *) simpl; eexists; split; [reflexivity | constructor].
+    + (* PSome *) rename Hok into Hok1. simpl;
+      destruct (rename_pyexpr env n e1) as [e1' n1] eqn:R1;
+      simpl;
+      destruct (peval fuel' rho e1) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' e1 env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      eexists; split; [reflexivity | constructor; exact Hv1].
+    + (* POptionMatch *) destruct Hok as [HokS [HokN Hok1]]. simpl.
+      destruct (rename_pyexpr env n scrutinee) as [scrutinee' n0] eqn:R0.
+      destruct (rename_pyexpr env n0 nonecase) as [nonecase' n0'] eqn:R0'.
+      destruct (rename_pyexpr ((x, fresh_name n0') :: env) (S n0') somecase) as [somecase' n1] eqn:R1.
+      simpl.
+      destruct (peval fuel' rho scrutinee) as [vs|] eqn:Es; [| exact I].
+      pose proof (IHfuel' scrutinee env n rho rho' HokS Henv) as Hs.
+      rewrite Es, R0 in Hs; simpl in Hs; destruct Hs as [vs' [Es' Hvs]].
+      rewrite Es'.
+      assert (Hn0 : n <= n0) by (pose proof (rename_pyexpr_monotone scrutinee env n) as Hm; rewrite R0 in Hm; exact Hm).
+      assert (Hn0' : n0 <= n0') by (pose proof (rename_pyexpr_monotone nonecase env n0) as Hm; rewrite R0' in Hm; exact Hm).
+      destruct vs; simpl in Hvs |- *; try exact I.
+      * inversion Hvs; subst.
+        pose proof (IHfuel' nonecase env n0 rho rho' HokN (env_corr_weaken n n0 env rho rho' Hn0 Henv)) as Hn.
+        rewrite R0' in Hn. simpl in Hn. exact Hn.
+      * inversion Hvs; subst.
+        assert (Hn0n0' : n <= n0') by lia.
+        assert (Hext : env_corr (S n0') ((x, fresh_name n0') :: env) ((x, vs) :: rho) ((fresh_name n0', v') :: rho'))
+          by (apply ec_cons; [lia | eassumption | apply (env_corr_weaken n n0' env rho rho' Hn0n0' Henv)]).
+        pose proof (IHfuel' somecase ((x, fresh_name n0') :: env) (S n0') ((x, vs) :: rho) ((fresh_name n0', v') :: rho') Hok1 Hext) as H1.
+        rewrite R1 in H1. simpl in H1. exact H1.
 Qed.

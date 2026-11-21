@@ -1373,3 +1373,138 @@ Definition sum_list_parsed : option real_fix_decl_multi :=
 Example sum_list_parsed_matches_hand_built :
   sum_list_parsed = Some sum_list_decl.
 Proof. vm_compute. reflexivity. Qed.
+
+
+(* ----------------------------------------------------------------- *)
+(** * A twelfth example: a real Coq [option] *)
+
+(** [default_zero]/[wrap_positive] -- Coq's own [option], not a
+    hand-rolled encoding -- also run through [coqc]/[Extraction
+    Language JSON] during this session. [default_zero] exercises the
+    *matching* side ([ROptionMatch]); [wrap_positive] the
+    *constructing* side ([RNone]/[RSome]). *)
+Definition default_zero (x : option Z) : Z :=
+  match x with
+  | None => 0
+  | Some v => v
+  end.
+
+Definition wrap_positive (x : Z) : option Z :=
+  if Z.ltb x 0 then None else Some x.
+
+(** What Coq's real extraction emitted for [default_zero]'s match:
+    confirmed directly, [Some]/[None] appear in *that* order -- Coq's
+    own [option] declares [Some] before [None] in [Datatypes.v], and
+    extraction normalizes case order to the inductive's declaration
+    order, not the order the source [match] happened to list them in
+    (this [Definition] was written [None | Some], the other way
+    around). [RealJson.v]'s [real_case_of_json] checks both orders. *)
+Definition default_zero_ir : real_expr :=
+  ROptionMatch (RRel "x") (RZLit 0) "v" (RRel "v").
+
+Definition default_zero_expr : expr :=
+  match real_to_expr default_zero_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: default_zero_ir is in the recognized fragment *)
+  end.
+
+Example default_zero_ir_translates :
+  real_to_expr default_zero_ir = Some default_zero_expr.
+Proof. reflexivity. Qed.
+
+Example default_zero_ir_matches_real_definition :
+  forall z : Z,
+    real_eval [("x", VSome (VZ z))] default_zero_ir = Some (VZ (default_zero (Some z))).
+Proof. intro z. reflexivity. Qed.
+
+Example default_zero_ir_matches_real_definition_none :
+  real_eval [("x", VNone)] default_zero_ir = Some (VZ (default_zero None)).
+Proof. reflexivity. Qed.
+
+Example default_zero_expr_matches_real_definition :
+  forall z : Z,
+    eval 10 [("x", VSome (VZ z))] default_zero_expr = Some (VZ (default_zero (Some z))).
+Proof.
+  intro z.
+  rewrite (real_to_expr_preserves_semantics default_zero_ir default_zero_expr
+             default_zero_ir_translates 10 [("x", VSome (VZ z))] ltac:(simpl; lia)).
+  apply default_zero_ir_matches_real_definition.
+Qed.
+
+Theorem default_zero_idents_valid :
+  expr_idents_valid is_valid_ident default_zero_expr = true.
+Proof. reflexivity. Qed.
+
+Compute print_expr default_zero_expr.
+
+Corollary default_zero_json_roundtrip :
+  parse_expr_top (print_expr default_zero_expr) = Some (default_zero_expr, "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip default_zero_expr default_zero_idents_valid
+                (String.length (print_expr default_zero_expr) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H. exact H.
+Qed.
+
+Corollary default_zero_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho) (translate default_zero_expr)
+      = option_map value_to_pyvalue (eval fuel rho default_zero_expr).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Compute py_function "default_zero" ["x"] (translate default_zero_expr).
+
+(** [wrap_positive]'s own real captured JSON: [if ltb x 0 then None
+    else Some x] -- construction, not matching. *)
+Definition wrap_positive_ir : real_expr :=
+  RIfBool (RApp2 "ltb" (RRel "x") (RZLit 0)) RNone (RSome (RRel "x")).
+
+Definition wrap_positive_expr : expr :=
+  match real_to_expr wrap_positive_ir with
+  | Some e => e
+  | None => EConst 0 (* unreachable: wrap_positive_ir is in the recognized fragment *)
+  end.
+
+Example wrap_positive_ir_translates :
+  real_to_expr wrap_positive_ir = Some wrap_positive_expr.
+Proof. reflexivity. Qed.
+
+Example wrap_positive_ir_matches_real_definition_neg :
+  real_eval [("x", VZ (-3))] wrap_positive_ir = Some VNone.
+Proof. reflexivity. Qed.
+
+Example wrap_positive_ir_matches_real_definition_pos :
+  real_eval [("x", VZ 5)] wrap_positive_ir = Some (VSome (VZ 5)).
+Proof. reflexivity. Qed.
+
+Compute py_function "wrap_positive" ["x"] (translate wrap_positive_expr).
+
+(* ------------------------------------------------------------------ *)
+(** * Parsed from the real JSON text, not hand-built *)
+
+(** [default_zero]'s own real captured JSON (the whole small module,
+    not stripped to one declaration -- unlike the Coquelicot probes,
+    this one needs no raised [ulimit]: no [ClassicalDedekindReals]
+    bulk, just [bool]/[option]/[comparison]/[positive]/[z]). *)
+Definition default_zero_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""default_zero"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""option"", ""args"": [{""what"": ""type:glob"", ""name"": ""z"", ""args"": []}]}, ""right"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:rel"", ""name"": ""x""}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""Some"", ""argnames"": [""v""]}, ""body"": {""what"": ""expr:rel"", ""name"": ""v""}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""None"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""Z0"", ""args"": []}}]}}}]}".
+
+Definition default_zero_decl_parsed : option real_decl :=
+  real_decl_of_module_json default_zero_module_json "default_zero".
+
+Example default_zero_decl_parsed_matches_hand_built :
+  default_zero_decl_parsed
+  = Some {| rd_argnames := ["x"]; rd_body := default_zero_ir |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition wrap_positive_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""wrap_positive"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""z"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""option"", ""args"": [{""what"": ""type:glob"", ""name"": ""z"", ""args"": []}]}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x""], ""body"": {""what"": ""expr:case"", ""expr"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""ltb""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:constructor"", ""name"": ""Z0"", ""args"": []}]}, ""cases"": [{""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""True"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""None"", ""args"": []}}, {""what"": ""case"", ""pat"": {""what"": ""pat:constructor"", ""name"": ""False"", ""argnames"": []}, ""body"": {""what"": ""expr:constructor"", ""name"": ""Some"", ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}]}}]}}}]}".
+
+Definition wrap_positive_decl_parsed : option real_decl :=
+  real_decl_of_module_json wrap_positive_module_json "wrap_positive".
+
+Example wrap_positive_decl_parsed_matches_hand_built :
+  wrap_positive_decl_parsed
+  = Some {| rd_argnames := ["x"]; rd_body := wrap_positive_ir |}.
+Proof. vm_compute. reflexivity. Qed.

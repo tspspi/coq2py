@@ -83,7 +83,10 @@ Inductive pyexpr : Type :=
   | PStrEq (e1 e2 : pyexpr)
   | PRecordN (fields : list (var * pyexpr))
   | PFieldN (name : var) (e : pyexpr)
-  | PRecGroup (fns : list (var * var * pyexpr)).
+  | PRecGroup (fns : list (var * var * pyexpr))
+  | PNone
+  | PSome (e : pyexpr)
+  | POptionMatch (scrutinee nonecase : pyexpr) (x : var) (somecase : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -99,7 +102,9 @@ Inductive pyvalue : Type :=
   | PVInr (v : pyvalue)
   | PVStr (s : var)
   | PVRecordN (fields : list (var * pyvalue))
-  | PVClosureGroup (fns : list (var * var * pyexpr)) (cenv : list (var * pyvalue)) (self_name : var).
+  | PVClosureGroup (fns : list (var * var * pyexpr)) (cenv : list (var * pyvalue)) (self_name : var)
+  | PVNone
+  | PVSome (v : pyvalue).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -391,5 +396,17 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
             | [] => []
             | (f, p, b) :: rest => (f, PVClosureGroup fns rho f) :: build_fields rest
             end) fns))
+  | PNone => Some PVNone
+  | PSome e1 =>
+      match peval fuel' rho e1 with
+      | Some v1 => Some (PVSome v1)
+      | None => None
+      end
+  | POptionMatch scrutinee nonecase x somecase =>
+      match peval fuel' rho scrutinee with
+      | Some PVNone => peval fuel' rho nonecase
+      | Some (PVSome v) => peval fuel' ((x, v) :: rho) somecase
+      | _ => None
+      end
   end
   end.

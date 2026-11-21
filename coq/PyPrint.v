@@ -357,6 +357,11 @@ Fixpoint py_expr (e : pyexpr) : string :=
          | (f, p, b) :: rest => py_qstring f ++ ": " ++ f ++ ", " ++ py_group_dict rest
          end) fns
       ++ "})[-1]"
+  | PNone => "(""none"",)"
+  | PSome e1 => "(""some"", " ++ py_expr e1 ++ ")"
+  | POptionMatch scrutinee nonecase x somecase =>
+      "(" ++ py_expr nonecase ++ " if (" ++ py_expr scrutinee ++ ")[0] == ""none"" else (("
+        ++ x ++ " := (" ++ py_expr scrutinee ++ ")[1]), " ++ py_expr somecase ++ ")[-1])"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

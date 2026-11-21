@@ -554,6 +554,12 @@ Fixpoint real_expr_of_json (self : option var) (siblings : list var) (types : li
               | Some a', Some b' => Some (RPair a' b')
               | _, _ => None
               end
+          | Some "None", Some (JArray []) => Some RNone
+          | Some "Some", Some (JArray [a]) =>
+              match real_expr_of_json self siblings types fuel' a with
+              | Some a' => Some (RSome a')
+              | None => None
+              end
           | _, Some (JArray [a; b; c]) =>
               (* a 3-argument record constructor, any name -- RRecord3 *)
               match real_expr_of_json self siblings types fuel' a, real_expr_of_json self siblings types fuel' b,
@@ -743,6 +749,20 @@ with real_case_of_json (self : option var) (siblings : list var) (types : list (
               | Some "Inl", Some (JArray [JString x1]), Some "Inr", Some (JArray [JString x2]) =>
                   match real_expr_of_json self siblings types fuel' b1, real_expr_of_json self siblings types fuel' b2 with
                   | Some c1', Some c2' => Some (RCase scrutinee x1 c1' x2 c2')
+                  | _, _ => None
+                  end
+              | Some "Some", Some (JArray [JString x]), Some "None", Some (JArray []) =>
+                  (* [option]'s own declaration order in Coq's stdlib
+                     ([Some] before [None]) -- confirmed directly to be
+                     the order a real match extracts in, even when the
+                     source [match] was written [None | Some]. *)
+                  match real_expr_of_json self siblings types fuel' b2, real_expr_of_json self siblings types fuel' b1 with
+                  | Some nonec, Some somec => Some (ROptionMatch scrutinee nonec x somec)
+                  | _, _ => None
+                  end
+              | Some "None", Some (JArray []), Some "Some", Some (JArray [JString x]) =>
+                  match real_expr_of_json self siblings types fuel' b1, real_expr_of_json self siblings types fuel' b2 with
+                  | Some nonec, Some somec => Some (ROptionMatch scrutinee nonec x somec)
                   | _, _ => None
                   end
               | Some "Nil", Some (JArray []), Some "Cons", Some (JArray [JString h; JString t]) =>

@@ -813,6 +813,12 @@ Fixpoint print_expr (e : expr) : string :=
                ++ print_fns rest
          end) fns
       ++ "]}"
+  | ENone => "{""tag"":""none""}"
+  | ESome e1 => "{""tag"":""some"",""value"":" ++ print_expr e1 ++ "}"
+  | EOptionMatch scrutinee nonecase x somecase =>
+      "{""tag"":""optionmatch"",""scrutinee"":" ++ print_expr scrutinee
+        ++ ",""nonecase"":" ++ print_expr nonecase
+        ++ ",""x"":" ++ quote_string x ++ ",""somecase"":" ++ print_expr somecase ++ "}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -855,6 +861,10 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | EFieldN _ e1 => S (expr_fuel e1)
   | ERecGroup fns =>
       S (length fns + fold_right (fun fpb acc => Nat.max (expr_fuel (snd fpb)) acc) O fns)
+  | ENone => 1
+  | ESome e1 => S (expr_fuel e1)
+  | EOptionMatch scrutinee nonecase _ somecase =>
+      S (Nat.max (expr_fuel scrutinee) (Nat.max (expr_fuel nonecase) (expr_fuel somecase)))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -1873,8 +1883,57 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             | None => None
             end
         end
+    | None =>
+    match expect "{""tag"":""none""}" s with
+    | Some s1 => Some (ENone, s1)
+    | None =>
+    match expect "{""tag"":""some"",""value"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (e1, s2) =>
+            match expect "}" s2 with
+            | Some s3 => Some (ESome e1, s3)
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""optionmatch"",""scrutinee"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (scrutinee, s2) =>
+            match expect ",""nonecase"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (nonecase, s4) =>
+                    match expect ",""x"":" s4 with
+                    | Some s5 =>
+                        match parse_qstring s5 with
+                        | Some (x, s6) =>
+                            match expect ",""somecase"":" s6 with
+                            | Some s7 =>
+                                match parse_expr fuel' s7 with
+                                | Some (somecase, s8) =>
+                                    match expect "}" s8 with
+                                    | Some s9 => Some (EOptionMatch scrutinee nonecase x somecase, s9)
+                                    | None => None
+                                    end
+                                | None => None
+                                end
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -2236,7 +2295,10 @@ Proof.
       | e1 e2                 (* EStrEq *)
       | fields                (* ERecordN *)
       | name e1               (* EFieldN *)
-      | fns ];                (* ERecGroup *)
+      | fns                   (* ERecGroup *)
+      |                       (* ENone *)
+      | e1                    (* ESome *)
+      | scrutinee nonecase x somecase ]; (* EOptionMatch *)
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
   - (* EConst *)
@@ -2814,6 +2876,34 @@ reflexivity.
       destruct fns' as [| [[f2 p2] b2] fns''];
         repeat rewrite string_append_assoc; simpl; simpl in Hpf;
         rewrite (Hpf (String "}"%char rest)); reflexivity.
+  - (* ENone *)
+    simpl in Hn.
+    reflexivity.
+  - (* ESome *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel e1 < n)%nat) by lia.
+    assert (Hf1 : (expr_fuel e1 <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel e1) Hlt1 e1 (le_n _)) Hvalid fuel' Hf1). reflexivity.
+  - (* EOptionMatch *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel scrutinee < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel nonecase < n)%nat) by lia.
+    assert (Hlt3 : (expr_fuel somecase < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hrest1].
+    apply andb_true_iff in Hrest1 as [Hv2 Hrest2].
+    apply andb_true_iff in Hrest2 as [Hvx Hv3].
+    assert (Hf1 : (expr_fuel scrutinee <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel nonecase <= fuel')%nat) by lia.
+    assert (Hf3 : (expr_fuel somecase <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel scrutinee) Hlt1 scrutinee (le_n _)) Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel nonecase) Hlt2 nonecase (le_n _)) Hv2 fuel' Hf2). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print x Hvx). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel somecase) Hlt3 somecase (le_n _)) Hv3 fuel' Hf3). reflexivity.
 
   }
   intros e Hvalid fuel Hfuel rest.
