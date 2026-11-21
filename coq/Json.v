@@ -823,6 +823,20 @@ Fixpoint print_expr (e : expr) : string :=
       "{""tag"":""optionmatch"",""scrutinee"":" ++ print_expr scrutinee
         ++ ",""nonecase"":" ++ print_expr nonecase
         ++ ",""x"":" ++ quote_string x ++ ",""somecase"":" ++ print_expr somecase ++ "}"
+  | EArrConst es =>
+      "{""tag"":""arrconst"",""elts"":[" ++
+      (fix print_elts (l : list expr) : string :=
+         match l with
+         | [] => ""
+         | [e1] => print_expr e1
+         | e1 :: rest => print_expr e1 ++ "," ++ print_elts rest
+         end) es
+      ++ "]}"
+  | EArrGet arr idx =>
+      "{""tag"":""arrget"",""arr"":" ++ print_expr arr ++ ",""idx"":" ++ print_expr idx ++ "}"
+  | EArrSet arr idx val =>
+      "{""tag"":""arrset"",""arr"":" ++ print_expr arr
+        ++ ",""idx"":" ++ print_expr idx ++ ",""val"":" ++ print_expr val ++ "}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -871,6 +885,11 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | ESome e1 => S (expr_fuel e1)
   | EOptionMatch scrutinee nonecase _ somecase =>
       S (Nat.max (expr_fuel scrutinee) (Nat.max (expr_fuel nonecase) (expr_fuel somecase)))
+  | EArrConst es =>
+      S (length es + fold_right (fun e1 acc => Nat.max (expr_fuel e1) acc) O es)
+  | EArrGet arr idx => S (Nat.max (expr_fuel arr) (expr_fuel idx))
+  | EArrSet arr idx val =>
+      S (Nat.max (expr_fuel arr) (Nat.max (expr_fuel idx) (expr_fuel val)))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -2017,8 +2036,86 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""arrconst"",""elts"":[" s with
+    | Some s1 =>
+        match expect "]}" s1 with
+        | Some s2 => Some (EArrConst [], s2)
+        | None =>
+            match (fix parse_elts (fuel : nat) (ss : string) : option (list expr * string) :=
+                     match fuel with
+                     | O => None
+                     | S fuel'0 =>
+                         match parse_expr fuel'0 ss with
+                         | Some (e1, ss1) =>
+                             match expect "," ss1 with
+                             | Some ss2 =>
+                                 match parse_elts fuel'0 ss2 with
+                                 | Some (rest, ss3) => Some (e1 :: rest, ss3)
+                                 | None => None
+                                 end
+                             | None => Some ([e1], ss1)
+                             end
+                         | None => None
+                         end
+                     end) fuel' s1
+            with
+            | Some (es, s2) =>
+                match expect "]}" s2 with
+                | Some s3 => Some (EArrConst es, s3)
+                | None => None
+                end
+            | None => None
+            end
+        end
+    | None =>
+    match expect "{""tag"":""arrget"",""arr"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (arr, s2) =>
+            match expect ",""idx"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (idx, s4) =>
+                    match expect "}" s4 with
+                    | Some s5 => Some (EArrGet arr idx, s5)
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
+    | None =>
+    match expect "{""tag"":""arrset"",""arr"":" s with
+    | Some s1 =>
+        match parse_expr fuel' s1 with
+        | Some (arr, s2) =>
+            match expect ",""idx"":" s2 with
+            | Some s3 =>
+                match parse_expr fuel' s3 with
+                | Some (idx, s4) =>
+                    match expect ",""val"":" s4 with
+                    | Some s5 =>
+                        match parse_expr fuel' s5 with
+                        | Some (val, s6) =>
+                            match expect "}" s6 with
+                            | Some s7 => Some (EArrSet arr idx val, s7)
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -2178,6 +2275,108 @@ Proof.
     simpl.
     repeat rewrite string_append_assoc.
     pose proof (IH k2 fe2 Hvk2 Hvfe2 Hbody2 Hl fuel' Hfuel' rest) as IH'.
+    simpl in IH'.
+    rewrite IH'.
+    reflexivity.
+Qed.
+
+(** Every [print_expr] case begins with the literal character ["{"]
+    (a JSON object), regardless of which [expr] constructor it prints
+    -- confirmed by casing on every constructor. [EArrConst]'s element
+    list is bare [expr]s (no fixed per-element prefix the way
+    [ERecordN]'s ["{""key"":..."] field wrapper has, which is what let
+    that case's own empty-vs-nonempty disambiguation resolve by
+    [simpl] alone), so parsing a *nonempty* array needs this fact
+    stated explicitly: no element's own printed text can ever be
+    mistaken for the literal ["]}"] that closes an *empty* array,
+    since its very first character is always ["{"], never ["]"]. *)
+Lemma print_expr_head_brace : forall e, exists s0, print_expr e = String "{"%char s0.
+Proof.
+  destruct e; eexists; reflexivity.
+Qed.
+
+(** [EArrConst]'s own helper, the same [fields_fuel]/
+    [print_parse_fieldsN_roundtrip] category as above, with the
+    [var]-keyed half of that template simply dropped since an array's
+    elements carry no name -- confirmed in an isolated prototype first
+    (see docs/roadmap.md) before being applied here verbatim. *)
+Fixpoint elts_fuel (es : list expr) : nat :=
+  match es with
+  | [] => O
+  | e1 :: rest => S (Nat.max (expr_fuel e1) (elts_fuel rest))
+  end.
+
+Lemma elts_fuel_le_len_fold :
+  forall es, (elts_fuel es <=
+    length es + fold_right (fun e1 acc => Nat.max (expr_fuel e1) acc) O es)%nat.
+Proof.
+  induction es as [| e1 es' IH]; simpl.
+  - lia.
+  - apply le_n_S.
+    rewrite <- Nat.add_max_distr_l.
+    apply Nat.max_le_compat; [lia | exact IH].
+Qed.
+
+Lemma print_parse_eltsN_roundtrip :
+  forall e1 es'
+    (Hbody : forall fuel, (expr_fuel e1 <= fuel)%nat ->
+               forall rest, parse_expr fuel (print_expr e1 ++ rest) = Some (e1, rest))
+    (Hall : Forall (fun ei => forall fuel, (expr_fuel ei <= fuel)%nat ->
+                       forall rest, parse_expr fuel (print_expr ei ++ rest) = Some (ei, rest))
+                   es')
+    fuel,
+    (elts_fuel (e1 :: es') <= fuel)%nat ->
+    forall rest,
+      (fix parse_elts (fuel0 : nat) (ss : string) : option (list expr * string) :=
+         match fuel0 with
+         | O => None
+         | S fuel0' =>
+             match parse_expr fuel0' ss with
+             | Some (e0, ss1) =>
+                 match expect "," ss1 with
+                 | Some ss2 =>
+                     match parse_elts fuel0' ss2 with
+                     | Some (rest0, ss3) => Some (e0 :: rest0, ss3)
+                     | None => None
+                     end
+                 | None => Some ([e0], ss1)
+                 end
+             | None => None
+             end
+         end) fuel
+        ((fix print_elts (l : list expr) : string :=
+            match l with
+            | [] => ""
+            | [e0] => print_expr e0
+            | e0 :: rest0 => print_expr e0 ++ "," ++ print_elts rest0
+            end) (e1 :: es') ++ "]" ++ rest)
+      = Some (e1 :: es', "]" ++ rest).
+Proof.
+  intros e1 es'. revert e1.
+  induction es' as [| e2 es'' IH]; intros e1 Hbody Hall fuel Hfuel rest.
+  - (* singleton: [e1] *)
+    simpl in Hfuel. destruct fuel as [|fuel']; [lia|]. simpl in Hfuel.
+    assert (Hone : (expr_fuel e1 <= fuel')%nat) by lia.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (Hbody fuel' Hone).
+    simpl.
+    destruct (expect "," ("]" ++ rest)) eqn:Hcomma.
+    + unfold expect in Hcomma. simpl in Hcomma. discriminate.
+    + reflexivity.
+  - (* cons: [e1 :: e2 :: es'']; the tail is itself a non-empty list,
+       so [IH] (specialized to [e2]/[es''] directly) applies unchanged. *)
+    simpl in Hfuel. destruct fuel as [|fuel']; [lia|]. simpl in Hfuel.
+    assert (Hone : (expr_fuel e1 <= fuel')%nat) by lia.
+    pose proof (Nat.le_max_r (expr_fuel e1) (S (Nat.max (expr_fuel e2) (elts_fuel es'')))) as Hmax.
+    assert (Hfuel' : (elts_fuel (e2 :: es'') <= fuel')%nat) by (simpl; lia).
+    inversion Hall as [| x l Hx Hl]; subst.
+    simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (Hbody fuel' Hone).
+    simpl.
+    repeat rewrite string_append_assoc.
+    pose proof (IH e2 Hx Hl fuel' Hfuel' rest) as IH'.
     simpl in IH'.
     rewrite IH'.
     reflexivity.
@@ -2388,7 +2587,10 @@ Proof.
       | fns                   (* ERecGroup *)
       |                       (* ENone *)
       | e1                    (* ESome *)
-      | scrutinee nonecase x somecase ]; (* EOptionMatch *)
+      | scrutinee nonecase x somecase (* EOptionMatch *)
+      | es                    (* EArrConst *)
+      | arr idx               (* EArrGet *)
+      | arr idx val ];         (* EArrSet *)
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
   - (* EConst *)
@@ -3039,6 +3241,81 @@ reflexivity.
     rewrite (parse_qstring_print x Hvx). simpl.
     repeat rewrite string_append_assoc.
     rewrite ((IHn (expr_fuel somecase) Hlt3 somecase (le_n _)) Hv3 fuel' Hf3). reflexivity.
+  - (* EArrConst *)
+    simpl in Hn.
+    destruct es as [| e1 es'].
+    + simpl. reflexivity.
+    + (* [print_expr e1] prints as some JSON object, always starting with
+         ["{"] -- never ["]"] -- so the parser's own empty-array check
+         (testing for an immediate ["]}"]) can never fire once there is
+         at least one element to print first; [Heq1] makes that decidable
+         for [simpl] (which cannot otherwise see past the still-abstract
+         [e1]), then gets rewritten back out so the rest of this bullet
+         sees the ordinary, unrewritten [print_expr e1] its own
+         [print_parse_eltsN_roundtrip]-based reasoning below expects. *)
+      destruct (print_expr_head_brace e1) as [s0 Heq1].
+      rewrite Heq1. simpl.
+      simpl in Hn.
+      simpl in Hfuel.
+      simpl in Hvalid.
+      apply andb_true_iff in Hvalid as [Hv1 Hvrest].
+      assert (Hone : (expr_fuel e1 < n)%nat).
+      { pose proof (Nat.le_max_l (expr_fuel e1)
+                      (fold_right (fun e0 acc => Nat.max (expr_fuel e0) acc) O es')) as Hmax.
+        lia. }
+      assert (Hall : Forall (fun ei => forall fuel0, (expr_fuel ei <= fuel0)%nat ->
+                       forall rest0, parse_expr fuel0 (print_expr ei ++ rest0) = Some (ei, rest0))
+                     es').
+      { apply Forall_forall. intros e0 Hin.
+        pose proof Hvrest as Hvrest0.
+        apply forallb_forall with (x := e0) in Hvrest0; [| exact Hin].
+        assert (Hlt0 : (expr_fuel e0 < n)%nat).
+        { assert (Hle : (expr_fuel e0 <= fold_right (fun e2 acc => Nat.max (expr_fuel e2) acc) O es')%nat).
+          { clear -Hin. induction es' as [| e2 es'' IHe]; simpl in *.
+            - inversion Hin.
+            - destruct Hin as [Heq | Hin'].
+              + subst. apply Nat.le_max_l.
+              + eapply Nat.le_trans; [apply IHe, Hin' | apply Nat.le_max_r]. }
+          simpl in Hn. lia. }
+        intros fuel0 Hf0 rest0.
+        exact ((IHn (expr_fuel e0) Hlt0 e0 (le_n _)) Hvrest0 fuel0 Hf0 rest0). }
+      assert (Hfone : (elts_fuel (e1 :: es') <= fuel')%nat).
+      { pose proof (elts_fuel_le_len_fold (e1 :: es')) as Hle.
+        simpl in Hle. simpl. lia. }
+      pose proof (print_parse_eltsN_roundtrip e1 es'
+                    (fun fuel0 Hf0 rest0 => (IHn (expr_fuel e1) Hone e1 (le_n _)) Hv1 fuel0 Hf0 rest0)
+                    Hall fuel' Hfone) as Hpf.
+      simpl in Hpf. rewrite Heq1 in Hpf.
+      destruct es' as [| e2 es''];
+        repeat rewrite string_append_assoc; simpl; simpl in Hpf;
+        rewrite (Hpf (String "}"%char rest)); reflexivity.
+  - (* EArrGet *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel arr < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel idx < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hv2].
+    assert (Hf1 : (expr_fuel arr <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel idx <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel arr) Hlt1 arr (le_n _)) Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel idx) Hlt2 idx (le_n _)) Hv2 fuel' Hf2). reflexivity.
+  - (* EArrSet *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel arr < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel idx < n)%nat) by lia.
+    assert (Hlt3 : (expr_fuel val < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hv1 Hrest1].
+    apply andb_true_iff in Hrest1 as [Hv2 Hv3].
+    assert (Hf1 : (expr_fuel arr <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel idx <= fuel')%nat) by lia.
+    assert (Hf3 : (expr_fuel val <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel arr) Hlt1 arr (le_n _)) Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel idx) Hlt2 idx (le_n _)) Hv2 fuel' Hf2). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel val) Hlt3 val (le_n _)) Hv3 fuel' Hf3). reflexivity.
 
   }
   intros e Hvalid fuel Hfuel rest.

@@ -20,6 +20,13 @@
     [pyexpr] grows new constructors that [translate] (Translate.v) maps
     multiple source constructs onto.
 
+    [PArrConst]/[PArrGet]/[PArrSet]/[PVArr] are this file's half of
+    [EArrConst]/[EArrGet]/[EArrSet]/[VArray] -- see Lang.v's header for
+    the rationale and the explicit, bounded scope (McCarthy-style
+    functional update, not real numpy aliasing/mutation/broadcasting).
+    A straight 1:1 mirror, the same way every other construct here
+    already is one.
+
     [peval] takes the same explicit [fuel : nat] [Lang.v]'s [eval] does,
     for the identical reason (see that file's header): once [PLam]/
     [PRec] let a closure be returned, stored, and reapplied via [PApp],
@@ -91,7 +98,10 @@ Inductive pyexpr : Type :=
   | PRecGroup (fns : list (var * var * pyexpr))
   | PNone
   | PSome (e : pyexpr)
-  | POptionMatch (scrutinee nonecase : pyexpr) (x : var) (somecase : pyexpr).
+  | POptionMatch (scrutinee nonecase : pyexpr) (x : var) (somecase : pyexpr)
+  | PArrConst (es : list pyexpr)
+  | PArrGet (arr idx : pyexpr)
+  | PArrSet (arr idx val : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -109,7 +119,8 @@ Inductive pyvalue : Type :=
   | PVRecordN (fields : list (var * pyvalue))
   | PVClosureGroup (fns : list (var * var * pyexpr)) (cenv : list (var * pyvalue)) (self_name : var)
   | PVNone
-  | PVSome (v : pyvalue).
+  | PVSome (v : pyvalue)
+  | PVArr (vs : list pyvalue).
 
 Definition pyenv := list (var * pyvalue).
 
@@ -439,6 +450,36 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
       | Some PVNone => peval fuel' rho nonecase
       | Some (PVSome v) => peval fuel' ((x, v) :: rho) somecase
       | _ => None
+      end
+  | PArrConst es =>
+      match (fix peval_elts (l : list pyexpr) : option (list pyvalue) :=
+               match l with
+               | [] => Some []
+               | e1 :: rest =>
+                   match peval fuel' rho e1, peval_elts rest with
+                   | Some v, Some vs => Some (v :: vs)
+                   | _, _ => None
+                   end
+               end) es
+      with
+      | Some vs => Some (PVArr vs)
+      | None => None
+      end
+  | PArrGet arr idx =>
+      match peval fuel' rho arr, peval fuel' rho idx with
+      | Some (PVArr vs), Some (PVZ i) =>
+          if Z.leb 0 i then nth_error vs (Z.to_nat i) else None
+      | _, _ => None
+      end
+  | PArrSet arr idx val =>
+      match peval fuel' rho arr, peval fuel' rho idx, peval fuel' rho val with
+      | Some (PVArr vs), Some (PVZ i), Some v =>
+          if Z.leb 0 i then
+            if Nat.ltb (Z.to_nat i) (List.length vs) then
+              Some (PVArr (firstn (Z.to_nat i) vs ++ v :: skipn (S (Z.to_nat i)) vs))
+            else None
+          else None
+      | _, _, _ => None
       end
   end
   end.

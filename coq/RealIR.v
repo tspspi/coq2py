@@ -924,42 +924,42 @@ Proof.
     pose proof (IHre e1 eq_refl fuel' rho Hd1) as IH1.
     destruct (string_dec fn "negb") as [Heq|Hne1];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "fst") as [Heq|Hne2];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "snd") as [Heq|Hne3];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "ropp") as [Heq|Hne4];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "rabs") as [Heq|Hne5];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "sqrt") as [Heq|Hne6];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "rinv") as [Heq|Hne7];
       [inversion Htrans; subst;
        assert (Hconst1 : eval fuel' rho (EFConst 1%float) = Some (VFloat 1%float))
          by (destruct fuel' as [|fuel'']; [lia|]; reflexivity);
        simpl; rewrite Hconst1, IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "exp") as [Heq|Hne8];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     destruct (string_dec fn "ln") as [Heq|Hne9];
       [inversion Htrans; subst; simpl; rewrite IH1;
-       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|];
+       destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|];
        reflexivity|].
     discriminate.
   - (* RApp2 *)
@@ -973,78 +973,78 @@ Proof.
     pose proof (IHre2 e2 eq_refl fuel' rho Hd2') as IH2.
     destruct (string_dec fn "add") as [Heq|Hne1];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "sub") as [Heq|Hne2];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "mul") as [Heq|Hne3];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "eqb") as [Heq|Hne4];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "ltb") as [Heq|Hne5];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "leb") as [Heq|Hne6];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "andb") as [Heq|Hne7];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "orb") as [Heq|Hne8];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "rplus") as [Heq|Hne9];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "rmult") as [Heq|Hne10];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "rminus") as [Heq|Hne11];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "rdiv") as [Heq|Hne12];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "rmax") as [Heq|Hne13];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "rmin") as [Heq|Hne14];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     destruct (string_dec fn "rpower") as [Heq|Hne15];
       [inversion Htrans; subst; simpl; rewrite IH1, IH2;
-       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1]|];
-       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2]|];
+       destruct (real_eval rho re1) as [[z1|b1|p1a p1b|f1|s1 pr1 bd1 ce1|vs1|rk1a rv1a rk1b rv1b|cf1a cp1a cb1a cf1b cp1b cb1b cce1 cw1|iv1a|iv1b|isv1|fnv1|cg1a cg1b cg1c| |sov1|av1]|];
+       destruct (real_eval rho re2) as [[z2|b2|p2a p2b|f2|s2 pr2 bd2 ce2|vs2|rk2a rv2a rk2b rv2b|cf2a cp2a cb2a cf2b cp2b cb2b cce2 cw2|iv2a|iv2b|isv2|fnv2|cg2a cg2b cg2c| |sov2|av2]|];
        reflexivity|].
     discriminate.
   - (* RIfBool *)
@@ -1059,7 +1059,7 @@ Proof.
     assert (Hde' : (real_expr_depth re3 < fuel')%nat) by lia.
     simpl.
     rewrite (IHre1 ec eq_refl fuel' rho Hdc').
-    destruct (real_eval rho re1) as [[zc|bc|p1 p2|fc|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|]; try reflexivity.
+    destruct (real_eval rho re1) as [[zc|bc|p1 p2|fc|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|]; try reflexivity.
     destruct bc.
     + apply (IHre2 et eq_refl fuel' rho Hdt').
     + apply (IHre3 ee eq_refl fuel' rho Hde').
@@ -1075,8 +1075,8 @@ Proof.
     assert (Hdt' : (real_expr_depth re2 < fuel')%nat) by lia.
     simpl.
     rewrite (IHre1 eh eq_refl fuel' rho Hdh'), (IHre2 et eq_refl fuel' rho Hdt').
-    destruct (real_eval rho re1) as [[zh|bh|p1h p2h|fh|sh prh bdh ceh|vsh|rk1h rv1h rk2h rv2h|cf1h cp1h cb1h cf2h cp2h cb2h cceh cwh|iv1h|iv2h|isvh|fnvh|cgha cghb cghc| |sovh]|];
-      destruct (real_eval rho re2) as [[zt|bt|p1t p2t|ft|st prt bdt cet|vst|rk1t rv1t rk2t rv2t|cf1t cp1t cb1t cf2t cp2t cb2t ccet cwt|iv1t|iv2t|isvt|fnvt|cgta cgtb cgtc| |sovt]|];
+    destruct (real_eval rho re1) as [[zh|bh|p1h p2h|fh|sh prh bdh ceh|vsh|rk1h rv1h rk2h rv2h|cf1h cp1h cb1h cf2h cp2h cb2h cceh cwh|iv1h|iv2h|isvh|fnvh|cgha cghb cghc| |sovh|avh]|];
+      destruct (real_eval rho re2) as [[zt|bt|p1t p2t|ft|st prt bdt cet|vst|rk1t rv1t rk2t rv2t|cf1t cp1t cb1t cf2t cp2t cb2t ccet cwt|iv1t|iv2t|isvt|fnvt|cgta cgtb cgtc| |sovt|avt]|];
       reflexivity.
   - (* RListMatch *)
     destruct (real_to_expr re1) as [es|] eqn:Hres; [|discriminate].
@@ -1090,7 +1090,7 @@ Proof.
     assert (Hdc' : (real_expr_depth re3 < fuel')%nat) by lia.
     simpl.
     rewrite (IHre1 es eq_refl fuel' rho Hds').
-    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs|cgsa cgsb cgsc| |sovs]|]; try reflexivity.
+    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs|cgsa cgsb cgsc| |sovs|avs]|]; try reflexivity.
     destruct vs as [| hv tvs].
     + apply (IHre2 en eq_refl fuel' rho Hdn').
     + apply (IHre3 ec eq_refl fuel' ((hd, hv) :: (tl, VList tvs) :: rho) Hdc').
@@ -1112,7 +1112,7 @@ Proof.
     simpl in Hfuel.
     assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
-    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|]; reflexivity.
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|]; reflexivity.
   - (* RProj2 *)
     destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
     inversion Htrans; subst.
@@ -1120,7 +1120,7 @@ Proof.
     simpl in Hfuel.
     assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
-    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|]; reflexivity.
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|]; reflexivity.
   - (* RCase *)
     destruct (real_to_expr re1) as [es|] eqn:Hres; [|discriminate].
     destruct (real_to_expr re2) as [ec1|] eqn:Hrec1; [|discriminate].
@@ -1133,7 +1133,7 @@ Proof.
     assert (Hdc2' : (real_expr_depth re3 < fuel')%nat) by lia.
     simpl.
     rewrite (IHre1 es eq_refl fuel' rho Hds').
-    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs|cgsa cgsb cgsc| |sovs]|]; try reflexivity.
+    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs|cgsa cgsb cgsc| |sovs|avs]|]; try reflexivity.
     + apply (IHre2 ec1 eq_refl fuel' ((x1, iv1s) :: rho) Hdc1').
     + apply (IHre3 ec2 eq_refl fuel' ((x2, iv2s) :: rho) Hdc2').
   - (* RSelf: [real_to_expr] gives it [None] unconditionally (see this
@@ -1182,7 +1182,7 @@ Proof.
     simpl in Hfuel.
     assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
-    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|]; reflexivity.
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|]; reflexivity.
   - (* RProj3_2: translates to [EFst (ESnd e)] -- a two-level
        composition, needing a second [destruct fuel] the same way
        [RRecord3] does, but [reflexivity] alone closes every case: a
@@ -1196,7 +1196,7 @@ Proof.
     destruct fuel1 as [|fuel2]; [lia|].
     assert (Hd1 : (real_expr_depth re < fuel2)%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel2 rho Hd1).
-    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|]; reflexivity.
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|]; reflexivity.
   - (* RProj3_3: symmetric to [RProj3_2]. *)
     destruct (real_to_expr re) as [e1|] eqn:Hre1; [|discriminate].
     inversion Htrans; subst.
@@ -1205,7 +1205,7 @@ Proof.
     destruct fuel1 as [|fuel2]; [lia|].
     assert (Hd1 : (real_expr_depth re < fuel2)%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel2 rho Hd1).
-    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|]; reflexivity.
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|]; reflexivity.
   - (* RFLit *)
     inversion Htrans; subst.
     destruct fuel as [|fuel']; [simpl in Hfuel; lia|]. reflexivity.
@@ -1219,7 +1219,7 @@ Proof.
     simpl in Hfuel.
     assert (Hd1 : (real_expr_depth re < fuel')%nat) by lia.
     simpl. rewrite (IHre e1 eq_refl fuel' rho Hd1).
-    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov]|]; reflexivity.
+    destruct (real_eval rho re) as [[z|b|p1 p2|f|s pr bd ce|vs|rk1 rv1 rk2 rv2|cf1 cp1 cb1 cf2 cp2 cb2 cce cw|iv1|iv2|isv|fnv|cga cgb cgc| |sov|av]|]; reflexivity.
   - (* ROptionMatch *)
     destruct (real_to_expr re1) as [es|] eqn:Hres; [|discriminate].
     destruct (real_to_expr re2) as [en|] eqn:Hren; [|discriminate].
@@ -1232,7 +1232,7 @@ Proof.
     assert (Hdm' : (real_expr_depth re3 < fuel')%nat) by lia.
     simpl.
     rewrite (IHre1 es eq_refl fuel' rho Hds').
-    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs|cgsa cgsb cgsc| |sovs]|]; try reflexivity.
+    destruct (real_eval rho re1) as [[zs|bs|p1s p2s|fs|ss prs bds ces|vs|rk1s rv1s rk2s rv2s|cf1s cp1s cb1s cf2s cp2s cb2s cces cws|iv1s|iv2s|isvs|fnvs|cgsa cgsb cgsc| |sovs|avs]|]; try reflexivity.
     + apply (IHre2 en eq_refl fuel' rho Hdn').
     + apply (IHre3 em eq_refl fuel' ((x, sovs) :: rho) Hdm').
   - (* RRecordN: no per-case [induction re]-supplied IH at all for

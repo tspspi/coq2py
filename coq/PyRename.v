@@ -434,6 +434,27 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
       let y := fresh_name n1 in
       let '(somecase', n2) := rename_pyexpr ((x, y) :: env) (S n1) somecase in
       (POptionMatch scrutinee' nonecase' y somecase', n2)
+  | PArrConst es =>
+      let '(es', n1) :=
+        (fix go (xs : list pyexpr) (n : nat) : list pyexpr * nat :=
+           match xs with
+           | [] => ([], n)
+           | e1 :: rest =>
+               let '(e1', n0) := rename_pyexpr env n e1 in
+               let '(rest', n2) := go rest n0 in
+               (e1' :: rest', n2)
+           end) es n
+      in
+      (PArrConst es', n1)
+  | PArrGet arr idx =>
+      let '(arr', n1) := rename_pyexpr env n arr in
+      let '(idx', n2) := rename_pyexpr env n1 idx in
+      (PArrGet arr' idx', n2)
+  | PArrSet arr idx val =>
+      let '(arr', n1) := rename_pyexpr env n arr in
+      let '(idx', n2) := rename_pyexpr env n1 idx in
+      let '(val', n3) := rename_pyexpr env n2 val in
+      (PArrSet arr' idx' val', n3)
   end.
 
 (* ------------------------------------------------------------------ *)
@@ -483,6 +504,9 @@ Fixpoint pyexpr_size (e : pyexpr) : nat :=
   | PNone => 1
   | PSome e1 => S (pyexpr_size e1)
   | POptionMatch sc nc _ sm => S (pyexpr_size sc + pyexpr_size nc + pyexpr_size sm)
+  | PArrConst es => S (fold_right (fun e1 acc => pyexpr_size e1 + acc) 0 es)
+  | PArrGet arr idx => S (pyexpr_size arr + pyexpr_size idx)
+  | PArrSet arr idx val => S (pyexpr_size arr + pyexpr_size idx + pyexpr_size val)
   end.
 
 Lemma pyexpr_size_in_fields :
@@ -504,6 +528,17 @@ Proof.
   - contradiction.
   - destruct Hin as [Heq | Hin].
     + injection Heq as -> -> ->. simpl. lia.
+    + specialize (IH Hin). simpl in IH |- *. lia.
+Qed.
+
+Lemma pyexpr_size_in_elts :
+  forall e1 es, In e1 es -> pyexpr_size e1 < pyexpr_size (PArrConst es).
+Proof.
+  intros e1 es Hin.
+  induction es as [| e0 rest IH]; simpl in Hin.
+  - contradiction.
+  - destruct Hin as [Heq | Hin].
+    + subst. simpl. lia.
     + specialize (IH Hin). simpl in IH |- *. lia.
 Qed.
 
@@ -554,6 +589,11 @@ Fixpoint pyexpr_recgroup_ok (e : pyexpr) : Prop :=
       (fix go (fs : list (var * var * pyexpr)) : Prop :=
          match fs with [] => True | (_, _, b) :: rest => pyexpr_recgroup_ok b /\ go rest end) fns
   | POptionMatch sc nc _ sm => pyexpr_recgroup_ok sc /\ pyexpr_recgroup_ok nc /\ pyexpr_recgroup_ok sm
+  | PArrConst es =>
+      (fix go (xs : list pyexpr) : Prop :=
+         match xs with [] => True | e1 :: rest => pyexpr_recgroup_ok e1 /\ go rest end) es
+  | PArrGet arr idx => pyexpr_recgroup_ok arr /\ pyexpr_recgroup_ok idx
+  | PArrSet arr idx val => pyexpr_recgroup_ok arr /\ pyexpr_recgroup_ok idx /\ pyexpr_recgroup_ok val
   end.
 
 Lemma rename_pyexpr_monotone : forall e env n, n <= snd (rename_pyexpr env n e).
@@ -568,7 +608,8 @@ Proof.
       | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
-      | | e1 | scrutinee nonecase x somecase ];
+      | | e1 | scrutinee nonecase x somecase
+      | es | arr idx | arr idx val ];
       simpl in Hsz; simpl;
       try (
         repeat match goal with
@@ -651,6 +692,24 @@ Proof.
                        ((f0, yp0, b'0) :: rest', n4)
                    end) fns n) as [fns'' n2] eqn:Efns.
       simpl in Hb. simpl. lia.
+    - (* PArrConst es *)
+      revert Hsz n.
+      induction es as [| e0 es' IHes]; intros Hsz n; simpl in Hsz; simpl.
+      + lia.
+      + assert (He0_lt : pyexpr_size e0 < sz) by lia.
+        assert (Htail : pyexpr_size (PArrConst es') <= sz) by (simpl; lia).
+        pose proof (IHsz (pyexpr_size e0) He0_lt e0 (le_n _) env n) as He0.
+        destruct (rename_pyexpr env n e0) as [e0' n0] eqn:Ee0. simpl in He0.
+        specialize (IHes Htail n0).
+        destruct ((fix go (xs : list pyexpr) (n1 : nat) : list pyexpr * nat :=
+                     match xs with
+                     | [] => ([], n1)
+                     | e1 :: rest =>
+                         let '(e1', n2) := rename_pyexpr env n1 e1 in
+                         let '(rest', n3) := go rest n2 in
+                         (e1' :: rest', n3)
+                     end) es' n0) as [es'' n1] eqn:Ees'.
+        simpl in IHes. simpl. lia.
   }
   intros e env n. apply (Hstrong (pyexpr_size e) e (le_n _) env n).
 Qed.
@@ -700,6 +759,8 @@ Inductive value_corr : pyvalue -> pyvalue -> Prop :=
   | vcorr_recordn : forall fs fs',
       Forall2 (fun kv kv' => fst kv = fst kv' /\ value_corr (snd kv) (snd kv')) fs fs' ->
       value_corr (PVRecordN fs) (PVRecordN fs')
+  | vcorr_array : forall vs vs',
+      Forall2 value_corr vs vs' -> value_corr (PVArr vs) (PVArr vs')
   | vcorr_none : value_corr PVNone PVNone
   | vcorr_some : forall v v', value_corr v v' -> value_corr (PVSome v) (PVSome v')
   | vcorr_closure_lam : forall param body cenv env n yparam body' cenv',
@@ -1158,6 +1219,17 @@ Definition pyval_optlist_corr (ov ov' : option (list (var * pyvalue))) : Prop :=
       Forall2 (fun kv kv' => fst kv = fst kv' /\ value_corr (snd kv) (snd kv')) vs vs'
   end.
 
+(** [pyval_optlist_corr]'s own un-keyed sibling, for [PArrConst]'s
+    [option (list pyvalue)] element list -- the [var]-keyed half of
+    that template dropped since an array's elements carry no name,
+    the same adaptation this project's array work has already made
+    for [elts_fuel]/[print_parse_eltsN_roundtrip] in [Json.v]. *)
+Definition pyval_optarr_corr (ov ov' : option (list pyvalue)) : Prop :=
+  match ov with
+  | None => True
+  | Some vs => exists vs', ov' = Some vs' /\ Forall2 value_corr vs vs'
+  end.
+
 Lemma pyval_opt_corr_lookup : forall n env rho rho' x,
   env_corr n env rho rho' -> pyval_opt_corr (plookup rho x) (plookup rho' (rename_lookup env x)).
 Proof.
@@ -1193,6 +1265,67 @@ Proof.
     simpl in Hk. subst k'. simpl.
     destruct (String.eqb k name); [eexists; split; [reflexivity | exact Hv] | exact IH].
 Qed.
+
+(** [PArrGet]/[PArrSet]'s own small helpers -- [Forall2 value_corr]
+    preserved under [nth_error]/[firstn]/[skipn]/[++], the relational
+    (one-sided, [value_corr]-indexed) counterpart of [Translate.v]'s
+    own [option_map_nth_error]/[map_firstn_skipn_ins] facts, which are
+    stated in terms of exact equality under [map] rather than a
+    relation, since that file's own [EArrGet]/[EArrSet] proof doesn't
+    need to track a renaming. *)
+Lemma Forall2_value_corr_nth_error : forall vs vs' (i : nat),
+  Forall2 value_corr vs vs' -> pyval_opt_corr (nth_error vs i) (nth_error vs' i).
+Proof.
+  intros vs vs' i H. revert i.
+  induction H as [| v v' vs2 vs2' Hv Hrest IH]; intros i.
+  - destruct i; simpl; exact I.
+  - destruct i as [| i']; simpl.
+    + eexists; split; [reflexivity | exact Hv].
+    + exact (IH i').
+Qed.
+
+Lemma Forall2_value_corr_firstn : forall vs vs' (i : nat),
+  Forall2 value_corr vs vs' -> Forall2 value_corr (firstn i vs) (firstn i vs').
+Proof.
+  intros vs vs' i H. revert i.
+  induction H as [| v v' vs2 vs2' Hv Hrest IH]; intros i.
+  - destruct i; simpl; constructor.
+  - destruct i as [| i']; simpl; [constructor |].
+    constructor; [exact Hv | exact (IH i')].
+Qed.
+
+Lemma Forall2_value_corr_skipn : forall vs vs' (i : nat),
+  Forall2 value_corr vs vs' -> Forall2 value_corr (skipn i vs) (skipn i vs').
+Proof.
+  intros vs vs' i H. revert i.
+  induction H as [| v v' vs2 vs2' Hv Hrest IH]; intros i.
+  - destruct i; simpl; constructor.
+  - destruct i as [| i']; simpl; [constructor; [exact Hv | exact Hrest] |].
+    exact (IH i').
+Qed.
+
+Lemma Forall2_value_corr_app : forall vs1 vs1' vs2 vs2',
+  Forall2 value_corr vs1 vs1' -> Forall2 value_corr vs2 vs2' ->
+  Forall2 value_corr (vs1 ++ vs2) (vs1' ++ vs2').
+Proof.
+  intros vs1 vs1' vs2 vs2' H1 H2.
+  induction H1 as [| v v' rest rest' Hv Hrest IH]; simpl; [exact H2 | constructor; [exact Hv | exact IH]].
+Qed.
+
+Lemma Forall2_value_corr_length : forall vs vs',
+  Forall2 value_corr vs vs' -> List.length vs = List.length vs'.
+Proof.
+  intros vs vs' H. induction H as [| v v' rest rest' Hv Hrest IH]; simpl; [reflexivity | rewrite IH; reflexivity].
+Qed.
+
+(** The exact same [simpl] one-step-unfolds [skipn (S n) l] gotcha
+    this project's own [coq_rewrite_anonymous_fix_mismatch] session
+    memory documents (and [Translate.v]'s own [skipn_S_unfold] already
+    fixes for that file) -- a local copy, since [PyRename.v] does not
+    import [Translate.v]. *)
+Lemma skipn_S_unfold : forall (A : Type) (n : nat) (l : list A),
+  match l with [] => [] | _ :: l' => skipn n l' end = skipn (S n) l.
+Proof. intros. destruct l; reflexivity. Qed.
 
 (** [PRepeat]'s own correctness need: [piterate] run on two
     [value_corr]-related seeds, with a step function that preserves
@@ -1231,7 +1364,8 @@ Proof.
       | f1 param1 body1 f2 param2 body2 | func arg | | hd tl
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
-      | | e1 | scrutinee nonecase x somecase ].
+      | | e1 | scrutinee nonecase x somecase
+      | es | arr idx | arr idx val ].
     all: simpl in Hok.
     + (* PConst *) simpl. eexists; split; [reflexivity | constructor].
     + (* PBool *) simpl. eexists; split; [reflexivity | constructor].
@@ -2249,4 +2383,138 @@ Proof.
           by (apply ec_cons; [lia | eassumption | apply (env_corr_weaken n n0' env rho rho' Hn0n0' Henv)]).
         pose proof (IHfuel' somecase ((x, fresh_name n0') :: env) (S n0') ((x, vs) :: rho) ((fresh_name n0', v') :: rho') Hok1 Hext) as H1.
         rewrite R1 in H1. simpl in H1. exact H1.
+    + (* PArrConst *) simpl.
+      assert (Haux : forall xs,
+        (fix fok (xs0 : list pyexpr) : Prop :=
+           match xs0 with [] => True | e1 :: rest => pyexpr_recgroup_ok e1 /\ fok rest end) xs ->
+        forall n0, env_corr n0 env rho rho' ->
+        pyval_optarr_corr
+          ((fix peval_elts (xs0 : list pyexpr) : option (list pyvalue) :=
+              match xs0 with
+              | [] => Some []
+              | e1 :: rest =>
+                  match peval fuel' rho e1, peval_elts rest with
+                  | Some v, Some vs => Some (v :: vs)
+                  | _, _ => None
+                  end
+              end) xs)
+          ((fix peval_elts (xs0 : list pyexpr) : option (list pyvalue) :=
+              match xs0 with
+              | [] => Some []
+              | e1 :: rest =>
+                  match peval fuel' rho' e1, peval_elts rest with
+                  | Some v, Some vs => Some (v :: vs)
+                  | _, _ => None
+                  end
+              end)
+             (fst ((fix go (xs0 : list pyexpr) (n1 : nat) : list pyexpr * nat :=
+                      match xs0 with
+                      | [] => ([], n1)
+                      | e1 :: rest =>
+                          let '(e1', n2) := rename_pyexpr env n1 e1 in
+                          let '(rest', n3) := go rest n2 in
+                          (e1' :: rest', n3)
+                      end) xs n0)))).
+      { induction xs as [| e0 rest IHr]; intros Hokx n0 Henv0.
+        - simpl. eexists; split; [reflexivity | constructor].
+        - destruct Hokx as [HokE0 HokRest].
+          destruct (rename_pyexpr env n0 e0) as [e0' n1] eqn:R0.
+          destruct ((fix go (xs0 : list pyexpr) (n1 : nat) : list pyexpr * nat :=
+                       match xs0 with
+                       | [] => ([], n1)
+                       | e1 :: rest' =>
+                           let '(e1', n2) := rename_pyexpr env n1 e1 in
+                           let '(rest'', n3) := go rest' n2 in
+                           (e1' :: rest'', n3)
+                       end) rest n1) as [rest'' n3] eqn:Rgo.
+          simpl.
+          destruct (peval fuel' rho e0) as [v0|] eqn:E0; [| exact I].
+          pose proof (IHfuel' e0 env n0 rho rho' HokE0 Henv0) as H0.
+          rewrite E0, R0 in H0; simpl in H0; destruct H0 as [v0' [E0' Hv0]].
+          rewrite E0'.
+          assert (Hn1 : n0 <= n1) by (pose proof (rename_pyexpr_monotone e0 env n0) as Hm; rewrite R0 in Hm; exact Hm).
+          pose proof (IHr HokRest n1 (env_corr_weaken n0 n1 env rho rho' Hn1 Henv0)) as IH.
+          rewrite Rgo in IH. simpl in IH.
+          destruct ((fix peval_elts (xs0 : list pyexpr) : option (list pyvalue) :=
+                       match xs0 with
+                       | [] => Some []
+                       | e1 :: rest' =>
+                           match peval fuel' rho e1, peval_elts rest' with
+                           | Some v1, Some vs => Some (v1 :: vs)
+                           | _, _ => None
+                           end
+                       end) rest) as [vs|] eqn:Erest; [| exact I].
+          destruct IH as [vs' [Erest' Hvs]].
+          rewrite Erest'.
+          simpl. eexists; split; [reflexivity | constructor; [exact Hv0 | exact Hvs]]. }
+      destruct ((fix go (xs0 : list pyexpr) (n1 : nat) : list pyexpr * nat :=
+                   match xs0 with
+                   | [] => ([], n1)
+                   | e1 :: rest =>
+                       let '(e1', n2) := rename_pyexpr env n1 e1 in
+                       let '(rest', n3) := go rest n2 in
+                       (e1' :: rest', n3)
+                   end) es n) as [es'' n1] eqn:Rgo.
+      simpl.
+      destruct ((fix peval_elts (xs0 : list pyexpr) : option (list pyvalue) :=
+                   match xs0 with
+                   | [] => Some []
+                   | e1 :: rest =>
+                       match peval fuel' rho e1, peval_elts rest with
+                       | Some v1, Some vs => Some (v1 :: vs)
+                       | _, _ => None
+                       end
+                   end) es) as [vs|] eqn:Ees; [| exact I].
+      pose proof (Haux es Hok n Henv) as HA.
+      rewrite Ees, Rgo in HA. simpl in HA.
+      destruct HA as [vs' [Ees' Hvs]].
+      rewrite Ees'.
+      simpl. eexists; split; [reflexivity | constructor; exact Hvs].
+    + (* PArrGet *) destruct Hok as [Hok1 Hok2]. simpl;
+      destruct (rename_pyexpr env n arr) as [arr' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 idx) as [idx' n2] eqn:R2;
+      simpl;
+      destruct (peval fuel' rho arr) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' arr env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho idx) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone arr env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' idx env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst.
+      simpl. destruct (Z.leb 0 _); [| exact I].
+      apply Forall2_value_corr_nth_error. eassumption.
+    + (* PArrSet *) destruct Hok as [Hok1 [Hok2 Hok3]]. simpl;
+      destruct (rename_pyexpr env n arr) as [arr' n1] eqn:R1;
+      destruct (rename_pyexpr env n1 idx) as [idx' n2] eqn:R2;
+      destruct (rename_pyexpr env n2 val) as [val' n3] eqn:R3;
+      simpl;
+      destruct (peval fuel' rho arr) as [v1|] eqn:E1; [| exact I];
+      pose proof (IHfuel' arr env n rho rho' Hok1 Henv) as H1;
+      rewrite E1, R1 in H1; simpl in H1; destruct H1 as [v1' [E1' Hv1]];
+      rewrite E1';
+      destruct v1; simpl in Hv1 |- *; try exact I; inversion Hv1; subst;
+      destruct (peval fuel' rho idx) as [v2|] eqn:E2; [| exact I];
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone arr env n) as Hm; rewrite R1 in Hm; exact Hm);
+      pose proof (IHfuel' idx env n1 rho rho' Hok2 (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as H2;
+      rewrite E2, R2 in H2; simpl in H2; destruct H2 as [v2' [E2' Hv2]];
+      rewrite E2';
+      destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst;
+      destruct (peval fuel' rho val) as [v3|] eqn:E3; [| exact I];
+      assert (Hn2 : n1 <= n2) by (pose proof (rename_pyexpr_monotone idx env n1) as Hm; rewrite R2 in Hm; exact Hm);
+      assert (Hn02 : n <= n2) by lia;
+      pose proof (IHfuel' val env n2 rho rho' Hok3 (env_corr_weaken n n2 env rho rho' Hn02 Henv)) as H3;
+      rewrite E3, R3 in H3; simpl in H3; destruct H3 as [v3' [E3' Hv3]];
+      rewrite E3'.
+      simpl. rewrite <- (Forall2_value_corr_length _ _ ltac:(eassumption)).
+      destruct (Z.leb 0 _); [| exact I].
+      destruct (Nat.ltb _ _); [| exact I].
+      rewrite !skipn_S_unfold.
+      eexists; split; [reflexivity | apply vcorr_array;
+        apply Forall2_value_corr_app;
+        [apply Forall2_value_corr_firstn; eassumption |
+         apply Forall2_cons; [exact Hv3 | apply Forall2_value_corr_skipn; eassumption]]].
 Qed.

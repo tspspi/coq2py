@@ -313,6 +313,33 @@ this project introduces here, not a hidden assumption -- classical
     call, f calling g calling h) before being applied here verbatim --
     see docs/roadmap.md. *)
 
+(** [EArrConst]/[EArrGet]/[EArrSet] (a [VArray], backed by a plain
+    [list value] the same way [VList] already is) are this project's
+    first step into docs/roadmap.md's "Active goal" Phase 1 (numpy-
+    shaped array semantics). Deliberately a *bounded* first slice, not
+    the whole numpy formalization: [VArray] is an ordinary, immutable
+    Gallina value, so [EArrSet] is McCarthy-style functional update
+    (returns a *new* array with one element replaced) -- real numpy
+    view-vs-copy aliasing/mutation semantics, and broadcasting over
+    ranks other than exactly 1, both stay explicitly out of scope here,
+    as docs/roadmap.md's own Phase 1 entry already commits to tackling
+    1-D/fixed-shape first. The distinguishing feature over [VList]/
+    [EListMatch] (which already models a structural, Nil/Cons-shaped
+    list) is *indexed* access: [EArrGet]/[EArrSet] look up/replace by
+    a position computed at runtime, via [nth_error]/[firstn]/[skipn],
+    not by structural recursion down to the right Cons cell. Validated
+    first in an isolated, throwaway prototype (a minimal source/target
+    pair with no vars or fuel, just this construct) confirming the
+    [ERecordN]-style proof technique needed for [EArrConst]'s own list-
+    of-elements field carries over with **zero new axioms** -- pure
+    list manipulation, not a new numeric primitive -- see
+    docs/roadmap.md for the write-up, including the one proof wrinkle
+    it surfaced ([simpl] one-step-unfolding [skipn (S n) l], the same
+    gotcha this project's own [coq_rewrite_anonymous_fix_mismatch]
+    session memory already documents for a different function, fixed
+    the same way: a one-line refold lemma instead of fighting [simpl]'s
+    unfolding depth a second way). *)
+
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
@@ -386,7 +413,10 @@ Inductive expr : Type :=
   | ERecGroup (fns : list (var * var * expr))
   | ENone
   | ESome (e : expr)
-  | EOptionMatch (scrutinee nonecase : expr) (x : var) (somecase : expr).
+  | EOptionMatch (scrutinee nonecase : expr) (x : var) (somecase : expr)
+  | EArrConst (es : list expr)
+  | EArrGet (arr idx : expr)
+  | EArrSet (arr idx val : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -412,7 +442,8 @@ Inductive value : Type :=
   | VRecordN (fields : list (var * value))
   | VClosureGroup (fns : list (var * var * expr)) (cenv : list (var * value)) (self_name : var)
   | VNone
-  | VSome (v : value).
+  | VSome (v : value)
+  | VArray (vs : list value).
 
 (** Runtime environments: a simple association list from variable names to
     values. This is intentionally the same representation on both the
@@ -759,6 +790,36 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       | Some (VSome v) => eval fuel' ((x, v) :: rho) somecase
       | _ => None
       end
+  | EArrConst es =>
+      match (fix eval_elts (l : list expr) : option (list value) :=
+               match l with
+               | [] => Some []
+               | e1 :: rest =>
+                   match eval fuel' rho e1, eval_elts rest with
+                   | Some v, Some vs => Some (v :: vs)
+                   | _, _ => None
+                   end
+               end) es
+      with
+      | Some vs => Some (VArray vs)
+      | None => None
+      end
+  | EArrGet arr idx =>
+      match eval fuel' rho arr, eval fuel' rho idx with
+      | Some (VArray vs), Some (VZ i) =>
+          if Z.leb 0 i then nth_error vs (Z.to_nat i) else None
+      | _, _ => None
+      end
+  | EArrSet arr idx val =>
+      match eval fuel' rho arr, eval fuel' rho idx, eval fuel' rho val with
+      | Some (VArray vs), Some (VZ i), Some v =>
+          if Z.leb 0 i then
+            if Nat.ltb (Z.to_nat i) (List.length vs) then
+              Some (VArray (firstn (Z.to_nat i) vs ++ v :: skipn (S (Z.to_nat i)) vs))
+            else None
+          else None
+      | _, _, _ => None
+      end
   end
   end.
 
@@ -892,4 +953,9 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
       andb (expr_idents_valid is_valid_ident scrutinee)
         (andb (expr_idents_valid is_valid_ident nonecase)
           (andb (is_valid_ident x) (expr_idents_valid is_valid_ident somecase)))
+  | EArrConst es => forallb (expr_idents_valid is_valid_ident) es
+  | EArrGet arr idx => andb (expr_idents_valid is_valid_ident arr) (expr_idents_valid is_valid_ident idx)
+  | EArrSet arr idx val =>
+      andb (expr_idents_valid is_valid_ident arr)
+        (andb (expr_idents_valid is_valid_ident idx) (expr_idents_valid is_valid_ident val))
   end.

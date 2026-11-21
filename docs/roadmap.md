@@ -36,6 +36,56 @@ existing convention):
    the way `ERecordN` was first proven in a throwaway file before
    touching `Lang.v`/`Translate.v`/`Json.v` for real).
 
+   **First slice landed**: `EArrConst (es : list expr)`/`EArrGet (arr
+   idx : expr)`/`EArrSet (arr idx val : expr)` (a `VArray (vs : list
+   value)`/`PVArr`, McCarthy-style functional get/set — `EArrSet`
+   returns a *new* array, never in-place mutation, exactly as scoped
+   below) are real, proven constructs now, across every layer this
+   file's own "What this does *not* yet de-risk" paragraph predicted:
+   `Lang.v` (`eval`/`expr_idents_valid`), `PyLang.v`/`Translate.v`
+   (`translate`, `translate_preserves_semantics`), `Json.v`
+   (`print_expr`/`parse_expr`, plus a new `elts_fuel`/
+   `print_parse_eltsN_roundtrip` pair, directly templated off
+   `ERecordN`'s own `fields_fuel`/`print_parse_fieldsN_roundtrip` with
+   the `var`-keyed half of that template dropped, exactly as
+   predicted), `PyRename.v` (`rename_pyexpr`/`pyexpr_size`/
+   `pyexpr_recgroup_ok`, a new `vcorr_array` constructor mirroring
+   `vcorr_list`'s own `Forall2 value_corr vs vs'` shape, a new
+   `pyval_optarr_corr` one-sided relation mirroring `pyval_optlist_corr`
+   with the key dropped, and four new small `Forall2 value_corr`
+   preservation lemmas for `nth_error`/`firstn`/`skipn`/`++` that
+   `Translate.v`'s own exact-equality `option_map_nth_error`/
+   `map_firstn_skipn_ins` facts didn't need, since tracking a *renaming*
+   needs the relational form instead), and `PyPrint.v` (rendered as a
+   Python tuple literal — `EArrSet`'s functional update becomes a fresh
+   tuple built from slices, `arr[:idx] + (val,) + arr[idx+1:]`, so
+   nothing here ever needs Python's mutable `list`). `Print Assumptions`
+   confirms **zero new axioms** on `Json.parse_print_roundtrip`,
+   `Translate.translate_preserves_semantics`, and
+   `PyRename.rename_pyexpr_correct` alike (only the pre-existing
+   `PrimFloat`/`PrimInt63` primitives and `FloatAxioms.SF2Prim_Prim2SF`)
+   — confirmed directly, not assumed, same as every prior feature here.
+   Checked running as real Python too (not just type-checked): a tuple
+   built from three constants, set at index 1, correctly returns
+   `(10, 99, 30)` under actual `python3`.
+
+   One new proof-debugging technique this feature needed, beyond what
+   `coq_rewrite_anonymous_fix_mismatch` already documents: `Json.v`'s
+   own roundtrip proof has to show the parser's empty-array check
+   (`expect "]}"` against the text immediately following the opening
+   bracket) can never fire once there is at least one element, but
+   `simpl` cannot see past a still-abstract first element `e1` to know
+   its printed text starts with `"{"` rather than `"]"`. The fix:
+   `print_expr_head_brace` (proved once, by casing on every `expr`
+   constructor, that `print_expr e` always starts with `"{"`), applied
+   via `rewrite Heq1 in Hpf |- *` — rewritten into *both* the goal and
+   the independently-constructed `Hpf` fact *before* calling `simpl` on
+   either, so both sides reach the same `simpl`-normal-form afterward;
+   rewriting only one side (then trying to rewrite back out again)
+   looked like it should work but silently diverges once `simpl`
+   re-associates the surrounding `++` chain, leaving the two sides
+   permanently mismatched.
+
    **Sub-step done** (isolated prototype, not committed to `coq/` — a
    throwaway file, same convention as `ERecordN`'s own first validation):
    a minimal standalone source/target pair (`EArrConst (es : list expr)`/
@@ -123,6 +173,17 @@ existing convention):
    Attempt only once phases 1-2 are stable; this file currently scopes it
    as deliberately deferred, not a bounded next step, so expect it to need
    its own sub-plan rather than a single addition.
+
+**Stretch goal, not part of the three-phase ordering above** (explicitly
+not the next thing to pick up, just recorded so it isn't lost): a proven
+`expr -> expr` (or `pyexpr -> pyexpr`) optimization/simplification pass —
+constant folding, dead-`let` elimination, and similar rewrites — sitting
+between `translate` and the printer, with its own
+`optimize_preserves_semantics` theorem, the same proof shape every other
+stage of this pipeline already uses. Start with one trivially-sound
+rewrite (constant-folding `EAdd`/`EMul` of two literals, say) rather than
+a general optimizer, the same "smallest real slice first" discipline
+phase 1's own array work above followed.
 
 Standing methodology for all three (unchanged from every prior session):
 confirm every claim directly via a fresh `coqc`/`vm_compute` probe, never

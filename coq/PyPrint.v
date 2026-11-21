@@ -386,6 +386,27 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | POptionMatch scrutinee nonecase x somecase =>
       "(" ++ py_expr nonecase ++ " if (" ++ py_expr scrutinee ++ ")[0] == ""none"" else (("
         ++ x ++ " := (" ++ py_expr scrutinee ++ ")[1]), " ++ py_expr somecase ++ ")[-1])"
+  | PArrConst es =>
+      (** A Python tuple literal, the same immutable-sequence choice
+          [PRecordN]/[PListMatch] already made for structured values --
+          [EArrSet]'s own McCarthy-style functional update (a *new*
+          array, never in-place mutation) is rendered below as a fresh
+          tuple built from slices, so a plain tuple here is sufficient;
+          nothing here ever needs Python's mutable [list]. A singleton
+          needs its own trailing comma (Python's own tuple-literal
+          syntax quirk: [(x)] is just [x] in parens, not a 1-tuple). *)
+      "(" ++
+      (fix py_elts (l : list pyexpr) : string :=
+         match l with
+         | [] => ""
+         | [e1] => py_expr e1 ++ ","
+         | e1 :: rest => py_expr e1 ++ ", " ++ py_elts rest
+         end) es
+      ++ ")"
+  | PArrGet arr idx => "(" ++ py_expr arr ++ ")[" ++ py_expr idx ++ "]"
+  | PArrSet arr idx val =>
+      "((" ++ py_expr arr ++ ")[:" ++ py_expr idx ++ "] + (" ++ py_expr val ++ ",) + ("
+        ++ py_expr arr ++ ")[" ++ py_expr idx ++ " + 1:])"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=
