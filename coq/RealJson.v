@@ -329,6 +329,42 @@ Definition float_of_Z (z : Z) : PrimFloat.float :=
   | Zneg p => SF2Prim (S754_finite true p 0)
   end.
 
+(** A *decimal* [R] literal (e.g. [3.14]), unlike an integer one, does
+    *not* extract as [iZR] -- confirmed directly against a fresh probe
+    ([Definition decimal_lit (x : R) : R := x + 3.14.]): it extracts as
+    [q2R (Qmake num den)], [QArith]'s own rational-to-real coercion
+    applied to a [Q] ([num : Z] over [den : positive]) built the exact
+    same [Zpos]/[Zneg]/[Z0]/[XI]/[XO]/[XH] way an ordinary [Z]/
+    [positive] literal already is (confirmed directly: two ordinary
+    integer literals/nested constructors, nothing new to parse at
+    that level). [num / den] is in general *not* exactly representable
+    in binary64 ([3.14 = 314/100], and [100] is not a power of two) --
+    but that is not a new problem introduced here: it is exactly the
+    same rounding every real decimal literal already undergoes the
+    moment a human writes it down for a binary floating-point target,
+    Python included (confirmed directly: Python's own literal [3.14]
+    is already the nearest binary64 double, not the exact rational).
+    So [PrimFloat.div (float_of_Z num) (float_of_Z (Zpos den))] --
+    the correctly-rounded quotient, computed once at parse time, not
+    reconstructed bit-for-bit -- is not an approximation *this project*
+    introduces; it is the same, single rounding step any
+    decimal-to-float literal already needs, computed through the one
+    already-trusted primitive ([PrimFloat.div]) that performs it
+    correctly, not a new one. *)
+Definition rational_of_json (fuel : nat) (j : jvalue) : option PrimFloat.float :=
+  match j with
+  | JObject fs =>
+      match jwhat fs, jname fs, jfield fs "args" with
+      | Some "expr:constructor", Some "Qmake", Some (JArray [numj; denj]) =>
+          match z_of_json fuel numj, positive_of_json fuel denj with
+          | Some num, Some den => Some (PrimFloat.div (float_of_Z num) (float_of_Z (Zpos den)))
+          | _, _ => None
+          end
+      | _, _, _ => None
+      end
+  | _ => None
+  end.
+
 (* ------------------------------------------------------------------ *)
 (** * Intrinsic name disambiguation (the "add0" problem)
 
@@ -680,6 +716,11 @@ with real_app_of_json (self : option var) (siblings : list var) (types : list (s
       if string_dec fname "iZR" then
         match z_of_json fuel' a with
         | Some z => Some (RFLit (float_of_Z z))
+        | None => None
+        end
+      else if string_dec fname "q2R" then
+        match rational_of_json fuel' a with
+        | Some f => Some (RFLit f)
         | None => None
         end
       else

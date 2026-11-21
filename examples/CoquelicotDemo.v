@@ -574,3 +574,50 @@ Definition smaller_plus_one_decl_parsed : option real_decl :=
 Example smaller_plus_one_decl_parsed_matches_hand_built :
   smaller_plus_one_decl_parsed = Some {| rd_argnames := ["x"; "y"]; rd_body := smaller_plus_one_ir |}.
 Proof. vm_compute. reflexivity. Qed.
+
+
+(* ------------------------------------------------------------------ *)
+(** * A decimal [R] literal, not an integer one
+
+    One more probe: [decimal_lit (x : R) := x + 3.14]. Confirmed
+    directly: a *decimal* literal does not extract as [iZR] the way
+    [quad]'s integer literal [1] does -- it extracts as [q2R (Qmake
+    num den)], [QArith]'s own rational-to-real coercion applied to a
+    [Q] built the same [Zpos]/[Zneg]/[Z0]/[XI]/[XO]/[XH] way an
+    ordinary integer literal already is. [num / den] is in general not
+    exactly representable in binary64 ([3.14 = 314/100], and [100] is
+    not a power of two) -- but that is the same single rounding step
+    any decimal-to-float literal already needs, Python's own [3.14]
+    included, not a new approximation this project introduces
+    ([RealJson.v]'s own header has the full argument). *)
+Definition decimal_lit_module_json : string :=
+  "{""what"": ""module"", ""name"": ""Main"", ""need_magic"": false, ""need_dummy"": true, ""used_modules"": [], ""declarations"": [{""what"": ""decl:term"", ""name"": ""decimal_lit"", ""type"": {""what"": ""type:arrow"", ""left"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}, ""right"": {""what"": ""type:glob"", ""name"": ""r"", ""args"": []}}, ""value"": {""what"": ""expr:lambda"", ""argnames"": [""x""], ""body"": {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""rplus""}, ""args"": [{""what"": ""expr:rel"", ""name"": ""x""}, {""what"": ""expr:apply"", ""func"": {""what"": ""expr:global"", ""name"": ""q2R""}, ""args"": [{""what"": ""expr:constructor"", ""name"": ""Qmake"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""Zpos"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XI"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XI"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XI"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XI"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XH"", ""args"": []}]}]}]}]}]}]}]}]}]}, {""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XI"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XO"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XI"", ""args"": [{""what"": ""expr:constructor"", ""name"": ""XH"", ""args"": []}]}]}]}]}]}]}]}]}]}}}]}".
+
+Definition decimal_lit_decl_parsed : option real_decl :=
+  real_decl_of_module_json decimal_lit_module_json "decimal_lit".
+
+(** [3.14]'s own exact binary64 bit pattern, confirmed directly to be
+    bit-for-bit the same value real Python's own literal [3.14]
+    parses to ([float.fromhex("0x1.91eb851eb851fp+1") == 3.14]). *)
+Example decimal_lit_decl_parsed_matches_expected :
+  decimal_lit_decl_parsed
+  = Some {| rd_argnames := ["x"];
+            rd_body := RApp2 "rplus" (RRel "x") (RFLit 0x1.91eb851eb851fp+1) |}.
+Proof. vm_compute. reflexivity. Qed.
+
+Definition decimal_lit_expr : expr :=
+  match decimal_lit_decl_parsed with
+  | Some rd =>
+      match real_to_expr rd.(rd_body) with
+      | Some e => e
+      | None => EFConst 0%float
+      end
+  | None => EFConst 0%float
+  end.
+
+Example decimal_lit_expr_matches_expected_value :
+  eval 10 [("x", VFloat 0)] decimal_lit_expr = Some (VFloat 0x1.91eb851eb851fp+1).
+Proof. vm_compute. reflexivity. Qed.
+
+Compute py_function "decimal_lit" (match decimal_lit_decl_parsed with Some rd => rd.(rd_argnames) | None => [] end)
+  (translate decimal_lit_expr).

@@ -1028,7 +1028,41 @@ compute in Gallina at all (unlike `rmax`/`rmin`, which compute a real
 answer via `ltb`) -- not a bounded addition on the same footing as
 the others above, and not attempted here.
 
-Still not done: `R` literals other than small-integer `iZR`; anything
+**Done** (`R` literals beyond small-integer `iZR`): checked directly,
+not assumed, which literal shapes actually needed new work. A
+negative (`-2`) and a large (`1000000`) integer literal both already
+parsed correctly through the *existing* `iZR`/`float_of_Z`/
+`positive_of_json` machinery with zero changes -- confirmed directly
+(`RFLit (-0x1p+1)` and `RFLit 0x1.e848p+19` respectively), since
+`positive_of_json`'s nested `XI`/`XO`/`XH` reconstruction was never
+actually limited to "small" numbers, and `Zneg` was already a
+recognized case alongside `Zpos`/`Z0` -- the roadmap's own earlier
+"small-integer" phrasing undersold what already worked. Likewise
+`1/2` (`Rdiv (IZR 1) (IZR 2)`) already parses correctly as `RApp2
+"rdiv" (RFLit 1) (RFLit 2)` with no changes, since `rdiv`/`iZR` were
+each already recognized independently. The one genuine gap: a
+*decimal* literal (`3.14`) does **not** extract as `iZR` at all --
+confirmed directly (a fresh probe, `decimal_lit (x : R) := x + 3.14`)
+-- it extracts as `q2R (Qmake num den)`, `QArith`'s own rational-to-
+real coercion applied to a `Q` built the same `Zpos`/`Zneg`/`Z0`/
+`XI`/`XO`/`XH` way an ordinary integer literal already is. `num/den`
+is in general not exactly representable in binary64 (`3.14 =
+314/100`, and `100` is not a power of two) -- but that is the same
+single rounding step any decimal-to-float literal already needs
+(confirmed directly: Python's own literal `3.14` is already the
+nearest binary64 double, not the exact rational), so `RealJson.v`'s
+new `rational_of_json` computes `PrimFloat.div (float_of_Z num)
+(float_of_Z (Zpos den))` once at parse time -- the correctly-rounded
+quotient through the one already-trusted primitive that performs it,
+not a new approximation. `Print Assumptions` shows no new axioms.
+`examples/CoquelicotDemo.v`'s `decimal_lit_decl_json` is the real
+captured JSON, parsed to `RFLit 0x1.91eb851eb851fp+1`, confirmed
+bit-for-bit identical to Python's own `3.14` literal
+(`float.fromhex("0x1.91eb851eb851fp+1") == 3.14`), and printed to
+real, checked Python, confirmed to run correctly under actual Python
+too.
+
+Still not done: anything
 nested deeper where the error-propagation question above would
 actually start to matter;
 extending `Extract.v`'s own realizer-level string speedup to cover
