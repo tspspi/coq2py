@@ -8,7 +8,7 @@
 # Use `gmake` if your platform's default `make` is BSD make (coqc's own
 # generated-makefile conventions assume GNU make).
 
-.PHONY: all coq ocaml examples physics test wave_sim package clean
+.PHONY: all coq ocaml examples physics test wave_sim wave_sim_vec package clean
 
 all: coq ocaml
 
@@ -50,6 +50,21 @@ wave_sim: ocaml
 	  | (cd ocaml && dune exec driver/main.exe -- leapfrog_update r,u_prev,u_left,u_center,u_right) \
 	  > runtime/generated/leapfrog_update.py
 	cd runtime && python3 wave1d.py
+
+# The whole-grid step as one proven array term (slicing, broadcasting,
+# concatenation -- examples/physics/Discretize.v's `one_pass_vec_expr`,
+# byte-identical to that file's own `Compute print_expr` of it), through
+# the same CLI, then runtime/wave1d_vec.py runs the full simulation on
+# it and checks the final grid is bit-identical to wave1d.py's numpy
+# path (hence the dependency: it needs leapfrog_update.py too).
+ONE_PASS_VEC_JSON := {"tag":"app","func":{"tag":"app","func":{"tag":"app","func":{"tag":"lam","param":"r","body":{"tag":"lam","param":"curr","body":{"tag":"lam","param":"prev","body":{"tag":"let","name":"u_left","value":{"tag":"arrslice","arr":{"tag":"var","name":"curr"},"lo":{"tag":"const","value":0},"hi":{"tag":"const","value":-2}},"body":{"tag":"let","name":"u_center","value":{"tag":"arrslice","arr":{"tag":"var","name":"curr"},"lo":{"tag":"const","value":1},"hi":{"tag":"const","value":-1}},"body":{"tag":"let","name":"u_right","value":{"tag":"arrslice","arr":{"tag":"var","name":"curr"},"lo":{"tag":"const","value":2},"hi":{"tag":"arrlen","arr":{"tag":"var","name":"curr"}}},"body":{"tag":"let","name":"u_prev","value":{"tag":"arrslice","arr":{"tag":"var","name":"prev"},"lo":{"tag":"const","value":1},"hi":{"tag":"const","value":-1}},"body":{"tag":"let","name":"lr","value":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fadd","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"u_left"},"b":{"tag":"var","name":"u_right"}},"body":{"tag":"let","name":"lap","value":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fsub","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"fmul","lhs":{"tag":"fconst","kind":"finite","sign":false,"mantissa":4503599627370496,"exponent":-51},"rhs":{"tag":"var","name":"b"}}},"a":{"tag":"var","name":"lr"},"b":{"tag":"var","name":"u_center"}},"body":{"tag":"let","name":"lead","value":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fsub","lhs":{"tag":"fmul","lhs":{"tag":"fconst","kind":"finite","sign":false,"mantissa":4503599627370496,"exponent":-51},"rhs":{"tag":"var","name":"a"}},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"u_center"},"b":{"tag":"var","name":"u_prev"}},"body":{"tag":"let","name":"rlap","value":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fmul","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"r"},"b":{"tag":"var","name":"lap"}},"body":{"tag":"let","name":"interior","value":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fadd","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"lead"},"b":{"tag":"var","name":"rlap"}},"body":{"tag":"arrconcat","lhs":{"tag":"arrconst","elts":[{"tag":"fconst","kind":"zero","sign":false}]},"rhs":{"tag":"arrconcat","lhs":{"tag":"var","name":"interior"},"rhs":{"tag":"arrconst","elts":[{"tag":"fconst","kind":"zero","sign":false}]}}}}}}}}}}}}}}},"arg":{"tag":"var","name":"r"}},"arg":{"tag":"var","name":"curr"}},"arg":{"tag":"var","name":"prev"}}
+
+wave_sim_vec: wave_sim
+	mkdir -p runtime/generated
+	echo -n '$(ONE_PASS_VEC_JSON)' \
+	  | (cd ocaml && dune exec driver/main.exe -- one_pass_vec r,curr,prev) \
+	  > runtime/generated/one_pass_vec.py
+	cd runtime && python3 wave1d_vec.py
 
 test: ocaml
 	@echo "--- euler_step (pairs/tuples): examples/Kinematics.v's euler_step_expr ---"

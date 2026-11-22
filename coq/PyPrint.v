@@ -438,6 +438,13 @@ Fixpoint py_expr (e : pyexpr) : string :=
         ++ "((_bc_a if len(_bc_a) != 1 or len(_bc_b) == 1 else _bc_a * len(_bc_b)) if isinstance(_bc_a, tuple) and isinstance(_bc_b, tuple) else (_bc_a if isinstance(_bc_a, tuple) else (_bc_a,) * len(_bc_b))), "
         ++ "((_bc_b if len(_bc_b) != 1 or len(_bc_a) == 1 else _bc_b * len(_bc_a)) if isinstance(_bc_a, tuple) and isinstance(_bc_b, tuple) else (_bc_b if isinstance(_bc_b, tuple) else (_bc_b,) * len(_bc_a))))))("
         ++ py_expr a ++ ", " ++ py_expr b ++ ")"
+  | PArrLen arr => "len(" ++ py_expr arr ++ ")"
+  | PArrSlice arr lo hi =>
+      (** Python's own slice rule is exactly [Lang.slice_list]'s
+          (negative bounds from the end, clamping, empty on an inverted
+          range), so this is a direct rendering, not an emulation. *)
+      "(" ++ py_expr arr ++ ")[" ++ py_expr lo ++ ":" ++ py_expr hi ++ "]"
+  | PArrConcat a b => "((" ++ py_expr a ++ ") + (" ++ py_expr b ++ "))"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

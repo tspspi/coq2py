@@ -2,15 +2,16 @@
 """wave1d.py -- the external runtime for coq2py's extracted 1D wave
 simulator.
 
-This is deliberately *not* part of the proven Gallina pipeline -- per
-GOAL.md's non-goals ("a numpy subset is a plausible future extension but
-is explicitly deferred") and docs/roadmap.md's discretization entry, array
-allocation, boundary conditions, and the time-stepping loop are not
-(yet) formalized in expr/pyexpr. This script is that missing plumbing,
-hand-written and unproven, in exactly the same trust category as
-ocaml/driver/main.ml (the CLI's file-I/O glue) or PyPrint.v's
-pretty-printer: peripheral, not semantics-affecting for the one piece
-that *is* proven.
+This is deliberately *not* part of the proven Gallina pipeline: this
+script's array allocation, slicing, boundary conditions, and
+time-stepping loop are hand-written and unproven, in exactly the same
+trust category as ocaml/driver/main.ml (the CLI's file-I/O glue) or
+PyPrint.v's pretty-printer: peripheral, not semantics-affecting for the
+one piece that *is* proven. (Since Lang.v grew arrays with slicing and
+broadcasting, the slicing/boundary/stencil part *does* have a proven
+counterpart -- Discretize.v's `one_pass_vec_expr`, run by
+wave1d_vec.py and checked bit for bit against this script -- but this
+numpy path is kept as the fast, independent reference.)
 
 That one proven piece is `generated/leapfrog_update.py`'s
 `leapfrog_update` function -- not hand-written here, but produced by

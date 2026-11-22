@@ -357,6 +357,16 @@ this project introduces here, not a hidden assumption -- classical
     directly on lengths rather than on a shape list, so multi-rank
     shapes stay deferred too -- see docs/roadmap.md. *)
 
+(** [EArrLen]/[EArrSlice]/[EArrConcat] are Phase 1's third slice:
+    the shape-level operations a stencil needs around [EArrMap2] --
+    [len(arr)], [arr[lo:hi]] with Python's own slice rule (a negative
+    bound counts from the end, both bounds clamp to [0, len], an
+    empty range is empty, never an error -- [slice_list] below, stated
+    once and shared with PyLang.v), and tuple concatenation. A slice
+    is a *copy* here, as every value is: numpy's slice-is-a-view
+    distinction is unobservable without mutation, and this model has
+    none (still the deferred question, see docs/roadmap.md). *)
+
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
@@ -434,7 +444,10 @@ Inductive expr : Type :=
   | EArrConst (es : list expr)
   | EArrGet (arr idx : expr)
   | EArrSet (arr idx val : expr)
-  | EArrMap2 (x y : var) (body a b : expr).
+  | EArrMap2 (x y : var) (body a b : expr)
+  | EArrLen (arr : expr)
+  | EArrSlice (arr lo hi : expr)
+  | EArrConcat (a b : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -529,6 +542,18 @@ Definition broadcast2 (va vb : value) : option (list (value * value)) :=
   | None, Some ws => Some (map (fun w => (va, w)) ws)
   | None, None => None
   end.
+
+(** Python's slice-bound normalization, [i] against a length [n]:
+    negative indices count from the end, then clamp into [0, n]. *)
+Definition norm_index (i n : Z) : Z :=
+  let i' := if Z.ltb i 0 then i + n else i in
+  if Z.ltb i' 0 then 0 else if Z.ltb n i' then n else i'.
+
+Definition slice_list {A : Type} (lo hi : Z) (vs : list A) : list A :=
+  let n := Z.of_nat (List.length vs) in
+  let lo' := norm_index lo n in
+  let hi' := norm_index hi n in
+  firstn (Z.to_nat (hi' - lo')) (skipn (Z.to_nat lo') vs).
 
 Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
   match fuel with
@@ -885,6 +910,21 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
           end
       | _, _ => None
       end
+  | EArrLen arr =>
+      match eval fuel' rho arr with
+      | Some (VArray vs) => Some (VZ (Z.of_nat (List.length vs)))
+      | _ => None
+      end
+  | EArrSlice arr lo hi =>
+      match eval fuel' rho arr, eval fuel' rho lo, eval fuel' rho hi with
+      | Some (VArray vs), Some (VZ zlo), Some (VZ zhi) => Some (VArray (slice_list zlo zhi vs))
+      | _, _, _ => None
+      end
+  | EArrConcat a b =>
+      match eval fuel' rho a, eval fuel' rho b with
+      | Some (VArray vs), Some (VArray ws) => Some (VArray (vs ++ ws))
+      | _, _ => None
+      end
   end
   end.
 
@@ -1028,4 +1068,9 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
         (andb (is_valid_ident y)
           (andb (expr_idents_valid is_valid_ident body)
             (andb (expr_idents_valid is_valid_ident a) (expr_idents_valid is_valid_ident b))))
+  | EArrLen arr => expr_idents_valid is_valid_ident arr
+  | EArrSlice arr lo hi =>
+      andb (expr_idents_valid is_valid_ident arr)
+        (andb (expr_idents_valid is_valid_ident lo) (expr_idents_valid is_valid_ident hi))
+  | EArrConcat a b => andb (expr_idents_valid is_valid_ident a) (expr_idents_valid is_valid_ident b)
   end.

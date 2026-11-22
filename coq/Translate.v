@@ -100,6 +100,9 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EArrGet arr idx => PArrGet (translate arr) (translate idx)
   | EArrSet arr idx val => PArrSet (translate arr) (translate idx) (translate val)
   | EArrMap2 x y body a b => PArrMap2 x y (translate body) (translate a) (translate b)
+  | EArrLen arr => PArrLen (translate arr)
+  | EArrSlice arr lo hi => PArrSlice (translate arr) (translate lo) (translate hi)
+  | EArrConcat a b => PArrConcat (translate a) (translate b)
   end.
 
 (** [VClosure] embeds a captured [env], so translating a closure needs to
@@ -427,6 +430,12 @@ Proof.
   - reflexivity.
 Qed.
 
+Lemma map_slice_list : forall (A B : Type) (f : A -> B) (lo hi : Z) (l : list A),
+  map f (slice_list lo hi l) = slice_list lo hi (map f l).
+Proof.
+  intros. unfold slice_list. rewrite map_length, skipn_map, firstn_map. reflexivity.
+Qed.
+
 Lemma eval_map2_translate_correct :
   forall fuel' (x y : var) (body : expr)
     (Hbody : forall rho, peval fuel' (env_to_pyenv rho) (translate body) = option_map value_to_pyvalue (eval fuel' rho body))
@@ -549,7 +558,10 @@ Proof.
       | es                          (* EArrConst *)
       | arr idx                     (* EArrGet *)
       | arr idx val                 (* EArrSet *)
-      | x y body a b ];             (* EArrMap2 *)
+      | x y body a b                (* EArrMap2 *)
+      | arr                         (* EArrLen *)
+      | arr lo hi                   (* EArrSlice *)
+      | a b ];                      (* EArrConcat *)
     simpl.
     + (* EConst *) reflexivity.
     + (* EBool *) reflexivity.
@@ -794,4 +806,16 @@ Proof.
                        | _, _ => None
                        end
                    end) ps) as [vs|]; reflexivity.
+    + (* EArrLen *) rewrite (IHfuel arr rho).
+      destruct (eval fuel' rho arr) as [v1|]; [destruct v1 | reflexivity]; try reflexivity.
+      simpl. rewrite map_length. reflexivity.
+    + (* EArrSlice *) rewrite (IHfuel arr rho), (IHfuel lo rho), (IHfuel hi rho).
+      destruct (eval fuel' rho arr) as [v1|]; try reflexivity; destruct v1; try reflexivity.
+      destruct (eval fuel' rho lo) as [v2|]; try reflexivity; destruct v2; try reflexivity.
+      destruct (eval fuel' rho hi) as [v3|]; try reflexivity; destruct v3; try reflexivity.
+      simpl. rewrite map_slice_list. reflexivity.
+    + (* EArrConcat *) rewrite (IHfuel a rho), (IHfuel b rho).
+      destruct (eval fuel' rho a) as [v1|]; try reflexivity; destruct v1; try reflexivity.
+      destruct (eval fuel' rho b) as [v2|]; try reflexivity; destruct v2; try reflexivity.
+      simpl. rewrite map_app. reflexivity.
 Qed.

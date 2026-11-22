@@ -137,6 +137,49 @@ existing convention):
    broadcasting rule above is on lengths, not a shape list) and real
    view-vs-copy aliasing/mutation.
 
+   **Third slice landed: slicing, length, concatenation — and the
+   whole-grid stencil as one array term.** `EArrLen (arr : expr)`,
+   `EArrSlice (arr lo hi : expr)` and `EArrConcat (a b : expr)`, with
+   `EArrSlice` given Python's own slice rule once as a polymorphic
+   `Lang.slice_list` (`norm_index`: a negative bound counts from the
+   end, both bounds clamp into `[0, len]`, an inverted range is empty,
+   never an error) that `PyLang.v` shares verbatim, so `PyPrint.v`
+   renders it as a literal `arr[lo:hi]` rather than emulating anything.
+   No binders, no new value constructor: every layer was an
+   `EArrGet`/`EArrSet`-shaped mirror (`Translate.v`: `map_slice_list`
+   from the stdlib's `firstn_map`/`skipn_map`, `map_app`; `PyRename.v`:
+   `Forall2_value_corr_slice` from the existing `firstn`/`skipn`
+   lemmas, `Forall2_value_corr_app`), and `Json.v`/`PyRename.v`/
+   `PyPrint.v` compiled on the first pass; `Print Assumptions` on all
+   three headline theorems unchanged, **zero new axioms**. One
+   tactic-level note worth keeping: a chain of `destruct ... as
+   [v|]; [destruct v | reflexivity]` steps cannot be joined with `;`
+   (the second `[ | ]` then faces 32 goals, not 2); write each operand
+   as its own `destruct ...; try reflexivity; destruct v; try
+   reflexivity` line instead. The payoff, in `examples/physics/
+   Discretize.v`: `one_pass_vec_expr` writes the wave simulator's whole-
+   grid time step the way `runtime/wave1d.py` writes it for numpy —
+   four slices, the scalar `r` broadcast against them, single binary
+   elementwise maps chained through `ELet` in `leapfrog_update_expr`'s
+   exact operation order, the two boundary zeros concatenated back on.
+   `one_pass_vec_symbolic_7point` has the *same* right-hand side,
+   element for element, as the list version's symbolic check;
+   `wave_sim_vec_3steps_7point` reproduces the same 3-step pair; the
+   JSON round-trips (`one_pass_vec_json_roundtrip`); and `make
+   wave_sim_vec` (new target, new `runtime/wave1d_vec.py`) runs the
+   extracted step over the full 400-point/1600-step simulation and
+   finds the final grid **bit-identical** to the numpy per-point path
+   (max |diff| = 0) — expected, since both do the same IEEE-754
+   operations in the same order, which is exactly what the symbolic
+   check states. What `runtime/wave1d.py` still contributes unproven
+   has therefore shrunk to the time loop's swap, the initial condition
+   and the plotting; the slicing, boundary handling and stencil now
+   live inside the proven fragment. Still open for this phase:
+   multi-rank shapes and view-vs-copy aliasing/mutation (a slice here is
+   a copy, which is unobservable without mutation, and this model has
+   none — so the aliasing question is genuinely the remaining one, not
+   something this slice quietly answered).
+
    **Sub-step done** (isolated prototype, not committed to `coq/` — a
    throwaway file, same convention as `ERecordN`'s own first validation):
    a minimal standalone source/target pair (`EArrConst (es : list expr)`/

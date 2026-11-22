@@ -696,6 +696,38 @@ seeing it land where predicted is a meaningful check that the extracted
 formula, the runtime's grid/loop plumbing, and the boundary conditions
 are all actually correct together, not just individually plausible.
 
+### The whole-grid step itself, as one proven array term
+
+Since `Lang.v` grew arrays with slicing, rank-1 broadcasting and
+concatenation (`EArrSlice`/`EArrLen`/`EArrMap2`/`EArrConcat` —
+`docs/roadmap.md`'s Phase 1), the numpy glue above has a proven
+counterpart: `Discretize.v`'s `one_pass_vec_expr` writes one time step
+exactly the way `wave1d.py` writes it for numpy — the four slices
+`curr[:-2]`, `curr[1:-1]`, `curr[2:]`, `prev[1:-1]`, the elementwise
+stencil with the scalar `r` broadcast against them, and the two fixed
+boundary values glued back on — chained as single binary elementwise
+maps in the same operation order as `leapfrog_update_expr`. The
+symbolic 7-point check `one_pass_vec_symbolic_7point` comes out with
+the *same* right-hand side, element for element, as the list version's
+`one_pass_symbolic_7point`, and `wave_sim_vec_3steps_7point` reproduces
+the same 3-step pair. Fed through the CLI and run on the full
+400-point, 1600-step simulation:
+
+```
+$ make wave_sim_vec
+...
+grid points: 400, time steps: 1600
+extracted whole-grid step vs numpy per-point path, final grid: bit-identical (max |diff| = 0)
+```
+
+`runtime/wave1d_vec.py` drives the extracted `one_pass_vec` over a
+tuple-valued grid; what it still contributes unproven is only the time
+loop's `prev, curr = curr, next` swap, the initial condition, and the
+final comparison. The exact (not approximate) agreement with the numpy
+path is expected, not lucky: both perform the same IEEE-754 double
+operations in the same order, which is what the symbolic check states
+for a 7-point grid.
+
 ### What the proof doesn't cover, turned into a runtime check
 
 `leapfrog_exact_for_cubic_profile` has two hypotheses (`dx <> 0`,

@@ -74,7 +74,12 @@
     list-based (not numpy-array-based) simulator. See that section's
     own header comment for the full account, including exactly what
     this does and does not claim relative to [runtime/wave1d.py]'s own,
-    separately-maintained numpy fast path. *)
+    separately-maintained numpy fast path. The section after it
+    ([one_pass_vec_expr]/[wave_sim_vec_expr]) then restates the same
+    step as a genuine *array* stencil -- slices, a broadcast scalar,
+    elementwise maps, concatenation -- once Lang.v had those, and
+    `runtime/wave1d_vec.py` confirms it agrees with the numpy path bit
+    for bit over the full simulation. *)
 
 From Coq Require Import Reals Lra String List Bool Lia.
 From Coq Require Import Floats.PrimFloat.
@@ -435,3 +440,136 @@ Qed.
     unformalized (numpy's own array semantics specifically). *)
 Compute py_function "wave_sim3" ["r"; "init"]
   (translate (EApp (EApp (wave_sim_expr 3) (EVar "r")) (EVar "init"))).
+
+(** * The whole-grid step again, this time as a genuine array stencil *)
+
+(** With docs/roadmap.md's Phase 1 now providing arrays with slicing,
+    rank-1 broadcasting and concatenation ([EArrSlice]/[EArrLen]/
+    [EArrMap2]/[EArrConcat], see Lang.v), the whole-grid step can be
+    written the way `runtime/wave1d.py` actually writes it for numpy
+    -- `u_curr[:-2]`, `u_curr[1:-1]`, `u_curr[2:]`, `u_prev[1:-1]`,
+    one elementwise formula over those four slices with the scalar
+    [r] broadcast against them, and the two fixed boundary values
+    glued back on -- rather than as the structural list recursion
+    [compute_interior_expr] above needs. Each intermediate array is a
+    *single* elementwise binary map ([EArrMap2] is deliberately
+    binary, like one numpy ufunc), chained through [ELet]s so the
+    per-point arithmetic ends up with exactly the same operations in
+    exactly the same order as [leapfrog_update_expr]: [lead = 2c - p],
+    [lap = (l + r) - 2c], [rlap = r * lap], [interior = lead + rlap].
+    That is not a stylistic nicety -- it is what makes the symbolic
+    7-point check below come out *syntactically* identical to the
+    list version's, and so what will make the two extracted programs
+    agree bit for bit on IEEE doubles, not merely approximately. *)
+Definition one_pass_vec_expr : expr :=
+  ELam "r" (ELam "curr" (ELam "prev" (
+    ELet "u_left"   (EArrSlice (EVar "curr") (EConst 0) (EConst (-2))) (
+    ELet "u_center" (EArrSlice (EVar "curr") (EConst 1) (EConst (-1))) (
+    ELet "u_right"  (EArrSlice (EVar "curr") (EConst 2) (EArrLen (EVar "curr"))) (
+    ELet "u_prev"   (EArrSlice (EVar "prev") (EConst 1) (EConst (-1))) (
+    ELet "lr"   (EArrMap2 "a" "b" (EFAdd (EVar "a") (EVar "b")) (EVar "u_left") (EVar "u_right")) (
+    ELet "lap"  (EArrMap2 "a" "b" (EFSub (EVar "a") (EFMul (EFConst 2) (EVar "b"))) (EVar "lr") (EVar "u_center")) (
+    ELet "lead" (EArrMap2 "a" "b" (EFSub (EFMul (EFConst 2) (EVar "a")) (EVar "b")) (EVar "u_center") (EVar "u_prev")) (
+    ELet "rlap" (EArrMap2 "a" "b" (EFMul (EVar "a") (EVar "b")) (EVar "r") (EVar "lap")) (
+    ELet "interior" (EArrMap2 "a" "b" (EFAdd (EVar "a") (EVar "b")) (EVar "lead") (EVar "rlap")) (
+      EArrConcat (EArrConst [EFConst 0]) (EArrConcat (EVar "interior") (EArrConst [EFConst 0]))
+    )))))))))
+  ))).
+
+Definition wave_sim_vec_expr (nt : nat) : expr :=
+  ELam "r" (ELam "init" (
+    ERepeat nt "state"
+      (ELet "prev" (EFst (EVar "state"))
+        (ELet "curr" (ESnd (EVar "state"))
+          (EPair (EVar "curr")
+                 (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev")))))
+      (EVar "init")
+  )).
+
+Theorem one_pass_vec_expr_idents_valid :
+  expr_idents_valid is_valid_ident
+    (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev")) = true.
+Proof. reflexivity. Qed.
+
+Theorem wave_sim_vec_expr_idents_valid :
+  forall nt, expr_idents_valid is_valid_ident (wave_sim_vec_expr nt) = true.
+Proof. intro nt. destruct nt; reflexivity. Qed.
+
+(** The same fully-symbolic 7-point check as [one_pass_symbolic_7point]
+    -- and, element for element, the *same* expected right-hand side,
+    which is the point: slicing + broadcasting + concatenation compute
+    exactly what the structural list recursion computes, for any
+    7-point grid, with the floating-point operations in the same
+    order. (Still fixed-size, for the same reason as there; the
+    arbitrary-length statement is a different theorem, about
+    [slice_list]/[broadcast2] in general, not attempted here.) *)
+Example one_pass_vec_symbolic_7point :
+  forall g0 g1 g2 g3 g4 g5 g6 h0 h1 h2 h3 h4 h5 h6 r : PrimFloat.float,
+    eval 80
+      [("g0", VFloat g0); ("g1", VFloat g1); ("g2", VFloat g2); ("g3", VFloat g3);
+       ("g4", VFloat g4); ("g5", VFloat g5); ("g6", VFloat g6);
+       ("h0", VFloat h0); ("h1", VFloat h1); ("h2", VFloat h2); ("h3", VFloat h3);
+       ("h4", VFloat h4); ("h5", VFloat h5); ("h6", VFloat h6);
+       ("r", VFloat r)]
+      (EApp (EApp (EApp one_pass_vec_expr (EVar "r"))
+               (EArrConst [EVar "g0"; EVar "g1"; EVar "g2"; EVar "g3"; EVar "g4"; EVar "g5"; EVar "g6"]))
+               (EArrConst [EVar "h0"; EVar "h1"; EVar "h2"; EVar "h3"; EVar "h4"; EVar "h5"; EVar "h6"]))
+    = Some (VArray
+        [VFloat 0;
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g1) h1)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g0 g2) (PrimFloat.mul 2 g1))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g2) h2)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g1 g3) (PrimFloat.mul 2 g2))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g3) h3)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g2 g4) (PrimFloat.mul 2 g3))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g4) h4)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g3 g5) (PrimFloat.mul 2 g4))));
+         VFloat (PrimFloat.add (PrimFloat.sub (PrimFloat.mul 2 g5) h5)
+                   (PrimFloat.mul r (PrimFloat.sub (PrimFloat.add g4 g6) (PrimFloat.mul 2 g5))));
+         VFloat 0]).
+Proof. intros. reflexivity. Qed.
+
+(** And the same 3-step, 7-point, unit-pulse run as [wave_sim_3steps_7point]
+    -- same inputs, same expected pair, now as arrays. *)
+Example wave_sim_vec_3steps_7point :
+  eval 500 []
+    (EApp (EApp (wave_sim_vec_expr 3) (EFConst 1))
+       (EPair
+          (EArrConst [EFConst 0; EFConst 0; EFConst 0; EFConst 1; EFConst 0; EFConst 0; EFConst 0])
+          (EArrConst [EFConst 0; EFConst 0; EFConst 0; EFConst 1; EFConst 0; EFConst 0; EFConst 0])))
+  = Some (VPair
+            (VArray [VFloat 0; VFloat 1; VFloat (-1); VFloat 1; VFloat (-1); VFloat 1; VFloat 0])
+            (VArray [VFloat 0; VFloat (-1); VFloat 1; VFloat (-1); VFloat 1; VFloat (-1); VFloat 0])).
+Proof. reflexivity. Qed.
+
+Corollary one_pass_vec_translation_correct :
+  forall fuel rho,
+    peval fuel (env_to_pyenv rho)
+      (translate (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev")))
+      = option_map value_to_pyvalue
+          (eval fuel rho (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev"))).
+Proof. intros fuel rho. apply translate_preserves_semantics. Qed.
+
+Corollary one_pass_vec_json_roundtrip :
+  parse_expr_top (print_expr (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev")))
+  = Some (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev"), "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip _ one_pass_vec_expr_idents_valid
+                (String.length (print_expr (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev"))) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H.
+  exact H.
+Qed.
+
+(** The JSON `make wave_sim_vec` feeds the extracted CLI (byte-identical
+    to the Makefile's literal), and the Python it produces: a
+    tuple-based whole-grid step `runtime/wave1d_vec.py` calls once per
+    time step, leaving only the time loop, the initial condition and
+    the plotting as unproven glue -- the array allocation, slicing,
+    boundary handling and the elementwise stencil itself are all now
+    inside the proven fragment, which is exactly the gap this file's
+    header and `runtime/wave1d.py`'s docstring used to name. *)
+Compute print_expr (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev")).
+Compute py_function "one_pass_vec" ["r"; "curr"; "prev"]
+  (translate (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev"))).
