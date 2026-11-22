@@ -455,6 +455,15 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
       let '(idx', n2) := rename_pyexpr env n1 idx in
       let '(val', n3) := rename_pyexpr env n2 val in
       (PArrSet arr' idx' val', n3)
+  | PArrMap2 x y body a b =>
+      (** Two binders scoping over [body] only -- the same shape as
+          [PListMatch]'s [hd]/[tl], seeded the same way. *)
+      let '(a', n1) := rename_pyexpr env n a in
+      let '(b', n2) := rename_pyexpr env n1 b in
+      let yx := fresh_name (S n2) in
+      let yy := fresh_name n2 in
+      let '(body', n3) := rename_pyexpr ((x, yx) :: (y, yy) :: env) (S (S n2)) body in
+      (PArrMap2 yx yy body' a' b', n3)
   end.
 
 (* ------------------------------------------------------------------ *)
@@ -507,6 +516,7 @@ Fixpoint pyexpr_size (e : pyexpr) : nat :=
   | PArrConst es => S (fold_right (fun e1 acc => pyexpr_size e1 + acc) 0 es)
   | PArrGet arr idx => S (pyexpr_size arr + pyexpr_size idx)
   | PArrSet arr idx val => S (pyexpr_size arr + pyexpr_size idx + pyexpr_size val)
+  | PArrMap2 _ _ body a b => S (pyexpr_size body + pyexpr_size a + pyexpr_size b)
   end.
 
 Lemma pyexpr_size_in_fields :
@@ -594,6 +604,7 @@ Fixpoint pyexpr_recgroup_ok (e : pyexpr) : Prop :=
          match xs with [] => True | e1 :: rest => pyexpr_recgroup_ok e1 /\ go rest end) es
   | PArrGet arr idx => pyexpr_recgroup_ok arr /\ pyexpr_recgroup_ok idx
   | PArrSet arr idx val => pyexpr_recgroup_ok arr /\ pyexpr_recgroup_ok idx /\ pyexpr_recgroup_ok val
+  | PArrMap2 _ _ body a b => pyexpr_recgroup_ok body /\ pyexpr_recgroup_ok a /\ pyexpr_recgroup_ok b
   end.
 
 Lemma rename_pyexpr_monotone : forall e env n, n <= snd (rename_pyexpr env n e).
@@ -609,7 +620,7 @@ Proof.
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
       | | e1 | scrutinee nonecase x somecase
-      | es | arr idx | arr idx val ];
+      | es | arr idx | arr idx val | x y body a b ];
       simpl in Hsz; simpl;
       try (
         repeat match goal with
@@ -1318,6 +1329,93 @@ Proof.
   intros vs vs' H. induction H as [| v v' rest rest' Hv Hrest IH]; simpl; [reflexivity | rewrite IH; reflexivity].
 Qed.
 
+(** [PArrMap2]'s own helpers: [pbroadcast2] (PyLang.v) preserves
+    [value_corr] pairwise, in the same one-sided form as everything
+    above -- a successful broadcast on the original side yields a
+    successful, element-for-element [value_corr]-related broadcast on
+    the renamed side. [pas_array_corr] is the one place the
+    array-vs-scalar question is answered relationally: [value_corr]'s
+    own constructors already pair [PVArr] only with [PVArr]. *)
+Definition pair_corr (p p' : pyvalue * pyvalue) : Prop :=
+  value_corr (fst p) (fst p') /\ value_corr (snd p) (snd p').
+
+Lemma pas_array_corr : forall v v',
+  value_corr v v' ->
+  match pas_array v with
+  | None => pas_array v' = None
+  | Some vs => exists vs', pas_array v' = Some vs' /\ Forall2 value_corr vs vs'
+  end.
+Proof.
+  intros v v' H. destruct H; simpl; try reflexivity.
+  eexists; split; [reflexivity | assumption].
+Qed.
+
+Lemma Forall2_pair_corr_combine : forall vs vs' ws ws',
+  Forall2 value_corr vs vs' -> Forall2 value_corr ws ws' ->
+  Forall2 pair_corr (combine vs ws) (combine vs' ws').
+Proof.
+  intros vs vs' ws ws' H1. revert ws ws'.
+  induction H1 as [| v v' vs2 vs2' Hv Hrest IH]; intros ws ws' H2.
+  - simpl. constructor.
+  - destruct H2 as [| w w' ws2 ws2' Hw Hrest2]; simpl; constructor.
+    + split; assumption.
+    + apply IH; assumption.
+Qed.
+
+Lemma Forall2_pair_corr_map_l : forall vs vs' w w',
+  Forall2 value_corr vs vs' -> value_corr w w' ->
+  Forall2 pair_corr (map (fun v => (v, w)) vs) (map (fun v => (v, w')) vs').
+Proof.
+  intros vs vs' w w' H Hw.
+  induction H as [| v v' vs2 vs2' Hv Hrest IH]; simpl; constructor.
+  - split; assumption.
+  - exact IH.
+Qed.
+
+Lemma Forall2_pair_corr_map_r : forall ws ws' v v',
+  Forall2 value_corr ws ws' -> value_corr v v' ->
+  Forall2 pair_corr (map (fun w => (v, w)) ws) (map (fun w => (v', w)) ws').
+Proof.
+  intros ws ws' v v' H Hv.
+  induction H as [| w w' ws2 ws2' Hw Hrest IH]; simpl; constructor.
+  - split; assumption.
+  - exact IH.
+Qed.
+
+Lemma pbroadcast2_corr : forall va va' vb vb',
+  value_corr va va' -> value_corr vb vb' ->
+  match pbroadcast2 va vb with
+  | None => True
+  | Some ps => exists ps', pbroadcast2 va' vb' = Some ps' /\ Forall2 pair_corr ps ps'
+  end.
+Proof.
+  intros va va' vb vb' Ha Hb.
+  pose proof (pas_array_corr va va' Ha) as HA.
+  pose proof (pas_array_corr vb vb' Hb) as HB.
+  unfold pbroadcast2.
+  destruct (pas_array va) as [vs|]; destruct (pas_array vb) as [ws|].
+  - destruct HA as [vs' [Ea Hvs]]. destruct HB as [ws' [Eb Hws]].
+    rewrite Ea, Eb.
+    rewrite <- (Forall2_value_corr_length _ _ Hvs), <- (Forall2_value_corr_length _ _ Hws).
+    destruct (Nat.eqb (List.length vs) (List.length ws)).
+    + eexists; split; [reflexivity | apply Forall2_pair_corr_combine; assumption].
+    + destruct vs as [| v [| v2 vs2]]; destruct ws as [| w [| w2 ws2]];
+      repeat match goal with
+             | H : Forall2 value_corr [] ?l |- _ => is_var l; inversion H; subst; clear H
+             | H : Forall2 value_corr (_ :: _) ?l |- _ => is_var l; inversion H; subst; clear H
+             end;
+      cbv beta iota; try exact I;
+      (eexists; split; [reflexivity |]);
+      first [ apply Forall2_pair_corr_map_r; [repeat first [assumption | constructor] | assumption]
+            | apply Forall2_pair_corr_map_l; [repeat first [assumption | constructor] | assumption]
+            | constructor ].
+  - destruct HA as [vs' [Ea Hvs]]. rewrite Ea, HB.
+    eexists; split; [reflexivity | apply Forall2_pair_corr_map_l; assumption].
+  - destruct HB as [ws' [Eb Hws]]. rewrite HA, Eb.
+    eexists; split; [reflexivity | apply Forall2_pair_corr_map_r; assumption].
+  - exact I.
+Qed.
+
 (** The exact same [simpl] one-step-unfolds [skipn (S n) l] gotcha
     this project's own [coq_rewrite_anonymous_fix_mismatch] session
     memory documents (and [Translate.v]'s own [skipn_S_unfold] already
@@ -1365,7 +1463,7 @@ Proof.
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
       | | e1 | scrutinee nonecase x somecase
-      | es | arr idx | arr idx val ].
+      | es | arr idx | arr idx val | x y body a b ].
     all: simpl in Hok.
     + (* PConst *) simpl. eexists; split; [reflexivity | constructor].
     + (* PBool *) simpl. eexists; split; [reflexivity | constructor].
@@ -2517,4 +2615,84 @@ Proof.
         apply Forall2_value_corr_app;
         [apply Forall2_value_corr_firstn; eassumption |
          apply Forall2_cons; [exact Hv3 | apply Forall2_value_corr_skipn; eassumption]]].
+    + (* PArrMap2 *) destruct Hok as [HokB [HokA HokBb]]. simpl.
+      destruct (rename_pyexpr env n a) as [a' n1] eqn:R1.
+      destruct (rename_pyexpr env n1 b) as [b' n2] eqn:R2.
+      destruct (rename_pyexpr ((x, fresh_name (S n2)) :: (y, fresh_name n2) :: env) (S (S n2)) body)
+        as [body' n3] eqn:R3.
+      simpl.
+      destruct (peval fuel' rho a) as [va|] eqn:Ea; [| exact I].
+      pose proof (IHfuel' a env n rho rho' HokA Henv) as HA.
+      rewrite Ea, R1 in HA; simpl in HA; destruct HA as [va' [Ea' Hva]].
+      rewrite Ea'.
+      destruct (peval fuel' rho b) as [vb|] eqn:Eb; [| exact I].
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone a env n) as Hm; rewrite R1 in Hm; exact Hm).
+      pose proof (IHfuel' b env n1 rho rho' HokBb (env_corr_weaken n n1 env rho rho' Hn1 Henv)) as HB.
+      rewrite Eb, R2 in HB; simpl in HB; destruct HB as [vb' [Eb' Hvb]].
+      rewrite Eb'.
+      assert (Hn2 : n1 <= n2) by (pose proof (rename_pyexpr_monotone b env n1) as Hm; rewrite R2 in Hm; exact Hm).
+      pose proof (pbroadcast2_corr va va' vb vb' Hva Hvb) as HP.
+      destruct (pbroadcast2 va vb) as [ps|]; [| exact I].
+      destruct HP as [ps' [Eps Hps]].
+      rewrite Eps.
+      assert (Haux : forall ps0 ps0', Forall2 pair_corr ps0 ps0' ->
+        pyval_optarr_corr
+          ((fix peval_map2 (l : list (pyvalue * pyvalue)) : option (list pyvalue) :=
+              match l with
+              | [] => Some []
+              | (v1, v2) :: rest =>
+                  match peval fuel' ((x, v1) :: (y, v2) :: rho) body, peval_map2 rest with
+                  | Some v, Some vs => Some (v :: vs)
+                  | _, _ => None
+                  end
+              end) ps0)
+          ((fix peval_map2 (l : list (pyvalue * pyvalue)) : option (list pyvalue) :=
+              match l with
+              | [] => Some []
+              | (v1, v2) :: rest =>
+                  match peval fuel' ((fresh_name (S n2), v1) :: (fresh_name n2, v2) :: rho') body', peval_map2 rest with
+                  | Some v, Some vs => Some (v :: vs)
+                  | _, _ => None
+                  end
+              end) ps0')).
+      { intros ps0 ps0' H.
+        induction H as [| [v1 v2] [v1' v2'] rest rest' [Hv1 Hv2] Hrest IH].
+        - simpl. eexists; split; [reflexivity | constructor].
+        - simpl in Hv1, Hv2. simpl.
+          destruct (peval fuel' ((x, v1) :: (y, v2) :: rho) body) as [v|] eqn:Ebody; [| exact I].
+          assert (Hext : env_corr (S (S n2)) ((x, fresh_name (S n2)) :: (y, fresh_name n2) :: env)
+                            ((x, v1) :: (y, v2) :: rho)
+                            ((fresh_name (S n2), v1') :: (fresh_name n2, v2') :: rho')).
+          { apply ec_cons; [lia | exact Hv1 |].
+            apply ec_cons; [lia | exact Hv2 | apply (env_corr_weaken n n2 env rho rho' ltac:(lia) Henv)]. }
+          pose proof (IHfuel' body ((x, fresh_name (S n2)) :: (y, fresh_name n2) :: env) (S (S n2))
+                        ((x, v1) :: (y, v2) :: rho)
+                        ((fresh_name (S n2), v1') :: (fresh_name n2, v2') :: rho') HokB Hext) as Hb.
+          rewrite Ebody, R3 in Hb. simpl in Hb. destruct Hb as [v' [Ebody' Hv]].
+          rewrite Ebody'.
+          destruct ((fix peval_map2 (l : list (pyvalue * pyvalue)) : option (list pyvalue) :=
+                       match l with
+                       | [] => Some []
+                       | (v3, v4) :: rest0 =>
+                           match peval fuel' ((x, v3) :: (y, v4) :: rho) body, peval_map2 rest0 with
+                           | Some v0, Some vs => Some (v0 :: vs)
+                           | _, _ => None
+                           end
+                       end) rest) as [vs|] eqn:Erest; [| exact I].
+          destruct IH as [vs' [Erest' Hvs]].
+          rewrite Erest'.
+          simpl. eexists; split; [reflexivity | constructor; [exact Hv | exact Hvs]]. }
+      pose proof (Haux ps ps' Hps) as HA2.
+      destruct ((fix peval_map2 (l : list (pyvalue * pyvalue)) : option (list pyvalue) :=
+                   match l with
+                   | [] => Some []
+                   | (v1, v2) :: rest =>
+                       match peval fuel' ((x, v1) :: (y, v2) :: rho) body, peval_map2 rest with
+                       | Some v, Some vs => Some (v :: vs)
+                       | _, _ => None
+                       end
+                   end) ps) as [vs|]; [| exact I].
+      destruct HA2 as [vs' [Evs Hvs]].
+      rewrite Evs.
+      simpl. eexists; split; [reflexivity | constructor; exact Hvs].
 Qed.

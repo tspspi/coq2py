@@ -340,6 +340,23 @@ this project introduces here, not a hidden assumption -- classical
     the same way: a one-line refold lemma instead of fighting [simpl]'s
     unfolding depth a second way). *)
 
+(** [EArrMap2 x y body a b] is Phase 1's second slice: rank-1 numpy
+    *broadcasting*, as one elementwise binary map. [a] and [b] are
+    evaluated once each; [broadcast2] (below) pairs their elements up
+    under exactly numpy's own rank-1 rule -- two arrays of equal
+    length pair positionally, a length-1 array or a non-array
+    ("scalar") operand is repeated against the other side's length,
+    anything else (unequal lengths, neither 1; or two scalars, which
+    is not an array operation at all) gets stuck -- and [body] is then
+    evaluated once per pair with [x]/[y] bound to that pair's two
+    elements, the same binder-extends-[rho] shape [EListMatch]/[ECase]/
+    [EOptionMatch] already use, collecting the results into a fresh
+    [VArray]. Still McCarthy-style (a new array, nothing mutated), so
+    the aliasing/mutation question the first slice deferred stays
+    deferred; and still rank 1 only, with the broadcasting rule stated
+    directly on lengths rather than on a shape list, so multi-rank
+    shapes stay deferred too -- see docs/roadmap.md. *)
+
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
@@ -416,7 +433,8 @@ Inductive expr : Type :=
   | EOptionMatch (scrutinee nonecase : expr) (x : var) (somecase : expr)
   | EArrConst (es : list expr)
   | EArrGet (arr idx : expr)
-  | EArrSet (arr idx val : expr).
+  | EArrSet (arr idx val : expr)
+  | EArrMap2 (x y : var) (body a b : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -487,6 +505,31 @@ Fixpoint iterate (n : nat) (f : value -> option value) (v : value) : option valu
     other case just passes [fuel'] through unchanged to its immediate
     sub-evaluations, the same uniform style [Json.v]'s [parse_expr]
     already uses its own fuel parameter with. *)
+(** Rank-1 broadcasting, factored out of [eval] so [Translate.v]/
+    [PyRename.v] can state its correspondence facts once, as plain
+    list lemmas, instead of inside the [EArrMap2] case of a fuel
+    induction. [as_array] is the one place the "is this operand an
+    array or a scalar" question is asked. *)
+Definition as_array (v : value) : option (list value) :=
+  match v with
+  | VArray vs => Some vs
+  | _ => None
+  end.
+
+Definition broadcast2 (va vb : value) : option (list (value * value)) :=
+  match as_array va, as_array vb with
+  | Some vs, Some ws =>
+      if Nat.eqb (List.length vs) (List.length ws) then Some (combine vs ws)
+      else match vs, ws with
+           | [v], _ => Some (map (fun w => (v, w)) ws)
+           | _, [w] => Some (map (fun v => (v, w)) vs)
+           | _, _ => None
+           end
+  | Some vs, None => Some (map (fun v => (v, vb)) vs)
+  | None, Some ws => Some (map (fun w => (va, w)) ws)
+  | None, None => None
+  end.
+
 Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
   match fuel with
   | O => None
@@ -820,6 +863,28 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
           else None
       | _, _, _ => None
       end
+  | EArrMap2 x y body a b =>
+      match eval fuel' rho a, eval fuel' rho b with
+      | Some va, Some vb =>
+          match broadcast2 va vb with
+          | Some ps =>
+              match (fix eval_map2 (l : list (value * value)) : option (list value) :=
+                       match l with
+                       | [] => Some []
+                       | (v1, v2) :: rest =>
+                           match eval fuel' ((x, v1) :: (y, v2) :: rho) body, eval_map2 rest with
+                           | Some v, Some vs => Some (v :: vs)
+                           | _, _ => None
+                           end
+                       end) ps
+              with
+              | Some vs => Some (VArray vs)
+              | None => None
+              end
+          | None => None
+          end
+      | _, _ => None
+      end
   end
   end.
 
@@ -958,4 +1023,9 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
   | EArrSet arr idx val =>
       andb (expr_idents_valid is_valid_ident arr)
         (andb (expr_idents_valid is_valid_ident idx) (expr_idents_valid is_valid_ident val))
+  | EArrMap2 x y body a b =>
+      andb (is_valid_ident x)
+        (andb (is_valid_ident y)
+          (andb (expr_idents_valid is_valid_ident body)
+            (andb (expr_idents_valid is_valid_ident a) (expr_idents_valid is_valid_ident b))))
   end.

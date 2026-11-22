@@ -99,6 +99,7 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EArrConst es => PArrConst (map translate es)
   | EArrGet arr idx => PArrGet (translate arr) (translate idx)
   | EArrSet arr idx val => PArrSet (translate arr) (translate idx) (translate val)
+  | EArrMap2 x y body a b => PArrMap2 x y (translate body) (translate a) (translate b)
   end.
 
 (** [VClosure] embeds a captured [env], so translating a closure needs to
@@ -391,6 +392,85 @@ Lemma skipn_S_unfold : forall (A : Type) (n : nat) (l : list A),
   match l with [] => [] | _ :: l' => skipn n l' end = skipn (S n) l.
 Proof. intros. destruct l; reflexivity. Qed.
 
+(** [EArrMap2]'s own helpers. [broadcast2] is pure list manipulation
+    over [as_array]'s one array-vs-scalar question, so its
+    correspondence is a two-line case split once [as_array] itself is
+    seen to commute with [value_to_pyvalue] (every constructor, by
+    [reflexivity]); [eval_map2_translate_correct] is
+    [eval_elts_translate_correct]'s template again, with the
+    per-element [eval] now running under the two-binder-extended
+    environment [EArrMap2]'s [eval] case pushes. *)
+Lemma combine_map : forall (A B : Type) (f : A -> B) (l1 l2 : list A),
+  combine (map f l1) (map f l2) = map (fun p => (f (fst p), f (snd p))) (combine l1 l2).
+Proof.
+  induction l1 as [| a l1 IH]; intros l2; destruct l2; simpl; auto.
+  rewrite IH. reflexivity.
+Qed.
+
+Lemma as_array_translate : forall v,
+  pas_array (value_to_pyvalue v) = option_map (map value_to_pyvalue) (as_array v).
+Proof. destruct v; reflexivity. Qed.
+
+Lemma broadcast2_translate_correct : forall va vb,
+  pbroadcast2 (value_to_pyvalue va) (value_to_pyvalue vb)
+  = option_map (map (fun p => (value_to_pyvalue (fst p), value_to_pyvalue (snd p)))) (broadcast2 va vb).
+Proof.
+  intros va vb. unfold pbroadcast2, broadcast2.
+  rewrite !as_array_translate.
+  destruct (as_array va) as [vs|]; destruct (as_array vb) as [ws|]; simpl.
+  - rewrite !map_length. destruct (Nat.eqb (List.length vs) (List.length ws)).
+    + rewrite combine_map. reflexivity.
+    + destruct vs as [| v1 [| v1' vs']]; destruct ws as [| w1 [| w1' ws']]; simpl;
+        try reflexivity; rewrite !map_map; reflexivity.
+  - rewrite !map_map. reflexivity.
+  - rewrite !map_map. reflexivity.
+  - reflexivity.
+Qed.
+
+Lemma eval_map2_translate_correct :
+  forall fuel' (x y : var) (body : expr)
+    (Hbody : forall rho, peval fuel' (env_to_pyenv rho) (translate body) = option_map value_to_pyvalue (eval fuel' rho body))
+    (rho : env) (ps : list (value * value)),
+    (fix peval_map2 (l : list (pyvalue * pyvalue)) : option (list pyvalue) :=
+       match l with
+       | [] => Some []
+       | (v1, v2) :: rest =>
+           match peval fuel' ((x, v1) :: (y, v2) :: env_to_pyenv rho) (translate body), peval_map2 rest with
+           | Some v, Some vs => Some (v :: vs)
+           | _, _ => None
+           end
+       end) (map (fun p => (value_to_pyvalue (fst p), value_to_pyvalue (snd p))) ps)
+    = option_map (map value_to_pyvalue)
+        ((fix eval_map2 (l : list (value * value)) : option (list value) :=
+            match l with
+            | [] => Some []
+            | (v1, v2) :: rest =>
+                match eval fuel' ((x, v1) :: (y, v2) :: rho) body, eval_map2 rest with
+                | Some v, Some vs => Some (v :: vs)
+                | _, _ => None
+                end
+            end) ps).
+Proof.
+  intros fuel' x y body Hbody rho ps.
+  induction ps as [| [v1 v2] ps' IH].
+  - reflexivity.
+  - simpl.
+    change ((x, value_to_pyvalue v1) :: (y, value_to_pyvalue v2) :: env_to_pyenv rho)
+      with (env_to_pyenv ((x, v1) :: (y, v2) :: rho)).
+    rewrite (Hbody ((x, v1) :: (y, v2) :: rho)).
+    destruct (eval fuel' ((x, v1) :: (y, v2) :: rho) body) as [v|]; simpl; [| reflexivity].
+    rewrite IH.
+    destruct ((fix eval_map2 (l : list (value * value)) : option (list value) :=
+                 match l with
+                 | [] => Some []
+                 | (v3, v4) :: rest =>
+                     match eval fuel' ((x, v3) :: (y, v4) :: rho) body, eval_map2 rest with
+                     | Some v0, Some vs => Some (v0 :: vs)
+                     | _, _ => None
+                     end
+                 end) ps') as [vs|]; reflexivity.
+Qed.
+
 (** The correctness theorem: for every source term, environment, and
     amount of fuel, evaluating the translated Python AST under [peval]
     (against the pointwise-translated environment, with the *same*
@@ -468,7 +548,8 @@ Proof.
       | scrutinee nonecase x somecase (* EOptionMatch *)
       | es                          (* EArrConst *)
       | arr idx                     (* EArrGet *)
-      | arr idx val ];              (* EArrSet *)
+      | arr idx val                 (* EArrSet *)
+      | x y body a b ];             (* EArrMap2 *)
     simpl.
     + (* EConst *) reflexivity.
     + (* EBool *) reflexivity.
@@ -698,4 +779,19 @@ Proof.
       rewrite !skipn_S_unfold.
       cbn [option_map value_to_pyvalue].
       f_equal. f_equal. symmetry. apply map_firstn_skipn_ins.
+    + (* EArrMap2 *) rewrite (IHfuel a rho), (IHfuel b rho).
+      destruct (eval fuel' rho a) as [va|]; destruct (eval fuel' rho b) as [vb|]; try reflexivity.
+      simpl. rewrite (broadcast2_translate_correct va vb).
+      destruct (broadcast2 va vb) as [ps|]; [| reflexivity].
+      simpl.
+      rewrite (eval_map2_translate_correct fuel' x y body (fun rho0 => IHfuel body rho0) rho ps).
+      destruct ((fix eval_map2 (l : list (value * value)) : option (list value) :=
+                   match l with
+                   | [] => Some []
+                   | (v1, v2) :: rest =>
+                       match eval fuel' ((x, v1) :: (y, v2) :: rho) body, eval_map2 rest with
+                       | Some v, Some vs => Some (v :: vs)
+                       | _, _ => None
+                       end
+                   end) ps) as [vs|]; reflexivity.
 Qed.

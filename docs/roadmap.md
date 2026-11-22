@@ -86,6 +86,57 @@ existing convention):
    re-associates the surrounding `++` chain, leaving the two sides
    permanently mismatched.
 
+   **Second slice landed: rank-1 broadcasting.** `EArrMap2 (x y : var)
+   (body a b : expr)` is one elementwise binary map with numpy's own
+   rank-1 broadcasting rule, stated once as a plain Gallina function
+   `broadcast2` (`Lang.v`, over `as_array`'s single array-vs-scalar
+   question): two arrays of equal length pair positionally; a length-1
+   array or a non-array operand is repeated against the other side's
+   length; anything else — unequal lengths neither of which is 1, or
+   two scalars (not an array operation at all) — gets stuck. `body` is
+   then evaluated once per pair with `x`/`y` bound, the same
+   binder-extends-`rho` shape `EListMatch`/`EOptionMatch` already have,
+   and the results collected into a fresh `VArray` (still McCarthy-
+   style: nothing mutated). No new `value`/`pyvalue` constructor, so
+   none of the ~90-site positional-pattern ripple quantified below was
+   paid this time — the cost was entirely the usual one-new-case work
+   in every exhaustive `expr`/`pyexpr` match: `Lang.v`, `PyLang.v`
+   (`pbroadcast2`), `Translate.v` (`broadcast2_translate_correct`, a
+   four-way case split on `as_array` once `as_array_translate` is seen
+   to hold by `reflexivity` per constructor, plus
+   `eval_map2_translate_correct`, `eval_elts_translate_correct`'s
+   template with the per-element `eval` under the extended
+   environment), `Json.v` (`"arrmap2"` tag; the round-trip bullet is
+   `EOptionMatch`'s with two `parse_qstring_print` steps), `PyRename.v`
+   (binders seeded exactly like `PListMatch`'s `hd`/`tl`;
+   `pbroadcast2_corr` is the relational twin, a `Forall2 pair_corr`
+   over the paired lists via `pas_array_corr` — `value_corr`'s own
+   constructors already pair `PVArr` only with `PVArr`, which is what
+   makes the array-vs-scalar decision renaming-invariant for free —
+   and the main-theorem bullet is `PArrConst`'s per-element `Haux`
+   with `PListMatch`'s two-binder `env_corr` extension inside it; it
+   compiled on the first pass once mirrored that way), and `PyPrint.v`
+   (an outer `lambda _bc_a, _bc_b:` binding each operand once, then
+   `tuple(map(lambda x, y: body, ...))` over the two broadcast
+   iterables spelled out inline — the case's own comment records why
+   `map`+`lambda` rather than a comprehension (a walrus may not rebind
+   a comprehension target, and may not appear in its iterable at all),
+   why the two reserved names cannot collide with anything `body` can
+   see, and the one honest limitation: a pair/list/record/option
+   operand broadcast *as a scalar* is well-defined in `peval` but
+   indistinguishable from an array under this printer's tuple
+   encoding). `Print Assumptions` on all three headline theorems:
+   **zero new axioms**, confirmed directly. Checked end to end too, not
+   just type-checked: `vm_compute` on scalar, equal-length, length-1,
+   non-broadcastable (stuck, as specified) and nested-with-`let` cases;
+   the printed JSON parses back to the identical term; the printed
+   Python gives the same four tuples under real `python3`; and the
+   extracted CLI, fed an `arrmap2` term with two free variables,
+   emits a `def` that returns `(20, 30, 40)` for `((1, 2, 3), 10)`.
+   Still open for this phase, unchanged: multi-rank shapes (the
+   broadcasting rule above is on lengths, not a shape list) and real
+   view-vs-copy aliasing/mutation.
+
    **Sub-step done** (isolated prototype, not committed to `coq/` — a
    throwaway file, same convention as `ERecordN`'s own first validation):
    a minimal standalone source/target pair (`EArrConst (es : list expr)`/

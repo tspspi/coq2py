@@ -407,6 +407,37 @@ Fixpoint py_expr (e : pyexpr) : string :=
   | PArrSet arr idx val =>
       "((" ++ py_expr arr ++ ")[:" ++ py_expr idx ++ "] + (" ++ py_expr val ++ ",) + ("
         ++ py_expr arr ++ ")[" ++ py_expr idx ++ " + 1:])"
+  | PArrMap2 x y body a b =>
+      (** [PyLang.pbroadcast2] spelled out as one Python expression,
+          then [body] mapped over the paired-up elements as a
+          two-parameter [lambda] (so its own walrus-bound [let]s stay
+          local to it, and so [x]/[y] are ordinary parameters rather
+          than comprehension targets, which a walrus may not rebind).
+          The two operands are bound once each to the reserved names
+          [_bc_a]/[_bc_b] by an outer [lambda] rather than re-printed
+          at every use the way [PListMatch] re-prints its scrutinee --
+          each is consulted several times here and nested maps would
+          otherwise grow exponentially. Those two names can never
+          collide with anything [body] refers to: every binder and
+          parameter it can see has already been renamed to
+          [fresh_name]'s [v<n>] shape by [rename_function], the one
+          exception ([PRecGroup] member names, kept verbatim) being
+          user-written Coq identifiers that this project simply
+          reserves [_bc_a]/[_bc_b] against. Array-vs-scalar is decided
+          by [isinstance(_, tuple)], which is exactly [pas_array]'s
+          question *provided* the scalar operand is not itself one of
+          the structured values this printer also renders as a tuple
+          (a pair, list, record, or option): broadcasting such a value
+          as a scalar is well-defined in [peval] but not distinguishable
+          from an array at the Python level, a limitation of the
+          (unproven) tuple encoding this file already commits to, not
+          of the proven semantics. Unequal non-broadcastable lengths
+          get stuck in [peval]; Python's [map] would truncate instead,
+          one more "undefined in the model, so no claim" corner. *)
+      "(lambda _bc_a, _bc_b: tuple(map(lambda " ++ x ++ ", " ++ y ++ ": " ++ py_expr body ++ ", "
+        ++ "((_bc_a if len(_bc_a) != 1 or len(_bc_b) == 1 else _bc_a * len(_bc_b)) if isinstance(_bc_a, tuple) and isinstance(_bc_b, tuple) else (_bc_a if isinstance(_bc_a, tuple) else (_bc_a,) * len(_bc_b))), "
+        ++ "((_bc_b if len(_bc_b) != 1 or len(_bc_a) == 1 else _bc_b * len(_bc_a)) if isinstance(_bc_a, tuple) and isinstance(_bc_b, tuple) else (_bc_b if isinstance(_bc_b, tuple) else (_bc_b,) * len(_bc_a))))))("
+        ++ py_expr a ++ ", " ++ py_expr b ++ ")"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

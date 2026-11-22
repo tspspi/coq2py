@@ -837,6 +837,10 @@ Fixpoint print_expr (e : expr) : string :=
   | EArrSet arr idx val =>
       "{""tag"":""arrset"",""arr"":" ++ print_expr arr
         ++ ",""idx"":" ++ print_expr idx ++ ",""val"":" ++ print_expr val ++ "}"
+  | EArrMap2 x y body a b =>
+      "{""tag"":""arrmap2"",""x"":" ++ quote_string x ++ ",""y"":" ++ quote_string y
+        ++ ",""body"":" ++ print_expr body ++ ",""a"":" ++ print_expr a
+        ++ ",""b"":" ++ print_expr b ++ "}"
   end.
 
 (** Note: this [expr_fuel] is this module's own parser-recursion-depth
@@ -890,6 +894,8 @@ Fixpoint expr_fuel (e : expr) : nat :=
   | EArrGet arr idx => S (Nat.max (expr_fuel arr) (expr_fuel idx))
   | EArrSet arr idx val =>
       S (Nat.max (expr_fuel arr) (Nat.max (expr_fuel idx) (expr_fuel val)))
+  | EArrMap2 _ _ body a b =>
+      S (Nat.max (expr_fuel body) (Nat.max (expr_fuel a) (expr_fuel b)))
   end.
 
 (** Dispatch on the full fixed literal prefix of each constructor's
@@ -2114,8 +2120,51 @@ Fixpoint parse_expr (fuel : nat) (s : string) : option (expr * string) :=
             end
         | None => None
         end
+    | None =>
+    match expect "{""tag"":""arrmap2"",""x"":" s with
+    | Some s1 =>
+        match parse_qstring s1 with
+        | Some (x, s2) =>
+            match expect ",""y"":" s2 with
+            | Some s3 =>
+                match parse_qstring s3 with
+                | Some (y, s4) =>
+                    match expect ",""body"":" s4 with
+                    | Some s5 =>
+                        match parse_expr fuel' s5 with
+                        | Some (body, s6) =>
+                            match expect ",""a"":" s6 with
+                            | Some s7 =>
+                                match parse_expr fuel' s7 with
+                                | Some (a, s8) =>
+                                    match expect ",""b"":" s8 with
+                                    | Some s9 =>
+                                        match parse_expr fuel' s9 with
+                                        | Some (b, s10) =>
+                                            match expect "}" s10 with
+                                            | Some s11 => Some (EArrMap2 x y body a b, s11)
+                                            | None => None
+                                            end
+                                        | None => None
+                                        end
+                                    | None => None
+                                    end
+                                | None => None
+                                end
+                            | None => None
+                            end
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+            | None => None
+            end
+        | None => None
+        end
     | None => None
-    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
+    end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end end
   end.
 
 Definition parse_expr_top (s : string) : option (expr * string) :=
@@ -2590,7 +2639,8 @@ Proof.
       | scrutinee nonecase x somecase (* EOptionMatch *)
       | es                    (* EArrConst *)
       | arr idx               (* EArrGet *)
-      | arr idx val ];         (* EArrSet *)
+      | arr idx val           (* EArrSet *)
+      | x y body a b ];       (* EArrMap2 *)
   destruct fuel as [| fuel']; simpl in Hfuel; try lia;
   simpl.
   - (* EConst *)
@@ -3316,6 +3366,28 @@ reflexivity.
     rewrite ((IHn (expr_fuel idx) Hlt2 idx (le_n _)) Hv2 fuel' Hf2). simpl.
     repeat rewrite string_append_assoc.
     rewrite ((IHn (expr_fuel val) Hlt3 val (le_n _)) Hv3 fuel' Hf3). reflexivity.
+  - (* EArrMap2 *)
+    simpl in Hn.
+    assert (Hlt1 : (expr_fuel body < n)%nat) by lia.
+    assert (Hlt2 : (expr_fuel a < n)%nat) by lia.
+    assert (Hlt3 : (expr_fuel b < n)%nat) by lia.
+    apply andb_true_iff in Hvalid as [Hvx Hrest1].
+    apply andb_true_iff in Hrest1 as [Hvy Hrest2].
+    apply andb_true_iff in Hrest2 as [Hv1 Hrest3].
+    apply andb_true_iff in Hrest3 as [Hv2 Hv3].
+    assert (Hf1 : (expr_fuel body <= fuel')%nat) by lia.
+    assert (Hf2 : (expr_fuel a <= fuel')%nat) by lia.
+    assert (Hf3 : (expr_fuel b <= fuel')%nat) by lia.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print x Hvx). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite (parse_qstring_print y Hvy). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel body) Hlt1 body (le_n _)) Hv1 fuel' Hf1). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel a) Hlt2 a (le_n _)) Hv2 fuel' Hf2). simpl.
+    repeat rewrite string_append_assoc.
+    rewrite ((IHn (expr_fuel b) Hlt3 b (le_n _)) Hv3 fuel' Hf3). reflexivity.
 
   }
   intros e Hvalid fuel Hfuel rest.

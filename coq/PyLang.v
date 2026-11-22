@@ -101,7 +101,8 @@ Inductive pyexpr : Type :=
   | POptionMatch (scrutinee nonecase : pyexpr) (x : var) (somecase : pyexpr)
   | PArrConst (es : list pyexpr)
   | PArrGet (arr idx : pyexpr)
-  | PArrSet (arr idx val : pyexpr).
+  | PArrSet (arr idx val : pyexpr)
+  | PArrMap2 (x y : var) (body a b : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -146,6 +147,28 @@ Fixpoint piterate (n : nat) (f : pyvalue -> option pyvalue) (v : pyvalue) : opti
       | Some v' => piterate n' f v'
       | None => None
       end
+  end.
+
+(** [Lang.as_array]/[Lang.broadcast2]'s target-side twins, for
+    [PArrMap2] (see Lang.v's [EArrMap2] comment). *)
+Definition pas_array (v : pyvalue) : option (list pyvalue) :=
+  match v with
+  | PVArr vs => Some vs
+  | _ => None
+  end.
+
+Definition pbroadcast2 (va vb : pyvalue) : option (list (pyvalue * pyvalue)) :=
+  match pas_array va, pas_array vb with
+  | Some vs, Some ws =>
+      if Nat.eqb (List.length vs) (List.length ws) then Some (combine vs ws)
+      else match vs, ws with
+           | [v], _ => Some (map (fun w => (v, w)) ws)
+           | _, [w] => Some (map (fun v => (v, w)) vs)
+           | _, _ => None
+           end
+  | Some vs, None => Some (map (fun v => (v, vb)) vs)
+  | None, Some ws => Some (map (fun w => (va, w)) ws)
+  | None, None => None
   end.
 
 Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
@@ -480,6 +503,28 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
             else None
           else None
       | _, _, _ => None
+      end
+  | PArrMap2 x y body a b =>
+      match peval fuel' rho a, peval fuel' rho b with
+      | Some va, Some vb =>
+          match pbroadcast2 va vb with
+          | Some ps =>
+              match (fix peval_map2 (l : list (pyvalue * pyvalue)) : option (list pyvalue) :=
+                       match l with
+                       | [] => Some []
+                       | (v1, v2) :: rest =>
+                           match peval fuel' ((x, v1) :: (y, v2) :: rho) body, peval_map2 rest with
+                           | Some v, Some vs => Some (v :: vs)
+                           | _, _ => None
+                           end
+                       end) ps
+              with
+              | Some vs => Some (PVArr vs)
+              | None => None
+              end
+          | None => None
+          end
+      | _, _ => None
       end
   end
   end.
