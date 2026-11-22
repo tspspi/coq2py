@@ -445,6 +445,11 @@ Fixpoint py_expr (e : pyexpr) : string :=
           range), so this is a direct rendering, not an emulation. *)
       "(" ++ py_expr arr ++ ")[" ++ py_expr lo ++ ":" ++ py_expr hi ++ "]"
   | PArrConcat a b => "((" ++ py_expr a ++ ") + (" ++ py_expr b ++ "))"
+  | PArrMap x body arr =>
+      (** [PArrMap2]'s shape with the broadcasting dropped: [map] with a
+          one-parameter [lambda], so [body]'s own walrus-bound [let]s
+          stay local to it and [x] is an ordinary parameter. *)
+      "tuple(map(lambda " ++ x ++ ": " ++ py_expr body ++ ", " ++ py_expr arr ++ "))"
   end.
 
 Fixpoint join_comma (xs : list string) : string :=

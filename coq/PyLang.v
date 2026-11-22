@@ -105,7 +105,8 @@ Inductive pyexpr : Type :=
   | PArrMap2 (x y : var) (body a b : pyexpr)
   | PArrLen (arr : pyexpr)
   | PArrSlice (arr lo hi : pyexpr)
-  | PArrConcat (a b : pyexpr).
+  | PArrConcat (a b : pyexpr)
+  | PArrMap (x : var) (body arr : pyexpr).
 
 Inductive pyvalue : Type :=
   | PVZ (z : Z)
@@ -543,6 +544,24 @@ Fixpoint peval (fuel : nat) (rho : pyenv) (e : pyexpr) : option pyvalue :=
       match peval fuel' rho a, peval fuel' rho b with
       | Some (PVArr vs), Some (PVArr ws) => Some (PVArr (vs ++ ws))
       | _, _ => None
+      end
+  | PArrMap x body arr =>
+      match peval fuel' rho arr with
+      | Some (PVArr vs) =>
+          match (fix peval_map (l : list pyvalue) : option (list pyvalue) :=
+                   match l with
+                   | [] => Some []
+                   | v1 :: rest =>
+                       match peval fuel' ((x, v1) :: rho) body, peval_map rest with
+                       | Some v, Some vs => Some (v :: vs)
+                       | _, _ => None
+                       end
+                   end) vs
+          with
+          | Some vs' => Some (PVArr vs')
+          | None => None
+          end
+      | _ => None
       end
   end
   end.

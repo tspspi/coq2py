@@ -475,6 +475,11 @@ Fixpoint rename_pyexpr (env : list (var * var)) (n : nat) (e : pyexpr) {struct e
       let '(a', n1) := rename_pyexpr env n a in
       let '(b', n2) := rename_pyexpr env n1 b in
       (PArrConcat a' b', n2)
+  | PArrMap x body arr =>
+      let '(arr', n1) := rename_pyexpr env n arr in
+      let y := fresh_name n1 in
+      let '(body', n2) := rename_pyexpr ((x, y) :: env) (S n1) body in
+      (PArrMap y body' arr', n2)
   end.
 
 (* ------------------------------------------------------------------ *)
@@ -531,6 +536,7 @@ Fixpoint pyexpr_size (e : pyexpr) : nat :=
   | PArrLen arr => S (pyexpr_size arr)
   | PArrSlice arr lo hi => S (pyexpr_size arr + pyexpr_size lo + pyexpr_size hi)
   | PArrConcat a b => S (pyexpr_size a + pyexpr_size b)
+  | PArrMap _ body arr => S (pyexpr_size body + pyexpr_size arr)
   end.
 
 Lemma pyexpr_size_in_fields :
@@ -622,6 +628,7 @@ Fixpoint pyexpr_recgroup_ok (e : pyexpr) : Prop :=
   | PArrLen arr => pyexpr_recgroup_ok arr
   | PArrSlice arr lo hi => pyexpr_recgroup_ok arr /\ pyexpr_recgroup_ok lo /\ pyexpr_recgroup_ok hi
   | PArrConcat a b => pyexpr_recgroup_ok a /\ pyexpr_recgroup_ok b
+  | PArrMap _ body arr => pyexpr_recgroup_ok body /\ pyexpr_recgroup_ok arr
   end.
 
 Lemma rename_pyexpr_monotone : forall e env n, n <= snd (rename_pyexpr env n e).
@@ -637,7 +644,7 @@ Proof.
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
       | | e1 | scrutinee nonecase x somecase
-      | es | arr idx | arr idx val | x y body a b | arr | arr lo hi | a b ];
+      | es | arr idx | arr idx val | x y body a b | arr | arr lo hi | a b | x body arr ];
       simpl in Hsz; simpl;
       try (
         repeat match goal with
@@ -1488,7 +1495,7 @@ Proof.
       | scrutinee nilcase hd tl conscase | k1 e1 k2 e2 | name e1 | e1 | e1
       | scrutinee x1 case1 x2 case2 | s | e1 e2 | e1 e2 | fields | name e1 | fns
       | | e1 | scrutinee nonecase x somecase
-      | es | arr idx | arr idx val | x y body a b | arr | arr lo hi | a b ].
+      | es | arr idx | arr idx val | x y body a b | arr | arr lo hi | a b | x body arr ].
     all: simpl in Hok.
     + (* PConst *) simpl. eexists; split; [reflexivity | constructor].
     + (* PBool *) simpl. eexists; split; [reflexivity | constructor].
@@ -2770,4 +2777,72 @@ Proof.
       rewrite E2';
       destruct v2; simpl in Hv2 |- *; try exact I; inversion Hv2; subst.
       simpl. eexists; split; [reflexivity | apply vcorr_array; apply Forall2_value_corr_app; eassumption].
+    + (* PArrMap *) destruct Hok as [HokB HokA]. simpl.
+      destruct (rename_pyexpr env n arr) as [arr' n1] eqn:R1.
+      destruct (rename_pyexpr ((x, fresh_name n1) :: env) (S n1) body) as [body' n2] eqn:R2.
+      simpl.
+      destruct (peval fuel' rho arr) as [va|] eqn:Ea; [| exact I].
+      pose proof (IHfuel' arr env n rho rho' HokA Henv) as HA.
+      rewrite Ea, R1 in HA; simpl in HA; destruct HA as [va' [Ea' Hva]].
+      rewrite Ea'.
+      assert (Hn1 : n <= n1) by (pose proof (rename_pyexpr_monotone arr env n) as Hm; rewrite R1 in Hm; exact Hm).
+      destruct va; simpl in Hva |- *; try exact I; inversion Hva; subst.
+      match goal with
+      | H : Forall2 value_corr ?l ?l' |- _ => rename H into Hvs
+      end.
+      assert (Haux : forall vs0 vs0', Forall2 value_corr vs0 vs0' ->
+        pyval_optarr_corr
+          ((fix peval_map (l : list pyvalue) : option (list pyvalue) :=
+              match l with
+              | [] => Some []
+              | v1 :: rest =>
+                  match peval fuel' ((x, v1) :: rho) body, peval_map rest with
+                  | Some v, Some vs1 => Some (v :: vs1)
+                  | _, _ => None
+                  end
+              end) vs0)
+          ((fix peval_map (l : list pyvalue) : option (list pyvalue) :=
+              match l with
+              | [] => Some []
+              | v1 :: rest =>
+                  match peval fuel' ((fresh_name n1, v1) :: rho') body', peval_map rest with
+                  | Some v, Some vs1 => Some (v :: vs1)
+                  | _, _ => None
+                  end
+              end) vs0')).
+      { intros vs0 vs0' H.
+        induction H as [| v1 v1' rest rest' Hv1 Hrest IH].
+        - simpl. eexists; split; [reflexivity | constructor].
+        - simpl.
+          destruct (peval fuel' ((x, v1) :: rho) body) as [v|] eqn:Ebody; [| exact I].
+          assert (Hext : env_corr (S n1) ((x, fresh_name n1) :: env) ((x, v1) :: rho) ((fresh_name n1, v1') :: rho'))
+            by (apply ec_cons; [lia | exact Hv1 | apply (env_corr_weaken n n1 env rho rho' Hn1 Henv)]).
+          pose proof (IHfuel' body ((x, fresh_name n1) :: env) (S n1) ((x, v1) :: rho) ((fresh_name n1, v1') :: rho') HokB Hext) as Hb.
+          rewrite Ebody, R2 in Hb. simpl in Hb. destruct Hb as [v' [Ebody' Hv]].
+          rewrite Ebody'.
+          destruct ((fix peval_map (l : list pyvalue) : option (list pyvalue) :=
+                       match l with
+                       | [] => Some []
+                       | v3 :: rest0 =>
+                           match peval fuel' ((x, v3) :: rho) body, peval_map rest0 with
+                           | Some v0, Some vs1 => Some (v0 :: vs1)
+                           | _, _ => None
+                           end
+                       end) rest) as [vs1|] eqn:Erest; [| exact I].
+          destruct IH as [vs1' [Erest' Hvs1]].
+          rewrite Erest'.
+          simpl. eexists; split; [reflexivity | constructor; [exact Hv | exact Hvs1]]. }
+      pose proof (Haux _ _ Hvs) as HA2.
+      destruct ((fix peval_map (l : list pyvalue) : option (list pyvalue) :=
+                   match l with
+                   | [] => Some []
+                   | v1 :: rest =>
+                       match peval fuel' ((x, v1) :: rho) body, peval_map rest with
+                       | Some v, Some vs1 => Some (v :: vs1)
+                       | _, _ => None
+                       end
+                   end) _) as [vs1|]; [| exact I].
+      destruct HA2 as [vs1' [Evs Hvs1]].
+      rewrite Evs.
+      simpl. eexists; split; [reflexivity | constructor; exact Hvs1].
 Qed.

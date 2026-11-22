@@ -573,3 +573,99 @@ Qed.
 Compute print_expr (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev")).
 Compute py_function "one_pass_vec" ["r"; "curr"; "prev"]
   (translate (EApp (EApp (EApp one_pass_vec_expr (EVar "r")) (EVar "curr")) (EVar "prev"))).
+
+(** * Rank 2 by nesting: a 5-point stencil over a 2-D grid *)
+
+(** A rank-2 grid is a rank-1 array of rows (Lang.v's own account of
+    rank > 1: nothing new in [value], see [EArrMap]'s comment).
+    Slicing along axis 0 is [EArrSlice] on the outer array; slicing
+    along axis 1 is [EArrMap] applying [EArrSlice] to every row; an
+    elementwise binary operation with broadcasting is two nested
+    [EArrMap2]s -- the outer one pairs rows (or broadcasts a scalar
+    against every row), the inner one pairs elements. That is the
+    explicit, statically-shaped form of what numpy writes as
+    [u[1:-1, 1:-1]] and [r * (...)]; the nesting depth is a fact
+    about the source's types, not something decided at run time. *)
+Definition rows_slice (lo hi : expr) (arr : expr) : expr :=
+  EArrMap "row" (EArrSlice (EVar "row") lo hi) arr.
+
+Definition vmap2 (f : expr -> expr -> expr) (a b : expr) : expr :=
+  EArrMap2 "ra" "rb" (EArrMap2 "a" "b" (f (EVar "a") (EVar "b")) (EVar "ra") (EVar "rb")) a b.
+
+(** One explicit step of the 2-D heat/diffusion-style update
+    [u + r * (laplacian_5pt u)] on the interior, zero on the border:
+    [lap = ((n + s) + (w + e)) - 4c], [inner = c + r * lap] -- written
+    so that the per-point floating-point operations are in exactly the
+    order the numpy one-liner `runtime/stencil2d_check.py` uses as its
+    reference, for the same bit-for-bit reason as [one_pass_vec_expr]. *)
+Definition laplace5_step_expr : expr :=
+  ELam "r" (ELam "u" (
+    ELet "mid" (EArrSlice (EVar "u") (EConst 1) (EConst (-1))) (
+    ELet "c"  (rows_slice (EConst 1) (EConst (-1)) (EVar "mid")) (
+    ELet "nn" (rows_slice (EConst 1) (EConst (-1)) (EArrSlice (EVar "u") (EConst 0) (EConst (-2)))) (
+    ELet "ss" (rows_slice (EConst 1) (EConst (-1)) (EArrSlice (EVar "u") (EConst 2) (EArrLen (EVar "u")))) (
+    ELet "ww" (rows_slice (EConst 0) (EConst (-2)) (EVar "mid")) (
+    ELet "ee" (rows_slice (EConst 2) (EArrLen (EVar "row")) (EVar "mid")) (
+    ELet "ns" (vmap2 EFAdd (EVar "nn") (EVar "ss")) (
+    ELet "we" (vmap2 EFAdd (EVar "ww") (EVar "ee")) (
+    ELet "nswe" (vmap2 EFAdd (EVar "ns") (EVar "we")) (
+    ELet "lap" (vmap2 (fun a b => EFSub a (EFMul (EFConst 4) b)) (EVar "nswe") (EVar "c")) (
+    ELet "rlap" (vmap2 EFMul (EVar "r") (EVar "lap")) (
+    ELet "inner" (vmap2 EFAdd (EVar "c") (EVar "rlap")) (
+    ELet "zrow" (EArrMap "v" (EFConst 0) (EArrGet (EVar "u") (EConst 0))) (
+      EArrConcat (EArrConst [EVar "zrow"])
+        (EArrConcat
+           (EArrMap "row"
+              (EArrConcat (EArrConst [EFConst 0]) (EArrConcat (EVar "row") (EArrConst [EFConst 0])))
+              (EVar "inner"))
+           (EArrConst [EVar "zrow"]))
+    )))))))))))))
+  )).
+
+Theorem laplace5_step_expr_idents_valid :
+  expr_idents_valid is_valid_ident
+    (EApp (EApp laplace5_step_expr (EVar "r")) (EVar "u")) = true.
+Proof. reflexivity. Qed.
+
+(** Fully symbolic on a 3x3 grid (one interior point), the same
+    standard as the 1-D checks above: every slice, every per-row map,
+    both broadcasting levels and the border reassembly unfold to the
+    closed-form expression in the abstract entries. *)
+Example laplace5_symbolic_3x3 :
+  forall u00 u01 u02 u10 u11 u12 u20 u21 u22 r : PrimFloat.float,
+    eval 80
+      [("u00", VFloat u00); ("u01", VFloat u01); ("u02", VFloat u02);
+       ("u10", VFloat u10); ("u11", VFloat u11); ("u12", VFloat u12);
+       ("u20", VFloat u20); ("u21", VFloat u21); ("u22", VFloat u22);
+       ("r", VFloat r)]
+      (EApp (EApp laplace5_step_expr (EVar "r"))
+         (EArrConst [EArrConst [EVar "u00"; EVar "u01"; EVar "u02"];
+                     EArrConst [EVar "u10"; EVar "u11"; EVar "u12"];
+                     EArrConst [EVar "u20"; EVar "u21"; EVar "u22"]]))
+    = Some (VArray
+        [VArray [VFloat 0; VFloat 0; VFloat 0];
+         VArray [VFloat 0;
+                 VFloat (PrimFloat.add u11
+                           (PrimFloat.mul r
+                              (PrimFloat.sub (PrimFloat.add (PrimFloat.add u01 u21) (PrimFloat.add u10 u12))
+                                             (PrimFloat.mul 4 u11))));
+                 VFloat 0];
+         VArray [VFloat 0; VFloat 0; VFloat 0]]).
+Proof. intros. reflexivity. Qed.
+
+Corollary laplace5_json_roundtrip :
+  parse_expr_top (print_expr (EApp (EApp laplace5_step_expr (EVar "r")) (EVar "u")))
+  = Some (EApp (EApp laplace5_step_expr (EVar "r")) (EVar "u"), "").
+Proof.
+  unfold parse_expr_top.
+  pose proof (parse_print_roundtrip _ laplace5_step_expr_idents_valid
+                (String.length (print_expr (EApp (EApp laplace5_step_expr (EVar "r")) (EVar "u"))) + 1)
+                ltac:(vm_compute; lia) "") as H.
+  rewrite string_app_nil_r in H.
+  exact H.
+Qed.
+
+(** The JSON `make stencil2d_check` feeds the CLI; the resulting
+    Python is compared bit for bit against a numpy one-liner on a
+    random 6x7 grid by `runtime/stencil2d_check.py`. *)
+Compute print_expr (EApp (EApp laplace5_step_expr (EVar "r")) (EVar "u")).

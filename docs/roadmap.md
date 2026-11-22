@@ -180,6 +180,63 @@ existing convention):
    none — so the aliasing question is genuinely the remaining one, not
    something this slice quietly answered).
 
+   **Fourth slice landed: `EArrMap`, and rank 2 by nesting — closing
+   phase 1 as scoped.** `EArrMap (x : var) (body arr : expr)` maps over
+   an array's *outer* axis only (the unary companion of `EArrMap2`,
+   no broadcasting; same one-binder renaming seed as `POptionMatch`,
+   same per-element `Haux` shape as `PArrMap2`'s bullet; every layer
+   compiled on the first pass, `Print Assumptions` unchanged, **zero
+   new axioms**). With it, rank > 1 needs nothing new in `value`: a
+   rank-N array is a rank-1 array of rank-(N-1) arrays, an elementwise
+   N-D operation with broadcasting is N nested `EArrMap2`s (the outer
+   pairs rows or broadcasts a scalar against every row, the inner
+   pairs elements), slicing along axis 0 is `EArrSlice`, and slicing
+   along axis 1 is `EArrMap` applying `EArrSlice` to every row — the
+   one thing nesting alone could not say. `examples/physics/
+   Discretize.v`'s `laplace5_step_expr` is the demonstration: the 2-D
+   5-point update `u + r * ((n + s) + (w + e) - 4c)` on the interior
+   with a zero border, written from exactly those pieces (`rows_slice`/
+   `vmap2` are two-line `expr` combinators there);
+   `laplace5_symbolic_3x3` unfolds every slice, per-row map, both
+   broadcasting levels and the border reassembly to the closed-form
+   expression in nine abstract entries; the JSON round-trips; and
+   `make stencil2d_check` (new target, `runtime/stencil2d_check.py`)
+   runs the extracted function on a random 6×7 grid and finds it
+   **bit-identical** to the numpy one-liner.
+
+   *Multi-rank shapes, the judgement*: rank is explicit nesting whose
+   depth is a fact about the Coq source's types, known when the term is
+   written. numpy's *implicit* trailing-axis alignment at run time
+   (`(n,m) + (m,)` deciding at run time to broadcast along axis 0) is
+   deliberately not modelled as a rule: in a statically-shaped source
+   it is always writable as explicit nesting (wrap the vector in a
+   length-1 outer array and let rank-1 broadcasting repeat it), and a
+   run-time rank-dispatch inside `eval` would need an inner fuel on
+   value depth plus a self-applying recursive `lambda` in the printed
+   Python, for no expressiveness gained. Ragged nested arrays are
+   definable but meaningless, exactly as numpy refuses them.
+
+   *View-vs-copy aliasing and in-place mutation, the judgement*: this
+   model is the **immutable fragment** of numpy — `EArrSet` is the
+   functional update (`x.at[i].set(v)` in JAX's vocabulary), a slice is
+   a copy, and numpy's view-vs-copy distinction is unobservable because
+   nothing is ever mutated. Adding in-place semantics means a store-
+   passing `eval` (`fuel -> store -> env -> expr -> option (value *
+   store)`), which rewrites the statement of every theorem in the
+   pipeline (`translate_preserves_semantics`, `parse_print_roundtrip`
+   is untouched but `rename_pyexpr_correct` and its whole
+   `value_corr`/`env_corr` relation are not), and no current target
+   needs it: both physics simulators, the whole-grid wave step and the
+   2-D stencil, are naturally functional (`prev, curr = curr, next`),
+   and the runtime checks show the immutable programs agree with the
+   numpy originals bit for bit. **Phase 1 is therefore closed as
+   scoped** — numpy-shaped arrays, broadcasting (rank 1 as a rule,
+   rank N by nesting), slicing, concatenation, outer-axis map, all
+   proven with zero new axioms — with in-place mutation recorded as a
+   deliberate non-goal of this model rather than a pending item.
+   Re-open it only on a concrete need for aliasing semantics, with the
+   store-passing cost above as the honest price. Next: phase 2.
+
    **Sub-step done** (isolated prototype, not committed to `coq/` — a
    throwaway file, same convention as `ERecordN`'s own first validation):
    a minimal standalone source/target pair (`EArrConst (es : list expr)`/

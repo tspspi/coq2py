@@ -367,6 +367,19 @@ this project introduces here, not a hidden assumption -- classical
     distinction is unobservable without mutation, and this model has
     none (still the deferred question, see docs/roadmap.md). *)
 
+(** [EArrMap x body arr] maps [body] over [arr]'s *outer* axis only,
+    binding [x] to each element in turn -- the unary companion of
+    [EArrMap2], with no broadcasting to speak of. Its reason to exist
+    is rank > 1: a rank-N array here is a rank-1 array whose elements
+    are rank-(N-1) arrays (nothing new in [value]), elementwise N-D
+    operations are nested [EArrMap2]s, and the one thing that nesting
+    cannot say is "do this to every row" -- slice every row, say,
+    which is how [u[1:-1, 1:-1]] is written in this model. Shapes are
+    statically known in a typed Coq source, so the nesting depth is
+    always known when the term is written; numpy's *implicit*
+    trailing-axis alignment at run time is deliberately not modelled
+    as a rule -- see docs/roadmap.md. *)
+
 From Coq Require Import ZArith String List Bool.
 From Coq Require Import Floats.PrimFloat.
 Import ListNotations.
@@ -447,7 +460,8 @@ Inductive expr : Type :=
   | EArrMap2 (x y : var) (body a b : expr)
   | EArrLen (arr : expr)
   | EArrSlice (arr lo hi : expr)
-  | EArrConcat (a b : expr).
+  | EArrConcat (a b : expr)
+  | EArrMap (x : var) (body arr : expr).
 
 (** A value is now possibly a function: [VClosure self param body cenv]
     is [fun param => body] (or, if [self = Some f], the same but with
@@ -925,6 +939,24 @@ Fixpoint eval (fuel : nat) (rho : env) (e : expr) : option value :=
       | Some (VArray vs), Some (VArray ws) => Some (VArray (vs ++ ws))
       | _, _ => None
       end
+  | EArrMap x body arr =>
+      match eval fuel' rho arr with
+      | Some (VArray vs) =>
+          match (fix eval_map (l : list value) : option (list value) :=
+                   match l with
+                   | [] => Some []
+                   | v1 :: rest =>
+                       match eval fuel' ((x, v1) :: rho) body, eval_map rest with
+                       | Some v, Some vs => Some (v :: vs)
+                       | _, _ => None
+                       end
+                   end) vs
+          with
+          | Some vs' => Some (VArray vs')
+          | None => None
+          end
+      | _ => None
+      end
   end
   end.
 
@@ -1073,4 +1105,7 @@ Fixpoint expr_idents_valid (is_valid_ident : var -> bool) (e : expr) : bool :=
       andb (expr_idents_valid is_valid_ident arr)
         (andb (expr_idents_valid is_valid_ident lo) (expr_idents_valid is_valid_ident hi))
   | EArrConcat a b => andb (expr_idents_valid is_valid_ident a) (expr_idents_valid is_valid_ident b)
+  | EArrMap x body arr =>
+      andb (is_valid_ident x)
+        (andb (expr_idents_valid is_valid_ident body) (expr_idents_valid is_valid_ident arr))
   end.

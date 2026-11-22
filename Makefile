@@ -8,7 +8,7 @@
 # Use `gmake` if your platform's default `make` is BSD make (coqc's own
 # generated-makefile conventions assume GNU make).
 
-.PHONY: all coq ocaml examples physics test wave_sim wave_sim_vec package clean
+.PHONY: all coq ocaml examples physics test wave_sim wave_sim_vec stencil2d_check package clean
 
 all: coq ocaml
 
@@ -65,6 +65,19 @@ wave_sim_vec: wave_sim
 	  | (cd ocaml && dune exec driver/main.exe -- one_pass_vec r,curr,prev) \
 	  > runtime/generated/one_pass_vec.py
 	cd runtime && python3 wave1d_vec.py
+
+# A rank-2 (nested-array) 5-point stencil, examples/physics/Discretize.v's
+# `laplace5_step_expr` (byte-identical to that file's own `Compute
+# print_expr` of it), through the CLI, then checked bit for bit against
+# a numpy one-liner on a random grid by runtime/stencil2d_check.py.
+LAPLACE5_JSON := {"tag":"app","func":{"tag":"app","func":{"tag":"lam","param":"r","body":{"tag":"lam","param":"u","body":{"tag":"let","name":"mid","value":{"tag":"arrslice","arr":{"tag":"var","name":"u"},"lo":{"tag":"const","value":1},"hi":{"tag":"const","value":-1}},"body":{"tag":"let","name":"c","value":{"tag":"arrmap","x":"row","body":{"tag":"arrslice","arr":{"tag":"var","name":"row"},"lo":{"tag":"const","value":1},"hi":{"tag":"const","value":-1}},"arr":{"tag":"var","name":"mid"}},"body":{"tag":"let","name":"nn","value":{"tag":"arrmap","x":"row","body":{"tag":"arrslice","arr":{"tag":"var","name":"row"},"lo":{"tag":"const","value":1},"hi":{"tag":"const","value":-1}},"arr":{"tag":"arrslice","arr":{"tag":"var","name":"u"},"lo":{"tag":"const","value":0},"hi":{"tag":"const","value":-2}}},"body":{"tag":"let","name":"ss","value":{"tag":"arrmap","x":"row","body":{"tag":"arrslice","arr":{"tag":"var","name":"row"},"lo":{"tag":"const","value":1},"hi":{"tag":"const","value":-1}},"arr":{"tag":"arrslice","arr":{"tag":"var","name":"u"},"lo":{"tag":"const","value":2},"hi":{"tag":"arrlen","arr":{"tag":"var","name":"u"}}}},"body":{"tag":"let","name":"ww","value":{"tag":"arrmap","x":"row","body":{"tag":"arrslice","arr":{"tag":"var","name":"row"},"lo":{"tag":"const","value":0},"hi":{"tag":"const","value":-2}},"arr":{"tag":"var","name":"mid"}},"body":{"tag":"let","name":"ee","value":{"tag":"arrmap","x":"row","body":{"tag":"arrslice","arr":{"tag":"var","name":"row"},"lo":{"tag":"const","value":2},"hi":{"tag":"arrlen","arr":{"tag":"var","name":"row"}}},"arr":{"tag":"var","name":"mid"}},"body":{"tag":"let","name":"ns","value":{"tag":"arrmap2","x":"ra","y":"rb","body":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fadd","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"ra"},"b":{"tag":"var","name":"rb"}},"a":{"tag":"var","name":"nn"},"b":{"tag":"var","name":"ss"}},"body":{"tag":"let","name":"we","value":{"tag":"arrmap2","x":"ra","y":"rb","body":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fadd","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"ra"},"b":{"tag":"var","name":"rb"}},"a":{"tag":"var","name":"ww"},"b":{"tag":"var","name":"ee"}},"body":{"tag":"let","name":"nswe","value":{"tag":"arrmap2","x":"ra","y":"rb","body":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fadd","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"ra"},"b":{"tag":"var","name":"rb"}},"a":{"tag":"var","name":"ns"},"b":{"tag":"var","name":"we"}},"body":{"tag":"let","name":"lap","value":{"tag":"arrmap2","x":"ra","y":"rb","body":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fsub","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"fmul","lhs":{"tag":"fconst","kind":"finite","sign":false,"mantissa":4503599627370496,"exponent":-50},"rhs":{"tag":"var","name":"b"}}},"a":{"tag":"var","name":"ra"},"b":{"tag":"var","name":"rb"}},"a":{"tag":"var","name":"nswe"},"b":{"tag":"var","name":"c"}},"body":{"tag":"let","name":"rlap","value":{"tag":"arrmap2","x":"ra","y":"rb","body":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fmul","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"ra"},"b":{"tag":"var","name":"rb"}},"a":{"tag":"var","name":"r"},"b":{"tag":"var","name":"lap"}},"body":{"tag":"let","name":"inner","value":{"tag":"arrmap2","x":"ra","y":"rb","body":{"tag":"arrmap2","x":"a","y":"b","body":{"tag":"fadd","lhs":{"tag":"var","name":"a"},"rhs":{"tag":"var","name":"b"}},"a":{"tag":"var","name":"ra"},"b":{"tag":"var","name":"rb"}},"a":{"tag":"var","name":"c"},"b":{"tag":"var","name":"rlap"}},"body":{"tag":"let","name":"zrow","value":{"tag":"arrmap","x":"v","body":{"tag":"fconst","kind":"zero","sign":false},"arr":{"tag":"arrget","arr":{"tag":"var","name":"u"},"idx":{"tag":"const","value":0}}},"body":{"tag":"arrconcat","lhs":{"tag":"arrconst","elts":[{"tag":"var","name":"zrow"}]},"rhs":{"tag":"arrconcat","lhs":{"tag":"arrmap","x":"row","body":{"tag":"arrconcat","lhs":{"tag":"arrconst","elts":[{"tag":"fconst","kind":"zero","sign":false}]},"rhs":{"tag":"arrconcat","lhs":{"tag":"var","name":"row"},"rhs":{"tag":"arrconst","elts":[{"tag":"fconst","kind":"zero","sign":false}]}}},"arr":{"tag":"var","name":"inner"}},"rhs":{"tag":"arrconst","elts":[{"tag":"var","name":"zrow"}]}}}}}}}}}}}}}}}}}},"arg":{"tag":"var","name":"r"}},"arg":{"tag":"var","name":"u"}}
+
+stencil2d_check: ocaml
+	mkdir -p runtime/generated
+	echo -n '$(LAPLACE5_JSON)' \
+	  | (cd ocaml && dune exec driver/main.exe -- laplace5_step r,u) \
+	  > runtime/generated/laplace5_step.py
+	cd runtime && python3 stencil2d_check.py
 
 test: ocaml
 	@echo "--- euler_step (pairs/tuples): examples/Kinematics.v's euler_step_expr ---"

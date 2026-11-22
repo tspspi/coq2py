@@ -728,6 +728,20 @@ path is expected, not lucky: both perform the same IEEE-754 double
 operations in the same order, which is what the symbolic check states
 for a 7-point grid.
 
+Rank 2 works the same way by nesting: `Discretize.v`'s
+`laplace5_step_expr` is the 2-D 5-point update `u + r*((n+s)+(w+e)-4c)`
+on the interior with a zero border, written as outer slices along axis
+0, `EArrMap`-applied slices along axis 1, and nested `EArrMap2`s for
+the elementwise arithmetic. `laplace5_symbolic_3x3` unfolds it to the
+closed form in nine abstract entries, and
+
+```
+$ make stencil2d_check
+...
+grid shape: (6, 7)
+extracted rank-2 stencil vs numpy reference: bit-identical (max |diff| = 0)
+```
+
 ### What the proof doesn't cover, turned into a runtime check
 
 `leapfrog_exact_for_cubic_profile` has two hypotheses (`dx <> 0`,

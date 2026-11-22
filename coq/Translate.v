@@ -103,6 +103,7 @@ Fixpoint translate (e : expr) : pyexpr :=
   | EArrLen arr => PArrLen (translate arr)
   | EArrSlice arr lo hi => PArrSlice (translate arr) (translate lo) (translate hi)
   | EArrConcat a b => PArrConcat (translate a) (translate b)
+  | EArrMap x body arr => PArrMap x (translate body) (translate arr)
   end.
 
 (** [VClosure] embeds a captured [env], so translating a closure needs to
@@ -436,6 +437,49 @@ Proof.
   intros. unfold slice_list. rewrite map_length, skipn_map, firstn_map. reflexivity.
 Qed.
 
+Lemma eval_map_translate_correct :
+  forall fuel' (x : var) (body : expr)
+    (Hbody : forall rho, peval fuel' (env_to_pyenv rho) (translate body) = option_map value_to_pyvalue (eval fuel' rho body))
+    (rho : env) (vs : list value),
+    (fix peval_map (l : list pyvalue) : option (list pyvalue) :=
+       match l with
+       | [] => Some []
+       | v1 :: rest =>
+           match peval fuel' ((x, v1) :: env_to_pyenv rho) (translate body), peval_map rest with
+           | Some v, Some vs => Some (v :: vs)
+           | _, _ => None
+           end
+       end) (map value_to_pyvalue vs)
+    = option_map (map value_to_pyvalue)
+        ((fix eval_map (l : list value) : option (list value) :=
+            match l with
+            | [] => Some []
+            | v1 :: rest =>
+                match eval fuel' ((x, v1) :: rho) body, eval_map rest with
+                | Some v, Some vs => Some (v :: vs)
+                | _, _ => None
+                end
+            end) vs).
+Proof.
+  intros fuel' x body Hbody rho vs.
+  induction vs as [| v1 vs' IH].
+  - reflexivity.
+  - simpl.
+    change ((x, value_to_pyvalue v1) :: env_to_pyenv rho) with (env_to_pyenv ((x, v1) :: rho)).
+    rewrite (Hbody ((x, v1) :: rho)).
+    destruct (eval fuel' ((x, v1) :: rho) body) as [v|]; simpl; [| reflexivity].
+    rewrite IH.
+    destruct ((fix eval_map (l : list value) : option (list value) :=
+                 match l with
+                 | [] => Some []
+                 | v3 :: rest =>
+                     match eval fuel' ((x, v3) :: rho) body, eval_map rest with
+                     | Some v0, Some vs0 => Some (v0 :: vs0)
+                     | _, _ => None
+                     end
+                 end) vs') as [vs0|]; reflexivity.
+Qed.
+
 Lemma eval_map2_translate_correct :
   forall fuel' (x y : var) (body : expr)
     (Hbody : forall rho, peval fuel' (env_to_pyenv rho) (translate body) = option_map value_to_pyvalue (eval fuel' rho body))
@@ -561,7 +605,8 @@ Proof.
       | x y body a b                (* EArrMap2 *)
       | arr                         (* EArrLen *)
       | arr lo hi                   (* EArrSlice *)
-      | a b ];                      (* EArrConcat *)
+      | a b                         (* EArrConcat *)
+      | x body arr ];               (* EArrMap *)
     simpl.
     + (* EConst *) reflexivity.
     + (* EBool *) reflexivity.
@@ -818,4 +863,17 @@ Proof.
       destruct (eval fuel' rho a) as [v1|]; try reflexivity; destruct v1; try reflexivity.
       destruct (eval fuel' rho b) as [v2|]; try reflexivity; destruct v2; try reflexivity.
       simpl. rewrite map_app. reflexivity.
+    + (* EArrMap *) rewrite (IHfuel arr rho).
+      destruct (eval fuel' rho arr) as [v1|]; try reflexivity; destruct v1; try reflexivity.
+      simpl.
+      rewrite (eval_map_translate_correct fuel' x body (fun rho0 => IHfuel body rho0) rho vs).
+      destruct ((fix eval_map (l : list value) : option (list value) :=
+                   match l with
+                   | [] => Some []
+                   | v1 :: rest =>
+                       match eval fuel' ((x, v1) :: rho) body, eval_map rest with
+                       | Some v, Some vs0 => Some (v :: vs0)
+                       | _, _ => None
+                       end
+                   end) vs) as [vs0|]; reflexivity.
 Qed.
